@@ -71,8 +71,7 @@ Designed under the **Material 3 Expressive** OLED pitch-black design language, P
 - **Dual-Output Policy Engine**:
   - **Output A (Phone DSI-1)**: Strict 412x915 mobile policy. No free-floating desktop windows; enforces fullscreen insets (`y: 42..883`), status bar overlays, and bottom gestural controls.
   - **Output B (External HDMI-A-1)**: 1280x720 convergence environment. Supports floating multi-window management, desktop docks, and window tiling.
-- **Dynamic Migration**: Seamlessly migrates running windows from the phone display to the external monitor upon hotplug, and recalls them when unplugged.
-- **Client Acceleration**: Direct EGL, GLES2, and DMA-BUF hardware acceleration. Compatible with standard Wayland toolkits (`GTK4`, `Qt6`, `COSMIC / iced`).
+- **Client Acceleration**: Direct EGL, GLES2, and DMA-BUF hardware acceleration. Compatible with standard Wayland toolkits (`GTK4`, `Qt6`, `libadwaita`, `iced`).
 
 ### 🌀 3. Spring Physics & Gestures (`penumbra-gestures`)
 - **Damped Spring Physics**:
@@ -214,10 +213,6 @@ Use the included launcher script, which automatically prepares runtime sockets a
   ```bash
   ./target/debug/penumbra-shell --phone-only
   ```
-- **External COSMIC Desktop Components**:
-  ```bash
-  ./run_penumbra.sh --cosmic
-  ```
 
 ### 4. Running the Test Suite
 Penumbra contains comprehensive unit and integration tests across all four workspace crates:
@@ -246,7 +241,7 @@ Example schema:
   ],
   "homescreen_apps": [
     {
-      "id": "com.system76.CosmicFiles.desktop",
+      "id": "org.gnome.Nautilus.desktop",
       "x": 0,
       "y": 0
     }

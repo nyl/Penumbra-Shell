@@ -100,18 +100,6 @@ impl ClientData for ClientState {
     }
 }
 
-fn is_binary_available(bin: &str) -> bool {
-    if let Ok(path_var) = std::env::var("PATH") {
-        for dir in std::env::split_paths(&path_var) {
-            let full_path = dir.join(bin);
-            if full_path.is_file() {
-                return true;
-            }
-        }
-    }
-    false
-}
-
 /// Server state managing Wayland protocols, dual outputs, and client surfaces.
 pub struct PenumbraServerState {
     pub compositor_state: CompositorState,
@@ -128,7 +116,6 @@ pub struct PenumbraServerState {
     pub output_a: Output,
     pub output_b: Option<Output>,
     pub is_convergence_active: bool,
-    pub use_cosmic: bool,
     pub pointer_location: Point<f64, smithay::utils::Logical>,
 
     /// Phone (Output A) tasks in MRU order. `[0]` is the active app.
@@ -281,18 +268,14 @@ impl XdgShellHandler for PenumbraServerState {
 
         // 1. Root Shell Window (penumbra-shell) - always the first toplevel
         if self.root_shell.is_none() {
-            // When use_cosmic is requested AND cosmic-panel is installed, Penumbra Shell acts strictly as Phone Shell on Output A (412x915).
-            // When use_cosmic is false (default, e.g. when nested inside an active host session), Penumbra Shell spans both outputs (1692x915),
-            // providing the built-in Convergence Desktop UI with wallpaper, dock, and app launching on Output B.
-            let cosmic_available = self.use_cosmic && is_binary_available("cosmic-panel");
-            let shell_width = if self.is_convergence_active && !cosmic_available {
+            let shell_width = if self.is_convergence_active {
                 1692
             } else {
                 412
             };
             info!(
-                "Routing Penumbra Shell root surface: {}x915 across canvas (use_cosmic={}, cosmic_available={})",
-                shell_width, self.use_cosmic, cosmic_available
+                "Routing Penumbra Shell root surface: {}x915 across canvas",
+                shell_width
             );
             surface.with_pending_state(|state| {
                 state.states.set(xdg_toplevel::State::Activated);
@@ -403,12 +386,10 @@ impl WlrLayerShellHandler for PenumbraServerState {
         );
 
         // Output Routing Logic:
-        // If namespace starts with "cosmic" or output corresponds to HDMI-A-1,
-        // map the layer surface strictly to Output B (External Monitor).
-        // If namespace is "penumbra-shell" or output is DSI-1, map to Output A.
+        // Desktop components (panel, dock, wallpaper) map to Output B (External Monitor).
+        // Phone shell layer surfaces map to Output A.
         let ns = namespace.to_lowercase();
-        let target_output = if ns.starts_with("cosmic")
-            || ns.contains("panel")
+        let target_output = if ns.contains("panel")
             || ns.contains("applet")
             || ns.contains("dock")
             || ns.contains("bg")
@@ -710,7 +691,6 @@ impl PenumbraCompositor {
             output_a,
             output_b,
             is_convergence_active: self.args.convergence,
-            use_cosmic: self.args.use_cosmic,
             pointer_location: (0.0, 0.0).into(),
             phone_tasks: Vec::new(),
             next_task_id: 1,
@@ -1143,7 +1123,7 @@ impl PenumbraCompositor {
                     frame.clear(Color32F::new(0.35, 0.25, 0.50, 1.0), &[divider])?;
                 }
 
-                // Background / Bottom layer-shell (e.g. cosmic-bg)
+                // Background / Bottom layer-shell (wallpaper, background surfaces)
                 draw_render_elements(&mut frame, 1.0, &bg_elements, &[damage])?;
                 draw_render_elements(&mut frame, 1.0, &bottom_elements, &[damage])?;
 
@@ -1158,7 +1138,7 @@ impl PenumbraCompositor {
                 // Phone Layer 3: persistent system chrome
                 draw_render_elements(&mut frame, 1.0, &chrome_elements, &[damage])?;
 
-                // Top layer-shell (e.g. cosmic-panel, cosmic-applets)
+                // Top layer-shell (panels, docks, applets)
                 draw_render_elements(&mut frame, 1.0, &top_elements, &[damage])?;
 
                 // LAYER 5: Overlay (e.g. popups / lock)

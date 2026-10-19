@@ -24,8 +24,4 @@ pub struct CliArgs {
     /// Headless execution mode for CI and automated tests.
     #[arg(long, default_value_t = false)]
     pub headless: bool,
-
-    /// Delegate Output B desktop environment to external COSMIC components (cosmic-bg, cosmic-panel).
-    #[arg(long, default_value_t = false)]
-    pub use_cosmic: bool,
 }
