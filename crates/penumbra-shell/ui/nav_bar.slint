@@ -1,0 +1,57 @@
+import { Theme } from "theme.slint";
+
+// Bottom gesture bar: fixed system inset at y 883..915 (32px), composited above apps.
+// Gesture classification (flick -> home, drag & hold -> overview) happens in Rust
+// (penumbra_gestures::NavGestureRecognizer); this component only reports raw touches.
+export component NavBar inherits Rectangle {
+    in-out property <bool> is-pressed: false;
+    in-out property <length> drag-offset-x: 0px;
+    in-out property <length> drag-offset-y: 0px;
+    // Solid dark container while an app or the overview is on screen.
+    in property <bool> solid: false;
+
+    callback gesture-triggered(string); // "home", "recents"
+    callback touch-down(float, float);
+    callback touch-move(float, float);
+    callback touch-up(float, float);
+
+    height: 32px;
+    background: root.solid ? #000000 : transparent;
+    animate background { duration: 150ms; }
+
+    // Centered gesture pill indicator, follows the finger upwards slightly
+    Rectangle {
+        x: (parent.width - self.width) / 2 + root.drag-offset-x * 0.3;
+        y: (parent.height - self.height) / 2 + Math.max(-10px, Math.min(0px, root.drag-offset-y * 0.15));
+        width: root.is-pressed ? 96px : 72px;
+        height: root.is-pressed ? 5px : 4px;
+        border-radius: Theme.radius-pill;
+        background: root.is-pressed ? #FFFFFF : #FFFFFFCC;
+
+        animate width { duration: 120ms; easing: ease-out; }
+        animate height { duration: 120ms; easing: ease-out; }
+        animate background { duration: 120ms; easing: ease-out; }
+    }
+
+    touch-area := TouchArea {
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.down) {
+                root.is-pressed = true;
+                root.touch-down(touch-area.mouse-x / 1px, touch-area.mouse-y / 1px);
+            } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
+                root.is-pressed = false;
+                root.touch-up(touch-area.mouse-x / 1px, touch-area.mouse-y / 1px);
+                root.drag-offset-x = 0px;
+                root.drag-offset-y = 0px;
+            }
+        }
+
+        moved => {
+            if (root.is-pressed) {
+                root.drag-offset-x = touch-area.mouse-x - (root.width / 2);
+                root.drag-offset-y = touch-area.mouse-y - (root.height / 2);
+                root.touch-move(touch-area.mouse-x / 1px, touch-area.mouse-y / 1px);
+            }
+        }
+    }
+}

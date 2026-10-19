@@ -1,0 +1,110 @@
+import { Theme } from "theme.slint";
+import { AppItem } from "app_item.slint";
+import { ShortcutTile } from "shortcut_tile.slint";
+
+export component BottomDock inherits Rectangle {
+    in property <[AppItem]> dock-apps: [];
+    in property <bool> is-editing: false;
+    in property <bool> reject-drop: false; // Triggered when trying to drop into full dock
+
+    callback app-clicked(string);
+    callback app-removed(string);
+    callback request-edit-mode();
+
+    width: 380px;
+    height: 76px;
+    background: transparent;
+    clip: false;
+
+    // Shake animation on drop rejection
+    property <length> shake-offset: root.reject-drop ? 6px : 0px;
+
+    animate shake-offset {
+        duration: 80ms;
+        easing: ease-in-out;
+    }
+
+    pill := Rectangle {
+        x: root.shake-offset;
+        width: 100%;
+        height: 100%;
+        border-radius: 28px;
+        background: root.reject-drop ? #E5393533 : Theme.surface-container-high;
+        border-width: 1.5px;
+        border-color: root.reject-drop ? #E53935AA : Theme.specular-rim;
+        clip: false;
+
+        animate background {
+            duration: 180ms;
+            easing: ease-out;
+        }
+        animate border-color {
+            duration: 180ms;
+            easing: ease-out;
+        }
+
+    // Long press detector on dock background to trigger edit mode
+    dock-ta := TouchArea {
+        z: 0;
+        property <float> start-x: 0.0;
+        property <float> start-y: 0.0;
+        property <bool> is-down: false;
+
+        dock-lp-timer := Timer {
+            interval: 500ms;
+            running: false;
+            triggered => {
+                self.running = false;
+                if (dock-ta.is-down) {
+                    dock-ta.is-down = false;
+                    root.request-edit-mode();
+                }
+            }
+        }
+
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.down) {
+                self.start-x = dock-ta.mouse-x / 1px;
+                self.start-y = dock-ta.mouse-y / 1px;
+                self.is-down = true;
+                dock-lp-timer.running = true;
+            } else if (event.kind == PointerEventKind.move) {
+                if (self.is-down) {
+                    let dx = Math.abs((dock-ta.mouse-x / 1px) - self.start-x);
+                    let dy = Math.abs((dock-ta.mouse-y / 1px) - self.start-y);
+                    if (dx > 10.0 || dy > 10.0) {
+                        dock-lp-timer.running = false;
+                    }
+                }
+            } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
+                dock-lp-timer.running = false;
+                self.is-down = false;
+            }
+        }
+    }
+
+    HorizontalLayout {
+        z: 1;
+        alignment: space-around;
+        padding-left: 12px;
+        padding-right: 12px;
+        padding-top: 6px;
+        padding-bottom: 6px;
+
+        for app[idx] in root.dock-apps: ShortcutTile {
+            app: app;
+            is-editing: root.is-editing;
+            show-label: false;
+            clicked => {
+                root.app-clicked(app.id);
+            }
+            remove-clicked => {
+                root.app-removed(app.id);
+            }
+            long-pressed => {
+                root.request-edit-mode();
+            }
+        }
+    }
+}
+}

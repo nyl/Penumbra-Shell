@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/penumbra-gestures",
+    "crates/penumbra-services",
+    "crates/penumbra-shell",
+    "crates/penumbra-comp",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Penumbra Mobile DE Team <dev@penumbra.org>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/penumbra-de/penumbra"

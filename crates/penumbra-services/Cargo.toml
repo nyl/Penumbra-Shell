@@ -1,0 +1,16 @@
+[package]
+name = "penumbra-services"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Hardware D-Bus Bridge (UPower, NetworkManager, SensorProxy) with Mock Fallbacks"
+
+[dependencies]
+zbus = { version = "5.5", default-features = false, features = ["async-io", "blocking-api"] }
+tokio = { version = "1.38", features = ["rt", "sync", "time", "macros"] }
+futures-util = "0.3"
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1.38", features = ["full"] }

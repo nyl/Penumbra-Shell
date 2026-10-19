@@ -1,0 +1,159 @@
+import { Theme } from "theme.slint";
+import { AppItem } from "app_item.slint";
+
+export component ShortcutTile inherits Rectangle {
+    in property <AppItem> app;
+    in property <bool> is-editing: false;
+    in property <bool> show-label: true;
+
+    callback clicked();
+    callback remove-clicked();
+    callback long-pressed();
+
+    width: 72px;
+    height: root.show-label ? 88px : 64px;
+    background: transparent;
+
+    // iOS Jiggle animation continuous offset
+    property <int> jiggle-step: 0;
+    property <length> jiggle-x: !root.is-editing ? 0px : (root.jiggle-step == 0 ? 1.5px : -1.5px);
+    property <length> jiggle-y: !root.is-editing ? 0px : (root.jiggle-step == 0 ? -1px : 1px);
+
+    animate jiggle-x { duration: 90ms; easing: ease-in-out; }
+    animate jiggle-y { duration: 90ms; easing: ease-in-out; }
+
+    jiggle-timer := Timer {
+        interval: 110ms;
+        running: root.is-editing;
+        triggered => {
+            root.jiggle-step = root.jiggle-step == 0 ? 1 : 0;
+        }
+    }
+
+    // Long press detector state (> 500ms)
+    property <float> touch-start-x: 0.0;
+    property <float> touch-start-y: 0.0;
+    property <bool> is-down: false;
+
+    lp-timer := Timer {
+        interval: 500ms;
+        running: false;
+        triggered => {
+            self.running = false;
+            if (root.is-down) {
+                root.is-down = false;
+                root.long-pressed();
+            }
+        }
+    }
+
+    container := Rectangle {
+        width: 100%;
+        height: 100%;
+        x: root.jiggle-x;
+        y: root.jiggle-y;
+
+        VerticalLayout {
+            alignment: center;
+            spacing: 5px;
+
+            // Icon box
+            icon-box := Rectangle {
+                width: 56px;
+                height: 56px;
+                x: (parent.width - self.width) / 2;
+                border-radius: 18px;
+                background: #232029;
+                border-width: 1px;
+                border-color: root.is-editing ? #ADC6FF66 : Theme.specular-rim;
+                clip: false;
+
+                if root.app.has-icon: Image {
+                    source: root.app.icon;
+                    width: 40px;
+                    height: 40px;
+                    x: 8px;
+                    y: 8px;
+                }
+
+                if !root.app.has-icon: Text {
+                    text: "📱";
+                    font-size: 24px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+
+                // Delete badge in top-right corner during edit mode
+                if root.is-editing: delete-badge := Rectangle {
+                    x: parent.width - 12px;
+                    y: -6px;
+                    width: 22px;
+                    height: 22px;
+                    border-radius: 11px;
+                    background: #E53935;
+                    border-width: 1.5px;
+                    border-color: #ffffff;
+                    z: 100;
+
+                    Text {
+                        text: "✕";
+                        font-size: 11px;
+                        font-weight: 800;
+                        color: #ffffff;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    badge-ta := TouchArea {
+                        clicked => {
+                            root.remove-clicked();
+                        }
+                    }
+                }
+            }
+
+            if root.show-label: Text {
+                text: root.app.name;
+                font-size: 11px;
+                font-weight: 500;
+                color: Theme.on-surface;
+                horizontal-alignment: center;
+                overflow: elide;
+                max-width: 72px;
+            }
+        }
+    }
+
+    // Touch interaction for tap and long-press (> 500ms)
+    tile-ta := TouchArea {
+        enabled: !root.is-editing;
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.down) {
+                root.touch-start-x = tile-ta.mouse-x / 1px;
+                root.touch-start-y = tile-ta.mouse-y / 1px;
+                root.is-down = true;
+                lp-timer.running = true;
+            } else if (event.kind == PointerEventKind.move) {
+                if (root.is-down) {
+                    let dx = Math.abs((tile-ta.mouse-x / 1px) - root.touch-start-x);
+                    let dy = Math.abs((tile-ta.mouse-y / 1px) - root.touch-start-y);
+                    if (dx > 10.0 || dy > 10.0) {
+                        lp-timer.running = false;
+                    }
+                }
+            } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
+                lp-timer.running = false;
+                if (root.is-down) {
+                    root.is-down = false;
+                    let dx = Math.abs((tile-ta.mouse-x / 1px) - root.touch-start-x);
+                    let dy = Math.abs((tile-ta.mouse-y / 1px) - root.touch-start-y);
+                    if (dx < 10.0 && dy < 10.0) {
+                        if (!root.is-editing) {
+                            root.clicked();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

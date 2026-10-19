@@ -1,0 +1,12 @@
+[package]
+name = "penumbra-gestures"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Standalone Damped Spring Physics & Touch State Machine for Penumbra Mobile DE"
+
+[dependencies]
+# Zero external dependencies for pure, fast physics and touch tracking
+
+[dev-dependencies]

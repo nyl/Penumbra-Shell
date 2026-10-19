@@ -1,0 +1,289 @@
+import { Theme } from "theme.slint";
+import { StatusBar } from "status_bar.slint";
+import { NavBar } from "nav_bar.slint";
+import { QuickSettingsDrawer } from "quick_settings.slint";
+import { AppSurface, AppItem } from "app_surface.slint";
+import { DesktopSurface } from "desktop_surface.slint";
+
+export { AppItem }
+
+export component ShellRoot inherits Window {
+    title: "Penumbra Mobile & Convergence Desktop Environment";
+    width: root.convergence-mode ? 1692px : 412px;
+    height: 915px;
+    background: #08060B;
+    default-font-family: "Roboto, Inter, sans-serif";
+
+    // Dynamic XDG Applications Model
+    in property <[AppItem]> installed-apps: [];
+    in property <[AppItem]> dock-apps: [];
+    in property <[AppItem]> homescreen-apps: [];
+    in-out property <bool> is-editing: false;
+    in property <bool> reject-dock-drop: false;
+
+    // Convergence Dual Screen Switch
+    in-out property <bool> convergence-mode: true; // Shows both Phone DSI and External HDMI Monitor
+    in-out property <bool> hdmi-connected: true;
+
+    // Dynamic State bound to Rust Engine
+    in-out property <float> drawer-y: -915.0; // Current drawer Y offset in px (-915.0 = closed, 0.0 = fully open)
+    in-out property <bool> drawer-open: false;
+    in-out property <int> active-mode: 0;     // 0: Home, 1: Recents Overview, 2: App Drawer, 3: Active App
+    in-out property <string> active-app: "terminal";
+
+    // Telemetry properties
+    in-out property <string> time-str: "17:30";
+    in-out property <string> date-str: "Sunday, Oct 19";
+    in-out property <string> carrier-str: "Penumbra 5G";
+    in-out property <float> battery-pct: 86.0;
+    in-out property <bool> is-charging: false;
+    in-out property <bool> wifi-connected: true;
+    in-out property <int> wifi-signal: 95;
+    in-out property <bool> privacy-active: true;
+
+    // Quick Settings Controls
+    in-out property <float> brightness: 0.75;
+    in-out property <float> volume: 0.60;
+    in-out property <bool> tile-internet: true;
+    in-out property <bool> tile-bluetooth: true;
+    in-out property <bool> tile-flashlight: false;
+    in-out property <bool> tile-dnd: false;
+    in-out property <bool> tile-hotspot: false;
+    in-out property <bool> tile-rotate: true;
+
+    // Rust Callbacks for physics and gesture state machine
+    callback status-bar-down(float, float);
+    callback status-bar-moved(float, float);
+    callback status-bar-up(float, float);
+    callback drawer-handle-down(float, float);
+    callback drawer-handle-moved(float, float);
+    callback drawer-handle-up(float, float);
+    callback nav-bar-down(float, float);
+    callback nav-bar-moved(float, float);
+    callback nav-bar-up(float, float);
+    callback clear-all-recents();
+    callback resume-active-task();
+    callback toggle-drawer();
+    callback app-launched(string);
+    callback desktop-app-launched(string);
+    callback app-removed-from-dock(string);
+    callback app-removed-from-homescreen(string);
+    callback app-pinned-to-homescreen(string);
+    callback app-pinned-to-dock(string);
+    callback nav-gesture-invoked(string);
+    callback brightness-changed(float);
+    callback volume-changed(float);
+    callback toggle-convergence();
+    callback execute-command(string) -> string;
+    callback list-directory(string) -> string;
+    callback save-file(string, string) -> bool;
+    callback eval-calc(string, string, string) -> string;
+
+    // =========================================================================
+    // SCREEN 1: PHONE DISPLAY (DSI-1 • 412x915 @ 120Hz Strict Mobile Policy)
+    // =========================================================================
+    phone-screen := Rectangle {
+        x: 0px;
+        y: 0px;
+        width: 412px;
+        height: 915px;
+        background: Theme.base-surface;
+        clip: true;
+
+        // LAYER 1: App Surface Viewport (Homescreen or Active App / Recents)
+        app-surface := AppSurface {
+            x: 0px;
+            y: 0px;
+            width: 412px;
+            height: 915px;
+            active-mode <=> root.active-mode;
+            active-app <=> root.active-app;
+            installed-apps: root.installed-apps;
+            dock-apps: root.dock-apps;
+            homescreen-apps: root.homescreen-apps;
+            is-editing <=> root.is-editing;
+            reject-dock-drop: root.reject-dock-drop;
+            time-text: root.time-str;
+            date-text: root.date-str;
+            app-clicked(name) => {
+                root.active-app = name;
+                root.active-mode = 3;
+                root.app-launched(name);
+            }
+            app-removed-from-dock(id) => {
+                root.app-removed-from-dock(id);
+            }
+            app-removed-from-homescreen(id) => {
+                root.app-removed-from-homescreen(id);
+            }
+            app-pinned-to-dock(id) => {
+                root.app-pinned-to-dock(id);
+            }
+            app-pinned-to-homescreen(id) => {
+                root.app-pinned-to-homescreen(id);
+            }
+            clear-all-recents => {
+                root.active-mode = 0;
+                root.clear-all-recents();
+            }
+            resume-active-task => {
+                root.active-mode = 3;
+                root.resume-active-task();
+            }
+            execute-command(cmd) => {
+                return root.execute-command(cmd);
+            }
+            list-directory(path) => {
+                return root.list-directory(path);
+            }
+            save-file(path, content) => {
+                return root.save-file(path, content);
+            }
+            eval-calc(a, op, b) => {
+                return root.eval-calc(a, op, b);
+            }
+        }
+
+        // LAYER 2: Bottom Nav Bar Gestural Indicator
+        nav-bar := NavBar {
+            x: 0px;
+            y: parent.height - self.height;
+            width: 412px;
+            solid: root.active-mode == 1 || root.active-mode == 3;
+            touch-down(x, y) => {
+                root.nav-bar-down(x, y);
+            }
+            touch-move(x, y) => {
+                root.nav-bar-moved(x, y);
+            }
+            touch-up(x, y) => {
+                root.nav-bar-up(x, y);
+            }
+        }
+
+        // LAYER 3: Top Status Bar
+        status-bar := StatusBar {
+            x: 0px;
+            y: 0px;
+            width: 412px;
+            time-text: root.time-str;
+            battery-pct: root.battery-pct;
+            is-charging: root.is-charging;
+            wifi-connected: root.wifi-connected;
+            wifi-signal: root.wifi-signal;
+            privacy-active: root.privacy-active;
+            status-bar-down(x, y) => {
+                root.status-bar-down(x, y);
+            }
+            status-bar-moved(x, y) => {
+                root.status-bar-moved(x, y);
+            }
+            status-bar-up(x, y) => {
+                root.status-bar-up(x, y);
+            }
+            status-bar-clicked => {
+                root.toggle-drawer();
+            }
+        }
+
+        // LAYER 4: Dimmer Overlay when Quick Settings is visible
+        if root.drawer-y > -910.0: Rectangle {
+            x: 0px;
+            y: 0px;
+            width: 412px;
+            height: 915px;
+            background: #000000;
+            opacity: Math.clamp((root.drawer-y + 915.0) / 915.0 * 0.7, 0.0, 0.7);
+
+            TouchArea {
+                clicked => {
+                    root.toggle-drawer();
+                }
+            }
+        }
+
+        // LAYER 5: Quick Settings Drawer Overlay (anchored at top, translated via drawer-y)
+        drawer := QuickSettingsDrawer {
+            x: 0px;
+            y: root.drawer-y * 1px;
+            width: 412px;
+            height: 915px;
+            time-text: root.time-str;
+            date-text: root.date-str;
+            carrier-text: root.carrier-str;
+            brightness: root.brightness;
+            volume: root.volume;
+            tile-internet: root.tile-internet;
+            tile-bluetooth: root.tile-bluetooth;
+            tile-flashlight: root.tile-flashlight;
+            tile-dnd: root.tile-dnd;
+            tile-hotspot: root.tile-hotspot;
+            tile-rotate: root.tile-rotate;
+
+            close-requested => {
+                root.toggle-drawer();
+            }
+            brightness-changed(b) => {
+                root.brightness = b;
+                root.brightness-changed(b);
+            }
+            volume-changed(v) => {
+                root.volume = v;
+                root.volume-changed(v);
+            }
+            handle-down(x, y) => {
+                root.drawer-handle-down(x, y);
+            }
+            handle-moved(x, y) => {
+                root.drawer-handle-moved(x, y);
+            }
+            handle-up(x, y) => {
+                root.drawer-handle-up(x, y);
+            }
+            power-action => {
+                root.toggle-drawer();
+            }
+            settings-action => {
+                root.toggle-drawer();
+                root.app-launched("settings");
+            }
+        }
+    }
+
+    // =========================================================================
+    // SCREEN 2: EXTERNAL MONITOR (HDMI-A-1 • 1280x720 Desktop Environment)
+    // =========================================================================
+    if root.convergence-mode: Rectangle {
+        x: 412px;
+        y: 0px;
+        width: 1280px;
+        height: 915px;
+        background: #09070D;
+
+        // Visual Separator Rim
+        Rectangle {
+            x: 0px;
+            y: 0px;
+            width: 2px;
+            height: parent.height;
+            background: #352848;
+        }
+
+        desktop-surface := DesktopSurface {
+            x: 2px;
+            y: 0px;
+            width: 1278px;
+            height: 915px;
+            is-connected: root.hdmi-connected;
+            time-str: root.time-str;
+            battery-pct: root.battery-pct;
+            wifi-connected: root.wifi-connected;
+            toggle-hotplug => {
+                root.hdmi-connected = self.is-connected;
+            }
+            app-clicked(app) => {
+                root.desktop-app-launched(app);
+            }
+        }
+    }
+}

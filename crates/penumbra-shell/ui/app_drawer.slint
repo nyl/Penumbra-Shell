@@ -1,0 +1,229 @@
+import { Theme } from "theme.slint";
+import { AppItem } from "app_item.slint";
+
+export component DrawerAppTile inherits Rectangle {
+    in property <AppItem> app;
+    callback clicked();
+    callback drag-started(string, AppItem, length, length); // id, app, screen_x, screen_y
+
+    property <float> touch-x: 0.0;
+    property <float> touch-y: 0.0;
+    property <bool> is-down: false;
+
+    width: 80px;
+    height: 96px;
+
+    lp-timer := Timer {
+        interval: 400ms;
+        running: false;
+        triggered => {
+            self.running = false;
+            if (root.is-down) {
+                root.is-down = false;
+                root.drag-started(root.app.id, root.app, root.touch-x * 1px, root.touch-y * 1px);
+            }
+        }
+    }
+
+    VerticalLayout {
+        alignment: center;
+        spacing: 6px;
+
+        // Squircle Icon Container
+        Rectangle {
+            width: 56px;
+            height: 56px;
+            border-radius: 18px;
+            background: #2b2832;
+            border-width: 1px;
+            border-color: #ffffff14;
+            clip: true;
+            x: (parent.width - self.width) / 2;
+
+            if root.app.has-icon: Image {
+                source: root.app.icon;
+                width: 40px;
+                height: 40px;
+                x: 8px;
+                y: 8px;
+            }
+
+            if !root.app.has-icon: Text {
+                text: "📦";
+                font-size: 24px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        Text {
+            text: root.app.name;
+            color: #e6e0e9;
+            font-size: 11px;
+            font-weight: 500;
+            horizontal-alignment: center;
+            overflow: elide;
+        }
+    }
+
+    tile-ta := TouchArea {
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.down) {
+                root.touch-x = tile-ta.mouse-x / 1px;
+                root.touch-y = tile-ta.mouse-y / 1px;
+                root.is-down = true;
+                lp-timer.running = true;
+            } else if (event.kind == PointerEventKind.move) {
+                if (root.is-down) {
+                    let dx = Math.abs((tile-ta.mouse-x / 1px) - root.touch-x);
+                    let dy = Math.abs((tile-ta.mouse-y / 1px) - root.touch-y);
+                    if (dx > 12.0 || dy > 12.0) {
+                        lp-timer.running = false;
+                    }
+                }
+            } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
+                lp-timer.running = false;
+                if (root.is-down) {
+                    root.is-down = false;
+                    let dx = Math.abs((tile-ta.mouse-x / 1px) - root.touch-x);
+                    let dy = Math.abs((tile-ta.mouse-y / 1px) - root.touch-y);
+                    if (dx < 12.0 && dy < 12.0) {
+                        root.clicked();
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component AppDrawer inherits Rectangle {
+    in property <[AppItem]> installed-apps: [];
+    in property <bool> is-open: false;
+
+    callback app-clicked(string);
+    callback start-drag(string, AppItem, length, length);
+    callback close-requested();
+
+    width: 100%;
+    height: 100%;
+    background: #0E0C12F8;
+    clip: true;
+
+    // Swipe-down detector to dismiss App Drawer
+    drawer-bg-ta := TouchArea {
+        property <float> start-y: 0.0;
+        property <bool> is-active: false;
+
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.down) {
+                self.start-y = drawer-bg-ta.mouse-y / 1px;
+                self.is-active = true;
+            } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
+                if (self.is-active) {
+                    self.is-active = false;
+                    let dy = (drawer-bg-ta.mouse-y / 1px) - self.start-y;
+                    if (dy > 30.0) {
+                        root.close-requested();
+                    }
+                }
+            }
+        }
+    }
+
+    VerticalLayout {
+        padding-top: 52px;
+        padding-bottom: 48px;
+        padding-left: 20px;
+        padding-right: 20px;
+        spacing: 16px;
+        alignment: start;
+
+        // Top Dismiss Handle
+        HorizontalLayout {
+            alignment: center;
+
+            Rectangle {
+                width: 44px;
+                height: 5px;
+                border-radius: 2.5px;
+                background: Theme.outline-variant;
+
+                TouchArea {
+                    clicked => { root.close-requested(); }
+                }
+            }
+        }
+
+        // Top Search Bar Pill
+        Rectangle {
+            height: 50px;
+            border-radius: Theme.radius-pill;
+            background: Theme.surface-high;
+            border-width: 1px;
+            border-color: Theme.specular-rim;
+
+            HorizontalLayout {
+                padding-left: 18px;
+                padding-right: 18px;
+                spacing: 12px;
+                alignment: space-between;
+
+                HorizontalLayout {
+                    spacing: 10px;
+                    alignment: center;
+
+                    Text {
+                        text: "🔍";
+                        font-size: 16px;
+                        color: Theme.on-surface-variant;
+                        vertical-alignment: center;
+                    }
+
+                    Text {
+                        text: "Search apps...";
+                        font-size: Theme.font-label;
+                        color: Theme.on-surface-variant;
+                        vertical-alignment: center;
+                    }
+                }
+
+                Text {
+                    text: "🎙";
+                    font-size: 16px;
+                    color: Theme.primary;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        // Section: Real Installed Applications Grid (Dynamic FreeDesktop XDG Apps)
+        Flickable {
+            height: 640px;
+            content-height: (root.installed-apps.length / 4 + 1) * 105px;
+
+            VerticalLayout {
+                spacing: 8px;
+                alignment: start;
+
+                for row in (root.installed-apps.length / 4 + 1): HorizontalLayout {
+                    alignment: space-around;
+                    for col in 4: Rectangle {
+                        width: 80px;
+                        height: 96px;
+                        property <int> idx: row * 4 + col;
+
+                        if self.idx < root.installed-apps.length: DrawerAppTile {
+                            app: root.installed-apps[parent.idx];
+                            clicked => {
+                                root.app-clicked(root.installed-apps[parent.idx].id);
+                            }
+                            drag-started(id, item, sx, sy) => {
+                                root.start-drag(id, item, sx, sy);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

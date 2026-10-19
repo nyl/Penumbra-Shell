@@ -1,0 +1,14 @@
+[package]
+name = "penumbra-comp"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Smithay-based Mobile Wayland Compositor with Convergence and Output Policies"
+
+[dependencies]
+penumbra-gestures = { path = "../penumbra-gestures" }
+smithay = { version = "0.7", default-features = false, features = ["backend_winit", "backend_egl", "desktop", "renderer_gl", "wayland_frontend", "input"] }
+clap = { version = "4.5", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"

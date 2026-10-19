@@ -1,0 +1,365 @@
+import { Theme } from "theme.slint";
+
+export component DesktopSurface inherits Rectangle {
+    in-out property <bool> is-connected: true;
+    in property <string> time-str: "17:30";
+    in property <float> battery-pct: 100.0;
+    in property <bool> wifi-connected: true;
+    callback toggle-hotplug();
+    callback app-clicked(string);
+
+    background: #0A080E;
+    clip: true;
+
+    // Display Screen Status Header (Top bar showing Output B info)
+    Rectangle {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: 32px;
+        background: #14121A;
+        border-width: 1px;
+        border-color: Theme.specular-rim;
+
+        HorizontalLayout {
+            padding-left: 14px;
+            padding-right: 14px;
+            alignment: space-between;
+
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: center;
+
+                Rectangle {
+                    width: 8px;
+                    height: 8px;
+                    border-radius: 4px;
+                    background: root.is-connected ? Theme.privacy-green : #FFB4AB;
+                }
+
+                Text {
+                    text: root.is-connected ? "Output B: External Monitor (HDMI-A-1 • 1280x720 @ 60Hz) • Convergence Mode" : "External Monitor: Disconnected";
+                    font-size: Theme.font-caption;
+                    font-weight: 600;
+                    color: root.is-connected ? Theme.on-surface : Theme.on-surface-variant;
+                    vertical-alignment: center;
+                }
+            }
+
+            // Hotplug / Unplug Toggle Pill
+            Rectangle {
+                width: 110px;
+                height: 22px;
+                y: (parent.height - self.height) / 2;
+                border-radius: Theme.radius-pill;
+                background: root.is-connected ? #FFB4AB33 : Theme.primary-container;
+                border-width: 1px;
+                border-color: root.is-connected ? #FFB4AB66 : Theme.primary;
+
+                Text {
+                    text: root.is-connected ? "Unplug HDMI" : "Connect HDMI";
+                    font-size: 10px;
+                    font-weight: 700;
+                    color: root.is-connected ? #FFB4AB : Theme.primary;
+                    vertical-alignment: center;
+                    horizontal-alignment: center;
+                }
+
+                TouchArea {
+                    clicked => {
+                        root.is-connected = !root.is-connected;
+                        root.toggle-hotplug();
+                    }
+                }
+            }
+        }
+    }
+
+    // ACTIVE CONVERGENCE DESKTOP WORKSPACE
+    if root.is-connected: Rectangle {
+        y: 32px;
+        width: parent.width;
+        height: parent.height - 32px;
+
+        // Desktop Wallpaper with ambient convergence gradients
+        Rectangle {
+            width: parent.width;
+            height: parent.height;
+            background: #0E0C13;
+
+            // Ambient glow orbs
+            Rectangle {
+                x: parent.width * 0.35;
+                y: parent.height * 0.15;
+                width: 520px;
+                height: 360px;
+                border-radius: 260px;
+                background: #25407026;
+            }
+            Rectangle {
+                x: parent.width * 0.65;
+                y: parent.height * 0.45;
+                width: 440px;
+                height: 300px;
+                border-radius: 220px;
+                background: #673AB718;
+            }
+
+            // Desktop watermark badge
+            Text {
+                x: 32px;
+                y: parent.height - 80px;
+                text: "Penumbra Convergence Desktop";
+                font-size: 20px;
+                font-weight: 700;
+                color: #FFFFFF08;
+            }
+        }
+
+        // Top Desktop Panel
+        Rectangle {
+            x: 0px;
+            y: 0px;
+            width: parent.width;
+            height: 32px;
+            background: #17141ECC;
+            border-width: 1px;
+            border-color: Theme.specular-rim;
+
+            HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                alignment: space-between;
+
+                HorizontalLayout {
+                    spacing: 14px;
+                    alignment: center;
+
+                    Text {
+                        text: "Penumbra Desktop";
+                        font-size: Theme.font-label;
+                        font-weight: 700;
+                        color: Theme.primary;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: "Activities";
+                        font-size: Theme.font-caption;
+                        color: Theme.on-surface;
+                        vertical-alignment: center;
+                    }
+                }
+
+                Text {
+                    text: root.time-str;
+                    font-size: Theme.font-label;
+                    font-weight: 600;
+                    color: Theme.on-surface;
+                    vertical-alignment: center;
+                }
+
+                HorizontalLayout {
+                    spacing: 12px;
+                    alignment: center;
+
+                    Text {
+                        text: root.wifi-connected ? "Wi-Fi" : "Offline";
+                        font-size: 11px;
+                        font-weight: 600;
+                        color: root.wifi-connected ? Theme.primary : Theme.on-surface-variant;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: "Vol";
+                        font-size: 11px;
+                        font-weight: 600;
+                        color: Theme.on-surface;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: Math.round(root.battery-pct) + "%";
+                        font-size: Theme.font-caption;
+                        color: Theme.on-surface;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+
+        // Bottom Desktop Dock with Application Launchers
+        Rectangle {
+            width: 380px;
+            height: 54px;
+            x: (parent.width - self.width) / 2;
+            y: parent.height - self.height - 16px;
+            border-radius: Theme.radius-pill;
+            background: #1B1822EE;
+            border-width: 1px;
+            border-color: Theme.specular-rim;
+
+            HorizontalLayout {
+                alignment: space-around;
+                padding-left: 16px;
+                padding-right: 16px;
+
+                // Terminal
+                Rectangle {
+                    width: 40px;
+                    height: 40px;
+                    y: (parent.height - self.height) / 2;
+                    border-radius: 12px;
+                    background: #1E2522;
+                    Text {
+                        text: "";
+                        font-size: 18px;
+                        color: #48E885;
+                        vertical-alignment: center;
+                        horizontal-alignment: center;
+                    }
+                    TouchArea {
+                        clicked => { root.app-clicked("terminal"); }
+                    }
+                }
+
+                // Files Manager
+                Rectangle {
+                    width: 40px;
+                    height: 40px;
+                    y: (parent.height - self.height) / 2;
+                    border-radius: 12px;
+                    background: #40321F;
+                    Text {
+                        text: "📁";
+                        font-size: 18px;
+                        color: #FFDDA6;
+                        vertical-alignment: center;
+                        horizontal-alignment: center;
+                    }
+                    TouchArea {
+                        clicked => { root.app-clicked("files"); }
+                    }
+                }
+
+                // Browser
+                Rectangle {
+                    width: 40px;
+                    height: 40px;
+                    y: (parent.height - self.height) / 2;
+                    border-radius: 12px;
+                    background: #1A3E5C;
+                    Text {
+                        text: "🌐";
+                        font-size: 18px;
+                        color: #9CD5FF;
+                        vertical-alignment: center;
+                        horizontal-alignment: center;
+                    }
+                    TouchArea {
+                        clicked => { root.app-clicked("browser"); }
+                    }
+                }
+
+                // Notes / Text Editor
+                Rectangle {
+                    width: 40px;
+                    height: 40px;
+                    y: (parent.height - self.height) / 2;
+                    border-radius: 12px;
+                    background: #3B243B;
+                    Text {
+                        text: "📝";
+                        font-size: 18px;
+                        color: #FFB7FB;
+                        vertical-alignment: center;
+                        horizontal-alignment: center;
+                    }
+                    TouchArea {
+                        clicked => { root.app-clicked("notes"); }
+                    }
+                }
+
+                // Calculator
+                Rectangle {
+                    width: 40px;
+                    height: 40px;
+                    y: (parent.height - self.height) / 2;
+                    border-radius: 12px;
+                    background: #252A42;
+                    Text {
+                        text: "🧮";
+                        font-size: 18px;
+                        color: #ADC6FF;
+                        vertical-alignment: center;
+                        horizontal-alignment: center;
+                    }
+                    TouchArea {
+                        clicked => { root.app-clicked("calc"); }
+                    }
+                }
+
+                // Settings
+                Rectangle {
+                    width: 40px;
+                    height: 40px;
+                    y: (parent.height - self.height) / 2;
+                    border-radius: 12px;
+                    background: #35303D;
+                    Text {
+                        text: "⚙";
+                        font-size: 18px;
+                        color: #E3E2E6;
+                        vertical-alignment: center;
+                        horizontal-alignment: center;
+                    }
+                    TouchArea {
+                        clicked => { root.app-clicked("settings"); }
+                    }
+                }
+            }
+        }
+    }
+
+    // STANDBY NO-SIGNAL STATE
+    if !root.is-connected: Rectangle {
+        y: 32px;
+        width: parent.width;
+        height: parent.height - 32px;
+        background: #000000;
+
+        VerticalLayout {
+            alignment: center;
+            spacing: 12px;
+
+            Rectangle {
+                width: 64px;
+                height: 64px;
+                x: (parent.width - self.width) / 2;
+                border-radius: 32px;
+                background: #1E1B24;
+
+                Text {
+                    text: "⏻";
+                    font-size: 28px;
+                    color: Theme.outline;
+                    vertical-alignment: center;
+                    horizontal-alignment: center;
+                }
+            }
+
+            Text {
+                text: "HDMI-A-1: No Cable Connected";
+                font-size: Theme.font-title;
+                font-weight: 700;
+                color: Theme.on-surface;
+                horizontal-alignment: center;
+            }
+
+            Text {
+                text: "All desktop windows have migrated to Phone Screen (DSI-1)";
+                font-size: Theme.font-body;
+                color: Theme.on-surface-variant;
+                horizontal-alignment: center;
+            }
+        }
+    }
+}

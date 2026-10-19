@@ -1,0 +1,497 @@
+import { Theme } from "theme.slint";
+import { AppItem } from "app_item.slint";
+import { BottomDock } from "dock.slint";
+import { ShortcutTile } from "shortcut_tile.slint";
+
+import { AppDrawer } from "app_drawer.slint";
+
+export { AppItem }
+
+
+
+export component AppSurface inherits Rectangle {
+    in-out property <int> active-mode: 0; // 0: Home, 1: Recents Overview, 2: App Drawer, 3: Active In-Shell App
+    in-out property <string> active-app: "terminal";
+    in property <string> time-text: "17:30";
+    in property <string> date-text: "Sunday, Oct 19";
+    in property <[AppItem]> installed-apps: [];
+    in property <[AppItem]> dock-apps: [];
+    in property <[AppItem]> homescreen-apps: [];
+    in-out property <bool> is-editing: false;
+    in property <bool> reject-dock-drop: false;
+    in-out property <bool> is-dragging-app: false;
+    in-out property <AppItem> dragging-app-item;
+    in-out property <length> drag-x: 0px;
+    in-out property <length> drag-y: 0px;
+
+    callback app-clicked(string);
+    callback app-removed-from-dock(string);
+    callback app-removed-from-homescreen(string);
+    callback app-pinned-to-dock(string);
+    callback app-pinned-to-homescreen(string);
+    callback start-drag-app(string, float, float);
+    callback clear-all-recents();
+    callback resume-active-task();
+    callback execute-command(string) -> string;
+    callback list-directory(string) -> string;
+    callback eval-calc(string, string, string) -> string;
+    callback save-file(string, string) -> bool;
+
+    // Terminal internal state
+    property <string> terminal-history: "penumbra@mobile:~$ uname -a\nLinux penumbra-mobile 6.12.0-rust aarch64\npenumbra@mobile:~$ smithay --version\nPenumbra Compositor v0.1.0 (DSI 412x915 @ 120Hz)\npenumbra@mobile:~$ ";
+    property <string> terminal-input: "";
+
+    // Calculator internal state
+    property <string> calc-display: "0";
+    property <string> calc-prev: "0";
+    property <string> calc-operation: "";
+    property <bool> calc-new-entry: true;
+
+    // Notes internal state
+    property <string> note-content: "Penumbra Mobile Notes\n====================\n- Wayland compositor session active\n- In-shell native application execution enabled\n- Touch gestures: swipe up to return home\n";
+    property <string> note-status: "Ready";
+
+    // Browser internal state
+    property <string> browser-url: "https://search.penumbra.dev";
+    property <string> browser-result-title: "Penumbra Linux Mobile Environment";
+    property <string> browser-result-desc: "Mobile-first Wayland desktop environment written in 100% Rust with Slint and Smithay.";
+
+    // Files internal state
+    property <string> files-current-dir: "/home/nyl";
+    property <string> files-listing: "[DIR] Desktop\n[DIR] Documents\n[DIR] Downloads\n[DIR] Music\n[DIR] Pictures\n[DIR] coding\n[FILE] .bashrc (3.8 KB)\n[FILE] Cargo.toml (1.2 KB)\n";
+
+    background: Theme.base-surface;
+    clip: true;
+
+    // Ambient Iris Glow in the background
+    Rectangle {
+        x: parent.width * 0.1;
+        y: parent.height * 0.15;
+        width: 320px;
+        height: 320px;
+        border-radius: 160px;
+        background: #25407026;
+    }
+
+    // =========================================================================
+    // MODE 0: HOMESCREEN
+    // =========================================================================
+    if root.active-mode == 0 || root.active-mode == 2: Rectangle {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+
+        // Background gesture listener: Swiping up anywhere (even middle) opens App Drawer
+        if root.active-mode == 0: TouchArea {
+            x: 0px;
+            y: 0px;
+            width: parent.width;
+            height: parent.height;
+
+            property <float> start-y: 0.0;
+            property <bool> is-active: false;
+
+            pointer-event(event) => {
+                if (event.kind == PointerEventKind.down) {
+                    self.start-y = self.mouse-y / 1px;
+                    self.is-active = true;
+                } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
+                    if (self.is-active) {
+                        self.is-active = false;
+                        let dy = self.start-y - (self.mouse-y / 1px);
+                        if (dy > 25.0) {
+                            root.active-mode = 2; // Open App Drawer
+                        } else if (Math.abs(dy) < 15.0 && root.is-editing) {
+                            root.is-editing = false; // Exit Edit Mode
+                        }
+                    }
+                }
+            }
+        }
+
+        VerticalLayout {
+            padding-top: 56px;
+            padding-bottom: 50px;
+            padding-left: 20px;
+            padding-right: 20px;
+            alignment: space-between;
+
+            // Top: At a Glance Widget
+            VerticalLayout {
+                spacing: 8px;
+
+                Text {
+                    text: root.time-text;
+                    font-size: Theme.font-clock-large;
+                    font-weight: 800;
+                    color: Theme.on-surface;
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: start;
+
+                    Text {
+                        text: "\{root.date-text}  •  21°C Clear";
+                        font-size: Theme.font-body;
+                        font-weight: 600;
+                        color: Theme.primary;
+                    }
+                }
+            }
+
+            // Middle: Clean Homescreen Shortcuts Grid (Dynamic Real Installed Apps, No Mockups!)
+            Rectangle {
+                vertical-stretch: 1;
+                clip: false;
+
+                if root.homescreen-apps.length > 0: Flickable {
+                    width: 100%;
+                    height: 100%;
+                    content-height: (root.homescreen-apps.length / 4 + 1) * 98px;
+
+                    VerticalLayout {
+                        spacing: 12px;
+                        alignment: start;
+
+                        for row in (root.homescreen-apps.length / 4 + 1): HorizontalLayout {
+                            alignment: space-around;
+                            for col in 4: Rectangle {
+                                width: 72px;
+                                height: 88px;
+                                property <int> idx: row * 4 + col;
+
+                                if self.idx < root.homescreen-apps.length: ShortcutTile {
+                                    app: root.homescreen-apps[parent.idx];
+                                    is-editing: root.is-editing;
+                                    show-label: true;
+                                    clicked => {
+                                        root.app-clicked(root.homescreen-apps[parent.idx].id);
+                                    }
+                                    remove-clicked => {
+                                        root.app-removed-from-homescreen(root.homescreen-apps[parent.idx].id);
+                                    }
+                                    long-pressed => {
+                                        root.is-editing = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // If homescreen is empty, show subtle hint
+                if root.homescreen-apps.length == 0: VerticalLayout {
+                    alignment: center;
+                    spacing: 8px;
+
+                    Text {
+                        text: "✨";
+                        font-size: 28px;
+                        horizontal-alignment: center;
+                    }
+                    Text {
+                        text: "Swipe up to open App Drawer";
+                        font-size: Theme.font-label;
+                        color: Theme.on-surface-variant;
+                        horizontal-alignment: center;
+                    }
+                }
+            }
+
+            // Bottom Area: Search Pill & Bottom Dock (Max 4 slots)
+            VerticalLayout {
+                spacing: 12px;
+                alignment: end;
+
+                // Search Pill
+                Rectangle {
+                    height: 50px;
+                    border-radius: Theme.radius-pill;
+                    background: Theme.surface-high;
+                    border-width: 1px;
+                    border-color: Theme.specular-rim;
+
+                    search-ta := TouchArea {
+                        property <float> start-y: 0.0;
+                        property <bool> is-active: false;
+
+                        pointer-event(event) => {
+                            if (event.kind == PointerEventKind.down) {
+                                self.start-y = search-ta.mouse-y / 1px;
+                                self.is-active = true;
+                            } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
+                                if (self.is-active) {
+                                    self.is-active = false;
+                                    let dy = self.start-y - (search-ta.mouse-y / 1px);
+                                    if (dy > 25.0) {
+                                        root.active-mode = 2; // Open App Drawer
+                                    } else if (Math.abs(dy) < 15.0) {
+                                        root.active-app = "browser";
+                                        root.active-mode = 3;
+                                        root.app-clicked("browser");
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        padding-left: 18px;
+                        padding-right: 18px;
+                        alignment: space-between;
+
+                        HorizontalLayout {
+                            spacing: 10px;
+                            alignment: center;
+
+                            Text {
+                                text: "G";
+                                font-size: 20px;
+                                font-weight: 800;
+                                color: Theme.primary;
+                                vertical-alignment: center;
+                            }
+
+                            Text {
+                                text: "Search apps, web, & devices...";
+                                font-size: Theme.font-label;
+                                color: Theme.on-surface-variant;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        Text {
+                            text: "🎙";
+                            font-size: 16px;
+                            color: Theme.primary;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                // Pinned Mobile Bottom Dock (Max 4 slots)
+                HorizontalLayout {
+                    alignment: center;
+                    BottomDock {
+                        dock-apps: root.dock-apps;
+                        is-editing: root.is-editing;
+                        reject-drop: root.reject-dock-drop;
+                        app-clicked(id) => {
+                            root.app-clicked(id);
+                        }
+                        app-removed(id) => {
+                            root.app-removed-from-dock(id);
+                        }
+                        request-edit-mode => {
+                            root.is-editing = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
+    // =========================================================================
+    // MODE 2: APP DRAWER (All Applications Overlay)
+    // =========================================================================
+    app-drawer := Rectangle {
+        x: 0px;
+        y: root.active-mode == 2 ? 0px : parent.height;
+        width: parent.width;
+        height: parent.height;
+        opacity: root.is-dragging-app ? 0.0 : 1.0;
+        clip: true;
+
+        animate y {
+            duration: 260ms;
+            easing: cubic-bezier(0.1, 0.9, 0.2, 1.0);
+        }
+        animate opacity {
+            duration: 150ms;
+            easing: ease-out;
+        }
+
+        AppDrawer {
+            installed-apps: root.installed-apps;
+            is-open: root.active-mode == 2;
+            app-clicked(id) => {
+                root.app-clicked(id);
+            }
+            start-drag(id, item, sx, sy) => {
+                root.is-dragging-app = true;
+                root.dragging-app-item = item;
+                root.drag-x = sx;
+                root.drag-y = sy;
+                root.active-mode = 0; // Close drawer to drop onto homescreen or dock
+            }
+            close-requested => {
+                root.active-mode = 0;
+            }
+        }
+    }
+
+    // Floating drag overlay when moving an app from drawer to homescreen or dock
+    if root.is-dragging-app: Rectangle {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        z: 1000;
+        background: #00000033;
+
+        drag-ta := TouchArea {
+            pointer-event(event) => {
+                if (event.kind == PointerEventKind.move) {
+                    root.drag-x = drag-ta.mouse-x;
+                    root.drag-y = drag-ta.mouse-y;
+                } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
+                    root.is-dragging-app = false;
+                    let drop-y = drag-ta.mouse-y / 1px;
+                    if (drop-y >= 740.0) {
+                        root.app-pinned-to-dock(root.dragging-app-item.id);
+                    } else if (drop-y >= 100.0 && drop-y < 740.0) {
+                        root.app-pinned-to-homescreen(root.dragging-app-item.id);
+                    }
+                }
+            }
+        }
+
+        // Floating App Icon under pointer
+        Rectangle {
+            x: Math.clamp(root.drag-x - 30px, 0px, parent.width - 60px);
+            y: Math.clamp(root.drag-y - 30px, 0px, parent.height - 60px);
+            width: 60px;
+            height: 60px;
+            border-radius: 20px;
+            background: #2b2832EE;
+            border-width: 2px;
+            border-color: Theme.primary;
+
+            if root.dragging-app-item.has-icon: Image {
+                source: root.dragging-app-item.icon;
+                width: 44px;
+                height: 44px;
+                x: 8px;
+                y: 8px;
+            }
+            if !root.dragging-app-item.has-icon: Text {
+                text: "📱";
+                font-size: 26px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+    }
+
+
+    // =========================================================================
+    // MODE 3: ACTIVE REAL WAYLAND APPLICATION CANVAS (Composited by penumbra-comp)
+    // =========================================================================
+    if root.active-mode == 3: Rectangle {
+        x: 0px;
+        y: 42px; // Strictly below status bar (y: 0..42)
+        width: parent.width;
+        height: 841px; // Strictly above navigation bar (y: 883..915)
+        background: #08060B;
+        clip: true;
+    }
+
+    // =========================================================================
+    // MODE 1: RECENTS / OVERVIEW APP SWITCHER (Live Multitasking Carousel)
+    // =========================================================================
+    if root.active-mode == 1: Rectangle {
+        x: 0px;
+        y: 0px;
+        width: 100%;
+        height: 100%;
+        background: #08060BCC;
+
+        // Top App Header above the active card (y: 64px..100px)
+        HorizontalLayout {
+            x: 78px;
+            y: 68px;
+            width: 255px;
+            height: 36px;
+            spacing: 8px;
+            alignment: center;
+
+            Rectangle {
+                width: 28px;
+                height: 28px;
+                border-radius: 8px;
+                background: #1E2522;
+                Text {
+                    text: root.active-app == "terminal" ? "" :
+                          root.active-app == "files" ? "📁" :
+                          root.active-app == "calc" ? "🖩" :
+                          root.active-app == "notes" ? "📝" :
+                          root.active-app == "settings" ? "⚙" : "★";
+                    font-size: 14px;
+                    color: #48E885;
+                    vertical-alignment: center;
+                    horizontal-alignment: center;
+                }
+            }
+
+            Text {
+                text: root.active-app;
+                font-size: Theme.font-title;
+                font-weight: 600;
+                color: Theme.on-surface;
+                vertical-alignment: center;
+            }
+        }
+
+        // Live Task Card Frame: perfectly matches compositor thumbnail (x: 78px, y: 112px, 255x521)
+        Rectangle {
+            x: 78px;
+            y: 112px;
+            width: 255px;
+            height: 521px;
+            border-radius: 20px;
+            background: #141118;
+            border-width: 1.5px;
+            border-color: Theme.primary;
+            clip: true;
+
+            // Touch Area to resume app when card is tapped
+            TouchArea {
+                clicked => {
+                    root.active-mode = 3;
+                    root.resume-active-task();
+                }
+            }
+        }
+
+        // Bottom Action Pill: Clear All (centered below card at y: 658px)
+        Rectangle {
+            x: (parent.width - 140px) / 2;
+            y: 658px;
+            width: 140px;
+            height: 44px;
+            border-radius: Theme.radius-pill;
+            background: Theme.surface-highest;
+            border-width: 1px;
+            border-color: Theme.specular-rim;
+
+            Text {
+                text: "Clear all";
+                font-size: Theme.font-body;
+                font-weight: 600;
+                color: Theme.on-surface;
+                vertical-alignment: center;
+                horizontal-alignment: center;
+            }
+
+            TouchArea {
+                clicked => {
+                    root.active-mode = 0;
+                    root.clear-all-recents();
+                }
+            }
+        }
+    }
+}

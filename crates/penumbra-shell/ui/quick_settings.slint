@@ -1,0 +1,511 @@
+import { Theme } from "theme.slint";
+
+component PillSlider inherits Rectangle {
+    in-out property <float> value: 0.7; // 0.0 to 1.0
+    in property <string> icon-text: "☀";
+    in property <string> label: "Brightness";
+    callback changed(float);
+
+    height: 52px;
+    border-radius: Theme.radius-pill;
+    background: Theme.surface-high;
+    border-width: 1px;
+    border-color: Theme.specular-rim;
+    clip: true;
+
+    // Active fill level
+    Rectangle {
+        x: 0px;
+        y: 0px;
+        width: parent.width * Math.clamp(root.value, 0.0, 1.0);
+        height: parent.height;
+        background: Theme.primary;
+        border-radius: Theme.radius-pill;
+    }
+
+    // Touch Interaction
+    slider-touch := TouchArea {
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.down) {
+                root.value = Math.clamp(slider-touch.mouse-x / root.width, 0.0, 1.0);
+                root.changed(root.value);
+            }
+        }
+        moved => {
+            if (slider-touch.pressed) {
+                root.value = Math.clamp(slider-touch.mouse-x / root.width, 0.0, 1.0);
+                root.changed(root.value);
+            }
+        }
+    }
+
+    HorizontalLayout {
+        padding-left: 18px;
+        padding-right: 18px;
+        alignment: space-between;
+
+        HorizontalLayout {
+            spacing: 12px;
+            alignment: center;
+
+            Text {
+                text: root.icon-text;
+                font-size: 18px;
+                color: root.value > 0.15 ? Theme.on-primary : Theme.on-surface;
+                vertical-alignment: center;
+            }
+
+            Text {
+                text: root.label;
+                font-size: Theme.font-label;
+                font-weight: 600;
+                color: root.value > 0.4 ? Theme.on-primary : Theme.on-surface;
+                vertical-alignment: center;
+            }
+        }
+
+        Text {
+            text: "\{Math.round(root.value * 100.0)}%";
+            font-size: Theme.font-caption;
+            font-weight: 700;
+            color: root.value > 0.85 ? Theme.on-primary : Theme.on-surface-variant;
+            vertical-alignment: center;
+        }
+    }
+}
+
+component QuickToggle inherits Rectangle {
+    in-out property <bool> is-active: false;
+    in property <string> icon-text: "󰤨";
+    in property <string> title: "Toggle";
+    in property <string> subtitle: "Status";
+    callback clicked();
+
+    height: 72px;
+    border-radius: Theme.radius-tile;
+    background: root.is-active ? Theme.primary : Theme.surface-high;
+    border-width: 1px;
+    border-color: root.is-active ? Theme.specular-rim-active : Theme.specular-rim;
+
+    animate background { duration: 180ms; easing: cubic-bezier(0.2, 0.0, 0.0, 1.0); }
+    animate border-color { duration: 180ms; easing: ease-out; }
+
+    TouchArea {
+        clicked => {
+            root.is-active = !root.is-active;
+            root.clicked();
+        }
+    }
+
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        spacing: 12px;
+        alignment: start;
+
+        // Circular icon badge
+        Rectangle {
+            width: 40px;
+            height: 40px;
+            y: (parent.height - self.height) / 2;
+            border-radius: Theme.radius-pill;
+            background: root.is-active ? Theme.on-primary : Theme.surface-highest;
+
+            animate background { duration: 180ms; easing: ease-out; }
+
+            Text {
+                text: root.icon-text;
+                font-size: 18px;
+                color: root.is-active ? Theme.primary : Theme.on-surface;
+                vertical-alignment: center;
+                horizontal-alignment: center;
+            }
+        }
+
+        // Title and Subtitle Text Column
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+
+            Text {
+                text: root.title;
+                font-size: Theme.font-body;
+                font-weight: 700;
+                color: root.is-active ? Theme.on-primary : Theme.on-surface;
+                overflow: elide;
+            }
+
+            Text {
+                text: root.subtitle;
+                font-size: Theme.font-caption;
+                color: root.is-active ? Theme.on-primary : Theme.on-surface-variant;
+                overflow: elide;
+            }
+        }
+    }
+}
+
+export component QuickSettingsDrawer inherits Rectangle {
+    in-out property <float> brightness: 0.75;
+    in-out property <float> volume: 0.60;
+    in-out property <string> time-text: "17:30";
+    in-out property <string> date-text: "Sunday, Oct 19";
+    in-out property <string> carrier-text: "Penumbra 5G";
+
+    in-out property <bool> tile-internet: true;
+    in-out property <bool> tile-bluetooth: true;
+    in-out property <bool> tile-flashlight: false;
+    in-out property <bool> tile-dnd: false;
+    in-out property <bool> tile-hotspot: false;
+    in-out property <bool> tile-rotate: true;
+
+    callback close-requested();
+    callback power-action();
+    callback settings-action();
+    callback brightness-changed(float);
+    callback volume-changed(float);
+    callback handle-down(float, float);
+    callback handle-moved(float, float);
+    callback handle-up(float, float);
+
+    background: #0D0B10F5; // Pitch-black with frosted high-density backing
+    border-radius: 0px;
+    clip: true;
+
+    VerticalLayout {
+        padding-top: 48px;
+        padding-bottom: 24px;
+        padding-left: 20px;
+        padding-right: 20px;
+        spacing: 16px;
+
+        // Top Header: Big Clock + Date & Quick System Controls
+        HorizontalLayout {
+            alignment: space-between;
+
+            VerticalLayout {
+                spacing: 2px;
+                alignment: center;
+
+                Text {
+                    text: root.time-text;
+                    font-size: Theme.font-clock-mid;
+                    font-weight: 800;
+                    color: Theme.on-surface;
+                }
+
+                Text {
+                    text: "\{root.date-text} • \{root.carrier-text}";
+                    font-size: Theme.font-label;
+                    font-weight: 500;
+                    color: Theme.on-surface-variant;
+                }
+            }
+
+            // Quick System Icons: User, Edit, Power, Settings
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: center;
+
+                Rectangle {
+                    width: 42px;
+                    height: 42px;
+                    border-radius: Theme.radius-pill;
+                    background: Theme.surface-high;
+                    border-width: 1px;
+                    border-color: Theme.specular-rim;
+
+                    Text {
+                        text: "⚙";
+                        font-size: 16px;
+                        color: Theme.on-surface;
+                        vertical-alignment: center;
+                        horizontal-alignment: center;
+                    }
+
+                    TouchArea {
+                        clicked => { root.settings-action(); }
+                    }
+                }
+
+                Rectangle {
+                    width: 42px;
+                    height: 42px;
+                    border-radius: Theme.radius-pill;
+                    background: #FFB4AB33;
+                    border-width: 1px;
+                    border-color: #FFB4AB55;
+
+                    Text {
+                        text: "⏻";
+                        font-size: 16px;
+                        color: #FFB4AB;
+                        vertical-alignment: center;
+                        horizontal-alignment: center;
+                    }
+
+                    TouchArea {
+                        clicked => { root.power-action(); }
+                    }
+                }
+            }
+        }
+
+        // Thick Horizontal Pill Sliders for Display Brightness & Media Volume
+        VerticalLayout {
+            spacing: 10px;
+
+            PillSlider {
+                icon-text: "☀";
+                label: "Brightness";
+                value: root.brightness;
+                changed(val) => {
+                    root.brightness = val;
+                    root.brightness-changed(val);
+                }
+            }
+
+            PillSlider {
+                icon-text: "󰕾";
+                label: "Media Volume";
+                value: root.volume;
+                changed(val) => {
+                    root.volume = val;
+                    root.volume-changed(val);
+                }
+            }
+        }
+
+        // 2x3 Grid of Expressive Quick Toggles
+        VerticalLayout {
+            spacing: 10px;
+
+            // Row 1: Internet & Bluetooth
+            HorizontalLayout {
+                spacing: 10px;
+                QuickToggle {
+                    width: (parent.width - 10px) / 2;
+                    is-active: root.tile-internet;
+                    icon-text: "󰤨";
+                    title: "Internet";
+                    subtitle: root.tile-internet ? "5G Connected" : "Disabled";
+                    clicked => { root.tile-internet = self.is-active; }
+                }
+                QuickToggle {
+                    width: (parent.width - 10px) / 2;
+                    is-active: root.tile-bluetooth;
+                    icon-text: "󰂯";
+                    title: "Bluetooth";
+                    subtitle: root.tile-bluetooth ? "Buds Pro 2" : "Off";
+                    clicked => { root.tile-bluetooth = self.is-active; }
+                }
+            }
+
+            // Row 2: Flashlight & Do Not Disturb
+            HorizontalLayout {
+                spacing: 10px;
+                QuickToggle {
+                    width: (parent.width - 10px) / 2;
+                    is-active: root.tile-flashlight;
+                    icon-text: "󰌵";
+                    title: "Flashlight";
+                    subtitle: root.tile-flashlight ? "Active" : "Off";
+                    clicked => { root.tile-flashlight = self.is-active; }
+                }
+                QuickToggle {
+                    width: (parent.width - 10px) / 2;
+                    is-active: root.tile-dnd;
+                    icon-text: "󰍶";
+                    title: "Do Not Disturb";
+                    subtitle: root.tile-dnd ? "Priority Only" : "Off";
+                    clicked => { root.tile-dnd = self.is-active; }
+                }
+            }
+
+            // Row 3: Hotspot & Auto-Rotate
+            HorizontalLayout {
+                spacing: 10px;
+                QuickToggle {
+                    width: (parent.width - 10px) / 2;
+                    is-active: root.tile-hotspot;
+                    icon-text: "󰖩";
+                    title: "Hotspot";
+                    subtitle: root.tile-hotspot ? "Sharing 5G" : "Inactive";
+                    clicked => { root.tile-hotspot = self.is-active; }
+                }
+                QuickToggle {
+                    width: (parent.width - 10px) / 2;
+                    is-active: root.tile-rotate;
+                    icon-text: "󰑮";
+                    title: "Auto-Rotate";
+                    subtitle: root.tile-rotate ? "Portrait / Land" : "Locked";
+                    clicked => { root.tile-rotate = self.is-active; }
+                }
+            }
+        }
+
+        // Media Player Mini-Card (Material 3 Expressive)
+        Rectangle {
+            height: 94px;
+            border-radius: Theme.radius-tile;
+            background: Theme.surface-high;
+            border-width: 1px;
+            border-color: Theme.specular-rim;
+            clip: true;
+
+            HorizontalLayout {
+                padding: 14px;
+                spacing: 14px;
+                alignment: space-between;
+
+                // Album Art
+                Rectangle {
+                    width: 66px;
+                    height: 66px;
+                    border-radius: 18px;
+                    background: #254070;
+
+                    Text {
+                        text: "♫";
+                        font-size: 26px;
+                        color: Theme.primary;
+                        vertical-alignment: center;
+                        horizontal-alignment: center;
+                    }
+                }
+
+                // Track Info & Progress
+                VerticalLayout {
+                    spacing: 4px;
+                    alignment: center;
+
+                    Text {
+                        text: "Resonance";
+                        font-size: Theme.font-body;
+                        font-weight: 700;
+                        color: Theme.on-surface;
+                        overflow: elide;
+                    }
+
+                    Text {
+                        text: "HOME • Odyssey";
+                        font-size: Theme.font-label;
+                        color: Theme.on-surface-variant;
+                        overflow: elide;
+                    }
+
+                    // Progress Track
+                    Rectangle {
+                        height: 4px;
+                        border-radius: 2px;
+                        background: Theme.surface-highest;
+
+                        Rectangle {
+                            x: 0px;
+                            width: parent.width * 0.45;
+                            height: parent.height;
+                            border-radius: 2px;
+                            background: Theme.primary;
+                        }
+                    }
+                }
+
+                // Play / Pause Circle
+                Rectangle {
+                    width: 44px;
+                    height: 44px;
+                    y: (parent.height - self.height) / 2;
+                    border-radius: Theme.radius-pill;
+                    background: Theme.primary;
+
+                    Text {
+                        text: "⏸";
+                        font-size: 16px;
+                        color: Theme.on-primary;
+                        vertical-alignment: center;
+                        horizontal-alignment: center;
+                    }
+                }
+            }
+        }
+
+        // Notification Preview Card
+        Rectangle {
+            height: 76px;
+            border-radius: Theme.radius-tile;
+            background: Theme.surface-low;
+            border-width: 1px;
+            border-color: Theme.specular-rim;
+
+            HorizontalLayout {
+                padding: 14px;
+                spacing: 12px;
+                alignment: start;
+
+                Rectangle {
+                    width: 36px;
+                    height: 36px;
+                    y: (parent.height - self.height) / 2;
+                    border-radius: 12px;
+                    background: Theme.primary-container;
+
+                    Text {
+                        text: "★";
+                        font-size: 18px;
+                        color: Theme.primary;
+                        vertical-alignment: center;
+                        horizontal-alignment: center;
+                    }
+                }
+
+                VerticalLayout {
+                    spacing: 2px;
+                    alignment: center;
+
+                    Text {
+                        text: "Penumbra Core • Wayland Ready";
+                        font-size: Theme.font-label;
+                        font-weight: 700;
+                        color: Theme.on-surface;
+                    }
+
+                    Text {
+                        text: "Wayland convergence active: DSI phone shell ready";
+                        font-size: Theme.font-caption;
+                        color: Theme.on-surface-variant;
+                    }
+                }
+            }
+        }
+
+        // Bottom Dismiss Pull Handle
+        Rectangle {
+            height: 36px;
+            background: transparent;
+
+            Rectangle {
+                width: 56px;
+                height: 5px;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                border-radius: 2.5px;
+                background: Theme.outline;
+            }
+
+            handle-touch := TouchArea {
+                pointer-event(event) => {
+                    if (event.kind == PointerEventKind.down) {
+                        root.handle-down(handle-touch.mouse-x / 1px, handle-touch.mouse-y / 1px);
+                    } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
+                        root.handle-up(handle-touch.mouse-x / 1px, handle-touch.mouse-y / 1px);
+                    }
+                }
+                moved => {
+                    if (handle-touch.pressed) {
+                        root.handle-moved(handle-touch.mouse-x / 1px, handle-touch.mouse-y / 1px);
+                    }
+                }
+            }
+        }
+    }
+}

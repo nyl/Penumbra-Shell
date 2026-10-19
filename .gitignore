@@ -1,0 +1,29 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+
+# Runtime compositor sockets and ephemeral state
+penumbra-shell-state*
+penumbra-shell-cmd*
+penumbra-windows*
+penumbra-target-output*
+wayland-penumbra-*
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Antigravity / AI Agent cache
+.agents/
+.gemini/
+
+# OS specific files
+.DS_Store
+Thumbs.db
+
+# Logs and scratch
+*.log
+scratch/
