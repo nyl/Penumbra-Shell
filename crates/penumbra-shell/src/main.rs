@@ -1,5 +1,5 @@
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 use chrono::Local;
@@ -12,7 +12,7 @@ use penumbra_gestures::{NavGesture, NavGestureRecognizer, Spring};
 use penumbra_services::{BatteryService, NetworkService};
 
 mod apps;
-use apps::{discover_installed_apps, launch_app, InstalledApp};
+use apps::{discover_installed_apps, find_single_app, launch_app, InstalledApp};
 
 mod config;
 use config::{load_layout_config, save_layout_config};
@@ -20,11 +20,17 @@ use config::{load_layout_config, save_layout_config};
 slint::include_modules!();
 
 fn resolve_app_item(id: &str, apps_list: &[InstalledApp]) -> AppItem {
-    if let Some(app) = apps_list.iter().find(|a| {
-        a.id.eq_ignore_ascii_case(id)
-            || a.name.eq_ignore_ascii_case(id)
-            || a.id.to_lowercase().contains(&id.to_lowercase())
-    }) {
+    let app_opt = apps_list
+        .iter()
+        .find(|a| {
+            a.id.eq_ignore_ascii_case(id)
+                || a.name.eq_ignore_ascii_case(id)
+                || a.id.to_lowercase().contains(&id.to_lowercase())
+        })
+        .cloned()
+        .or_else(|| find_single_app(id));
+
+    if let Some(app) = app_opt {
         let (has_icon, img) = if let Some(ref path) = app.icon_path {
             match slint::Image::load_from_path(path) {
                 Ok(img) => (true, img),
@@ -34,8 +40,8 @@ fn resolve_app_item(id: &str, apps_list: &[InstalledApp]) -> AppItem {
             (false, slint::Image::default())
         };
         AppItem {
-            id: app.id.clone().into(),
-            name: app.name.clone().into(),
+            id: app.id.into(),
+            name: app.name.into(),
             has_icon,
             icon: img,
         }
@@ -56,7 +62,14 @@ fn resolve_app_item(id: &str, apps_list: &[InstalledApp]) -> AppItem {
     }
 }
 
-fn scan_wallpapers_from_folders(folders: &[String]) -> Vec<WallpaperItem> {
+#[derive(Clone, Debug)]
+pub struct ScannedWallpaperPath {
+    pub path: String,
+    pub name: String,
+    pub folder: String,
+}
+
+pub fn scan_wallpaper_paths_from_folders(folders: &[String]) -> Vec<ScannedWallpaperPath> {
     let mut items = Vec::new();
     let mut seen_paths = std::collections::HashSet::new();
     let supported_exts = ["png", "jpg", "jpeg", "webp", "svg", "bmp"];
@@ -107,24 +120,21 @@ fn scan_wallpapers_from_folders(folders: &[String]) -> Vec<WallpaperItem> {
                             if supported_exts.iter().any(|&s| s.eq_ignore_ascii_case(ext)) {
                                 let canonical_or_lossy = path.to_string_lossy().to_string();
                                 if seen_paths.insert(canonical_or_lossy.clone()) {
-                                    if let Ok(img) = slint::Image::load_from_path(&path) {
-                                        let name = path
-                                            .file_stem()
-                                            .map(|s| s.to_string_lossy().to_string())
-                                            .unwrap_or_else(|| "Wallpaper".to_string());
-                                        let folder_name = path
-                                            .parent()
-                                            .and_then(|p| p.file_name())
-                                            .map(|s| s.to_string_lossy().to_string())
-                                            .unwrap_or_default();
+                                    let name = path
+                                        .file_stem()
+                                        .map(|s| s.to_string_lossy().to_string())
+                                        .unwrap_or_else(|| "Wallpaper".to_string());
+                                    let folder_name = path
+                                        .parent()
+                                        .and_then(|p| p.file_name())
+                                        .map(|s| s.to_string_lossy().to_string())
+                                        .unwrap_or_default();
 
-                                        items.push(WallpaperItem {
-                                            path: canonical_or_lossy.into(),
-                                            name: name.into(),
-                                            folder: folder_name.into(),
-                                            thumbnail: img,
-                                        });
-                                    }
+                                    items.push(ScannedWallpaperPath {
+                                        path: canonical_or_lossy,
+                                        name,
+                                        folder: folder_name,
+                                    });
                                 }
                             }
                         }
@@ -134,6 +144,23 @@ fn scan_wallpapers_from_folders(folders: &[String]) -> Vec<WallpaperItem> {
         }
     }
     items.sort_by(|a, b| a.name.cmp(&b.name));
+    items
+}
+
+#[cfg(test)]
+fn scan_wallpapers_from_folders(folders: &[String]) -> Vec<WallpaperItem> {
+    let paths = scan_wallpaper_paths_from_folders(folders);
+    let mut items = Vec::new();
+    for p in paths {
+        if let Ok(img) = slint::Image::load_from_path(std::path::Path::new(&p.path)) {
+            items.push(WallpaperItem {
+                path: p.path.into(),
+                name: p.name.into(),
+                folder: p.folder.into(),
+                thumbnail: img,
+            });
+        }
+    }
     items
 }
 
@@ -302,37 +329,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         args.dual_screen && !args.phone_only
     );
 
+    let t0 = Instant::now();
     let ui = ShellRoot::new()?;
+    info!("ShellRoot::new completed in {:.2?}", t0.elapsed());
+
+    let t1 = Instant::now();
     ui.set_convergence_mode(args.dual_screen && !args.phone_only);
     sync_shell_state("home", false, 0);
 
-    // Discover installed XDG applications and populate Slint model
-    let apps_list = Arc::new(discover_installed_apps());
-    let all_slint_apps: Arc<Vec<AppItem>> = {
-        let mut items = Vec::new();
-        for app in apps_list.iter() {
-            let (has_icon, img) = if let Some(ref path) = app.icon_path {
-                match slint::Image::load_from_path(path) {
-                    Ok(img) => (true, img),
-                    Err(_) => (false, slint::Image::default()),
-                }
-            } else {
-                (false, slint::Image::default())
-            };
-
-            items.push(AppItem {
-                id: app.id.clone().into(),
-                name: app.name.clone().into(),
-                has_icon,
-                icon: img,
-            });
-        }
-        Arc::new(items)
-    };
-    ui.set_installed_apps(ModelRc::from(Rc::new(VecModel::from((*all_slint_apps).clone()))));
-
-    let available_ids: Vec<String> = apps_list.iter().map(|a| a.id.clone()).collect();
+    let available_ids: Vec<String> = Vec::new();
     let layout_config = Rc::new(std::cell::RefCell::new(load_layout_config(&available_ids)));
+    info!("load_layout_config completed in {:.2?}", t1.elapsed());
+
+    let apps_list = Arc::new(RwLock::new(Vec::<InstalledApp>::new()));
 
     let ui_weak = ui.as_weak();
 
@@ -344,15 +353,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Rc::new(move || {
             if let Some(ui) = ui_weak.upgrade() {
                 let cfg = layout_config.borrow();
+                let apps = apps_list.read().unwrap();
                 let dock_model = Rc::new(VecModel::default());
                 for id in cfg.dock_apps.iter().take(4) {
-                    dock_model.push(resolve_app_item(id, &apps_list));
+                    dock_model.push(resolve_app_item(id, &apps));
                 }
                 ui.set_dock_apps(ModelRc::from(dock_model));
 
                 let home_model = Rc::new(VecModel::default());
                 for entry in cfg.homescreen_apps.iter() {
-                    let app_item = resolve_app_item(&entry.id, &apps_list);
+                    let app_item = resolve_app_item(&entry.id, &apps);
                     home_model.push(HomescreenItem {
                         id: app_item.id.clone(),
                         name: app_item.name.clone(),
@@ -375,10 +385,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     });
                 }
                 for folder in cfg.folders.iter() {
-                    let p1 = folder.app_ids.first().map(|id| resolve_app_item(id, &apps_list));
-                    let p2 = folder.app_ids.get(1).map(|id| resolve_app_item(id, &apps_list));
-                    let p3 = folder.app_ids.get(2).map(|id| resolve_app_item(id, &apps_list));
-                    let p4 = folder.app_ids.get(3).map(|id| resolve_app_item(id, &apps_list));
+                    let p1 = folder.app_ids.first().map(|id| resolve_app_item(id, &apps));
+                    let p2 = folder.app_ids.get(1).map(|id| resolve_app_item(id, &apps));
+                    let p3 = folder.app_ids.get(2).map(|id| resolve_app_item(id, &apps));
+                    let p4 = folder.app_ids.get(3).map(|id| resolve_app_item(id, &apps));
 
                     home_model.push(HomescreenItem {
                         id: folder.id.clone().into(),
@@ -406,7 +416,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         })
     };
+    let t_models = Instant::now();
     update_layout_models();
+    info!("update_layout_models completed in {:.2?}", t_models.elapsed());
 
     // Helper to refresh Slint running-tasks model from compositor IPC
     let refresh_running_tasks = {
@@ -416,8 +428,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Some(ui) = ui_weak.upgrade() {
                 let tasks = load_running_tasks();
                 let slint_tasks = Rc::new(VecModel::default());
+                let apps = apps_list.read().unwrap();
                 for task in tasks {
-                    let (name, has_icon, icon) = if let Some(app) = apps_list.iter().find(|a| {
+                    let (name, has_icon, icon) = if let Some(app) = apps.iter().find(|a| {
                         a.id.eq_ignore_ascii_case(&task.app_id)
                             || a.name.eq_ignore_ascii_case(&task.app_id)
                             || task.app_id.contains(&a.id)
@@ -852,7 +865,17 @@ fn spawn_real_app(app: &str, target: &str) {
         let apps_lookup = Arc::clone(&apps_list);
         ui.on_app_launched(move |app_id_or_name| {
             let id_str = app_id_or_name.as_str();
-            if let Some(target_app) = apps_lookup.iter().find(|a| a.id == id_str || a.name.eq_ignore_ascii_case(id_str)) {
+            let target_app_opt = {
+                let apps = apps_lookup.read().unwrap();
+                apps.iter().find(|a| a.id == id_str || a.name.eq_ignore_ascii_case(id_str)).cloned()
+            }.or_else(|| find_single_app(id_str));
+
+            let app_name = target_app_opt
+                .as_ref()
+                .map(|a| a.name.clone())
+                .unwrap_or_else(|| app_id_or_name.to_string());
+
+            if let Some(ref target_app) = target_app_opt {
                 if let Err(e) = launch_app(target_app, Some("phone")) {
                     tracing::warn!("Failed to launch XDG app '{}': {}", target_app.name, e);
                 }
@@ -861,7 +884,7 @@ fn spawn_real_app(app: &str, target: &str) {
             }
 
             if let Some(ui) = ui_weak.upgrade() {
-                ui.set_active_app(app_id_or_name);
+                ui.set_active_app(app_name.into());
                 ui.set_active_mode(3);
                 sync_shell_state("app", ui.get_drawer_open(), 0);
             }
@@ -873,7 +896,12 @@ fn spawn_real_app(app: &str, target: &str) {
         let apps_lookup = Arc::clone(&apps_list);
         ui.on_desktop_app_launched(move |app_id_or_name| {
             let id_str = app_id_or_name.as_str();
-            if let Some(target_app) = apps_lookup.iter().find(|a| a.id == id_str || a.name.eq_ignore_ascii_case(id_str)) {
+            let target_app_opt = {
+                let apps = apps_lookup.read().unwrap();
+                apps.iter().find(|a| a.id == id_str || a.name.eq_ignore_ascii_case(id_str)).cloned()
+            }.or_else(|| find_single_app(id_str));
+
+            if let Some(ref target_app) = target_app_opt {
                 if let Err(e) = launch_app(target_app, Some("desktop")) {
                     tracing::warn!("Failed to launch XDG app '{}' on desktop: {}", target_app.name, e);
                 }
@@ -886,32 +914,32 @@ fn spawn_real_app(app: &str, target: &str) {
     // 7. App Drawer Live Search & Filtering Engine
     {
         let ui_weak = ui_weak.clone();
-        let all_apps = Arc::clone(&all_slint_apps);
         let apps_list = Arc::clone(&apps_list);
         ui.on_app_search_query_changed(move |query_slint| {
             let query = query_slint.trim().to_lowercase();
             if let Some(ui) = ui_weak.upgrade() {
+                let apps = apps_list.read().unwrap();
                 if query.is_empty() {
-                    ui.set_installed_apps(ModelRc::from(Rc::new(VecModel::from((*all_apps).clone()))));
+                    let mut items = Vec::with_capacity(apps.len());
+                    for app in apps.iter() {
+                        items.push(resolve_app_item(&app.id, &apps));
+                    }
+                    ui.set_installed_apps(ModelRc::from(Rc::new(VecModel::from(items))));
                 } else {
                     let mut exact_prefix = Vec::new();
                     let mut name_matches = Vec::new();
                     let mut other_matches = Vec::new();
 
-                    for item in all_apps.iter() {
-                        let name_lower = item.name.to_lowercase();
-                        let id_lower = item.id.to_lowercase();
+                    for app in apps.iter() {
+                        let name_lower = app.name.to_lowercase();
+                        let id_lower = app.id.to_lowercase();
 
                         if name_lower.starts_with(&query) || id_lower.starts_with(&query) {
-                            exact_prefix.push(item.clone());
+                            exact_prefix.push(resolve_app_item(&app.id, &apps));
                         } else if name_lower.contains(&query) {
-                            name_matches.push(item.clone());
-                        } else if id_lower.contains(&query) {
-                            other_matches.push(item.clone());
-                        } else if let Some(app) = apps_list.iter().find(|a| a.id == item.id.as_str()) {
-                            if app.exec.to_lowercase().contains(&query) {
-                                other_matches.push(item.clone());
-                            }
+                            name_matches.push(resolve_app_item(&app.id, &apps));
+                        } else if id_lower.contains(&query) || app.exec.to_lowercase().contains(&query) {
+                            other_matches.push(resolve_app_item(&app.id, &apps));
                         }
                     }
 
@@ -928,7 +956,6 @@ fn spawn_real_app(app: &str, target: &str) {
     // App Drawer Search Enter / Accepted -> Launch First Match
     {
         let ui_weak = ui_weak.clone();
-        let all_apps = Arc::clone(&all_slint_apps);
         let apps_list = Arc::clone(&apps_list);
         ui.on_app_search_accepted(move |query_slint| {
             let query = query_slint.trim().to_lowercase();
@@ -936,24 +963,21 @@ fn spawn_real_app(app: &str, target: &str) {
                 return;
             }
             if let Some(ui) = ui_weak.upgrade() {
-                let first_match = all_apps.iter().find(|item| {
-                    let name_lower = item.name.to_lowercase();
-                    let id_lower = item.id.to_lowercase();
+                let apps = apps_list.read().unwrap();
+                let first_match = apps.iter().find(|app| {
+                    let name_lower = app.name.to_lowercase();
+                    let id_lower = app.id.to_lowercase();
                     name_lower.starts_with(&query)
                         || name_lower.contains(&query)
                         || id_lower.contains(&query)
                 }).cloned();
 
-                if let Some(app_item) = first_match {
-                    let id_str = app_item.id.as_str().to_string();
-                    let name_str = app_item.name.as_str().to_string();
+                if let Some(target_app) = first_match {
+                    let id_str = target_app.id.clone();
+                    let name_str = target_app.name.clone();
                     info!("App search enter: launching top result '{}' (id: {})", name_str, id_str);
-                    if let Some(target_app) = apps_list.iter().find(|a| a.id == id_str) {
-                        if let Err(e) = launch_app(target_app, Some("phone")) {
-                            tracing::warn!("Failed to launch XDG app '{}': {}", target_app.name, e);
-                        }
-                    } else {
-                        spawn_real_app(&id_str, "phone");
+                    if let Err(e) = launch_app(&target_app, Some("phone")) {
+                        tracing::warn!("Failed to launch XDG app '{}': {}", target_app.name, e);
                     }
                     ui.set_active_app(name_str.into());
                     ui.set_active_mode(3);
@@ -1283,8 +1307,9 @@ fn spawn_real_app(app: &str, target: &str) {
                 let cfg = layout_config.borrow();
                 if let Some(folder) = cfg.folders.iter().find(|f| f.id == folder_id) {
                     let folder_apps = Rc::new(VecModel::default());
+                    let apps = apps_list.read().unwrap();
                     for id in &folder.app_ids {
-                        folder_apps.push(resolve_app_item(id, &apps_list));
+                        folder_apps.push(resolve_app_item(id, &apps));
                     }
                     ui.set_open_folder_id(folder.id.clone().into());
                     ui.set_open_folder_name(folder.name.clone().into());
@@ -1322,8 +1347,9 @@ fn spawn_real_app(app: &str, target: &str) {
             if let Some(ui) = ui_weak.upgrade() {
                 if let Some(folder) = cfg.folders.iter().find(|f| f.id == folder_id) {
                     let folder_apps = Rc::new(VecModel::default());
+                    let apps = apps_list.read().unwrap();
                     for id in &folder.app_ids {
-                        folder_apps.push(resolve_app_item(id, &apps_list));
+                        folder_apps.push(resolve_app_item(id, &apps));
                     }
                     ui.set_open_folder_apps(ModelRc::from(folder_apps));
                 } else {
@@ -1392,12 +1418,8 @@ fn spawn_real_app(app: &str, target: &str) {
         let ui_weak = ui_weak.clone();
         let layout_config = Rc::clone(&layout_config);
         Rc::new(move || {
+            let folders = layout_config.borrow().wallpaper_folders.clone();
             if let Some(ui) = ui_weak.upgrade() {
-                let folders = layout_config.borrow().wallpaper_folders.clone();
-                let scanned = scan_wallpapers_from_folders(&folders);
-                info!("Scanned {} wallpapers from {:?}", scanned.len(), folders);
-                ui.set_wallpapers(ModelRc::from(Rc::new(VecModel::from(scanned))));
-
                 let folders_model = Rc::new(VecModel::default());
                 for f in &folders {
                     let is_custom = !f.starts_with("/usr/share/backgrounds") && !f.starts_with("/usr/share/wallpapers");
@@ -1408,22 +1430,63 @@ fn spawn_real_app(app: &str, target: &str) {
                 }
                 ui.set_wallpaper_folders(ModelRc::from(folders_model));
             }
+
+            let ui_weak = ui_weak.clone();
+            std::thread::spawn(move || {
+                let scanned_paths = scan_wallpaper_paths_from_folders(&folders);
+                info!("Scanned {} wallpaper paths from {:?}", scanned_paths.len(), folders);
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_weak.upgrade() {
+                        let mut items = Vec::with_capacity(scanned_paths.len());
+                        for p in scanned_paths {
+                            let img = slint::Image::load_from_path(std::path::Path::new(&p.path))
+                                .unwrap_or_default();
+                            items.push(WallpaperItem {
+                                path: p.path.into(),
+                                name: p.name.into(),
+                                folder: p.folder.into(),
+                                thumbnail: img,
+                            });
+                        }
+                        ui.set_wallpapers(ModelRc::from(Rc::new(VecModel::from(items))));
+                    }
+                });
+            });
         })
     };
 
-    // Initialize wallpaper from layout config
+fn load_image_buffer_background(path: &std::path::Path) -> Option<slint::SharedPixelBuffer<slint::Rgb8Pixel>> {
+    let dyn_img = image::open(path).ok()?;
+    let rgb = dyn_img.into_rgb8();
+    let (width, height) = rgb.dimensions();
+    let raw = rgb.into_raw();
+    Some(slint::SharedPixelBuffer::<slint::Rgb8Pixel>::clone_from_slice(&raw, width, height))
+}
+
+    // Initialize wallpaper from layout config asynchronously
     {
         let cfg = layout_config.borrow();
-        if !cfg.wallpaper_path.is_empty() {
-            let wp_path = std::path::Path::new(&cfg.wallpaper_path);
-            if wp_path.exists() {
-                if let Ok(img) = slint::Image::load_from_path(wp_path) {
-                    ui.set_has_wallpaper(true);
-                    ui.set_wallpaper_image(img);
-                    ui.set_current_wallpaper_path(cfg.wallpaper_path.clone().into());
-                    info!("Loaded active wallpaper: {}", cfg.wallpaper_path);
+        let wp_path_str = cfg.wallpaper_path.clone();
+        if !wp_path_str.is_empty() {
+            let ui_weak = ui_weak.clone();
+            std::thread::spawn(move || {
+                let wp_path = std::path::Path::new(&wp_path_str);
+                if wp_path.exists() {
+                    let t_wp = Instant::now();
+                    if let Some(buf) = load_image_buffer_background(wp_path) {
+                        info!("Background wallpaper decode completed in {:.2?}", t_wp.elapsed());
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_weak.upgrade() {
+                                let img = slint::Image::from_rgb8(buf);
+                                ui.set_has_wallpaper(true);
+                                ui.set_wallpaper_image(img);
+                                ui.set_current_wallpaper_path(wp_path_str.into());
+                                info!("Applied active wallpaper to UI");
+                            }
+                        });
+                    }
                 }
-            }
+            });
         }
 
         let default_browse = if let Ok(home) = std::env::var("HOME") {
@@ -1437,10 +1500,8 @@ fn spawn_real_app(app: &str, target: &str) {
             "/home/nyl".to_string()
         };
         ui.set_current_browse_path(default_browse.clone().into());
-        let initial_entries = read_file_browser_entries(std::path::Path::new(&default_browse));
-        ui.set_file_entries(ModelRc::from(Rc::new(VecModel::from(initial_entries))));
+        ui.set_file_entries(ModelRc::from(Rc::new(VecModel::default())));
     }
-    refresh_wallpapers();
 
     // Wallpaper callback: select & apply wallpaper
     {
@@ -1654,6 +1715,58 @@ fn spawn_real_app(app: &str, target: &str) {
         });
     }
 
+    // Background worker for full app discovery
+    {
+        let ui_weak = ui_weak.clone();
+        let apps_list = Arc::clone(&apps_list);
+
+        std::thread::spawn(move || {
+            let start = Instant::now();
+            let discovered = discover_installed_apps();
+            info!(
+                "Background app discovery completed in {:.2?} ({} apps)",
+                start.elapsed(),
+                discovered.len()
+            );
+
+            {
+                let mut list = apps_list.write().unwrap();
+                *list = discovered;
+            }
+
+            let ui_weak = ui_weak.clone();
+            let apps_list = Arc::clone(&apps_list);
+
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = ui_weak.upgrade() {
+                    let apps = apps_list.read().unwrap();
+                    let mut slint_items = Vec::with_capacity(apps.len());
+                    for app in apps.iter() {
+                        let (has_icon, img) = if let Some(ref path) = app.icon_path {
+                            match slint::Image::load_from_path(path) {
+                                Ok(img) => (true, img),
+                                Err(_) => (false, slint::Image::default()),
+                            }
+                        } else {
+                            (false, slint::Image::default())
+                        };
+
+                        slint_items.push(AppItem {
+                            id: app.id.clone().into(),
+                            name: app.name.clone().into(),
+                            has_icon,
+                            icon: img,
+                        });
+                    }
+
+                    ui.set_installed_apps(ModelRc::from(Rc::new(VecModel::from(slint_items))));
+                }
+            });
+        });
+    }
+
+    refresh_wallpapers();
+
     info!("Starting Slint UI main event loop (412x915 @ 20:9)...");
     ui.run()?;
 
@@ -1663,6 +1776,14 @@ fn spawn_real_app(app: &str, target: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_shared_pixel_buffer_send() {
+        fn assert_send<T: Send>() {}
+        assert_send::<slint::SharedPixelBuffer<slint::Rgb8Pixel>>();
+        let buffer = slint::SharedPixelBuffer::<slint::Rgb8Pixel>::clone_from_slice(&[255, 0, 0], 1, 1);
+        let _img = slint::Image::from_rgb8(buffer);
+    }
 
     #[test]
     fn test_shell_root_instantiation_and_properties() {

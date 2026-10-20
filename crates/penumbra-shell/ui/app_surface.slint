@@ -734,6 +734,43 @@ export component AppSurface inherits Rectangle {
         height: 841px; // Strictly above navigation bar (y: 883..915)
         background: #08060B;
         clip: true;
+
+        // Centered App Launch Splash Screen (shown seamlessly while Wayland client initializes surface)
+        VerticalLayout {
+            alignment: center;
+            spacing: 16px;
+
+            Rectangle {
+                width: 72px;
+                height: 72px;
+                border-radius: 20px;
+                background: #181524;
+                border-width: 1px;
+                border-color: #352F48;
+
+                Text {
+                    text: "✨";
+                    font-size: 32px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+
+            Text {
+                text: root.active-app != "" ? root.active-app : "Application";
+                font-size: 20px;
+                font-weight: 700;
+                color: Theme.on-surface;
+                horizontal-alignment: center;
+            }
+
+            Text {
+                text: "Launching application...";
+                font-size: 13px;
+                color: Theme.on-surface-variant;
+                horizontal-alignment: center;
+            }
+        }
     }
 
     // =========================================================================

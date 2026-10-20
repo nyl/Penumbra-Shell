@@ -37,12 +37,7 @@ pub fn discover_installed_apps() -> Vec<InstalledApp> {
                     let exec_clean = clean_exec_cmd(exec_raw);
 
                     // Resolve icon path if specified
-                    let icon_path = entry.icon().and_then(|icon_name| {
-                        freedesktop_icons::lookup(icon_name)
-                            .with_theme("hicolor")
-                            .with_size(64)
-                            .find()
-                    });
+                    let icon_path = entry.icon().and_then(find_icon_fast);
 
                     apps.push(InstalledApp {
                         id,
@@ -60,6 +55,60 @@ pub fn discover_installed_apps() -> Vec<InstalledApp> {
     apps.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     info!("Discovered {} installed XDG applications", apps.len());
     apps
+}
+
+/// Fast icon lookup checking standard system directories before slow freedesktop recursion
+pub fn find_icon_fast(icon_name: &str) -> Option<PathBuf> {
+    let p = std::path::Path::new(icon_name);
+    if p.is_absolute() && p.exists() {
+        return Some(p.to_path_buf());
+    }
+
+    let search_patterns = [
+        format!("/usr/share/icons/hicolor/scalable/apps/{}.svg", icon_name),
+        format!("/usr/share/icons/hicolor/48x48/apps/{}.png", icon_name),
+        format!("/usr/share/icons/hicolor/64x64/apps/{}.png", icon_name),
+        format!("/usr/share/icons/hicolor/128x128/apps/{}.png", icon_name),
+        format!("/usr/share/icons/hicolor/256x256/apps/{}.png", icon_name),
+        format!("/usr/share/icons/hicolor/symbolic/apps/{}-symbolic.svg", icon_name),
+        format!("/usr/share/pixmaps/{}.png", icon_name),
+        format!("/usr/share/pixmaps/{}.svg", icon_name),
+    ];
+
+    for candidate in &search_patterns {
+        let path = std::path::Path::new(candidate);
+        if path.exists() {
+            return Some(path.to_path_buf());
+        }
+    }
+
+    freedesktop_icons::lookup(icon_name)
+        .with_theme("hicolor")
+        .with_size(64)
+        .find()
+}
+
+/// Fast lookup for a single application .desktop file without traversing all directories
+pub fn find_single_app(id: &str) -> Option<InstalledApp> {
+    for base in default_paths() {
+        let direct = base.join(format!("{}.desktop", id));
+        if direct.exists() {
+            if let Ok(entry) = DesktopEntry::from_path(&direct, None::<&[&str]>) {
+                if let Some(name) = entry.name(&[""]) {
+                    let exec_clean = entry.exec().map(clean_exec_cmd).unwrap_or_default();
+                    let icon_path = entry.icon().and_then(find_icon_fast);
+                    return Some(InstalledApp {
+                        id: id.to_string(),
+                        name: name.to_string(),
+                        exec: exec_clean,
+                        icon_path,
+                        terminal: entry.terminal(),
+                    });
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Strips field codes like %f, %F, %u, %U, %i, %c, %k from desktop Exec lines
