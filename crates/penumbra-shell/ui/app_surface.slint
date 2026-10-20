@@ -3,8 +3,9 @@ import { AppItem, TaskItem, HomescreenItem } from "app_item.slint";
 import { BottomDock } from "dock.slint";
 import { ShortcutTile } from "shortcut_tile.slint";
 import { AppDrawer } from "app_drawer.slint";
+import { WallpaperItem, FileEntry, FolderItem, HomescreenContextMenu, WallpaperPicker } from "wallpaper_picker.slint";
 
-export { AppItem, TaskItem, HomescreenItem }
+export { AppItem, TaskItem, HomescreenItem, WallpaperItem, FileEntry, FolderItem }
 
 export component AppSurface inherits Rectangle {
     in-out property <int> active-mode: 0; // 0: Home, 1: Recents Overview, 2: App Drawer, 3: Active App
@@ -59,11 +60,49 @@ export component AppSurface inherits Rectangle {
     callback eval-calc(string, string, string) -> string;
     callback save-file(string, string) -> bool;
 
+    // Wallpaper properties
+    in property <bool> has-wallpaper: false;
+    in property <image> wallpaper-image;
+    in property <string> current-wallpaper-path: "";
+    in property <[WallpaperItem]> wallpapers: [];
+    in property <[FolderItem]> wallpaper-folders: [];
+    in property <[FileEntry]> file-entries: [];
+    in property <string> current-browse-path: "/home/nyl";
+
+    in-out property <bool> show-context-menu: false;
+    in-out property <bool> show-wallpaper-picker: false;
+
+    callback select-wallpaper(string);
+    callback clear-wallpaper();
+    callback browse-to(string);
+    callback add-scan-folder(string);
+    callback remove-scan-folder(string);
+    callback rescan-wallpapers();
+
     background: Theme.base-surface;
     clip: true;
 
-    // Ambient Iris Glow in the background
-    Rectangle {
+    // Active Wallpaper rendering
+    if root.has-wallpaper: Image {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        source: root.wallpaper-image;
+        image-fit: cover;
+    }
+
+    // Scrim overlay to ensure contrast and readability of text and icons
+    if root.has-wallpaper: Rectangle {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        background: #00000030;
+    }
+
+    // Ambient Iris Glow in the background (when no wallpaper is set)
+    if !root.has-wallpaper: Rectangle {
         x: parent.width * 0.1;
         y: parent.height * 0.15;
         width: 320px;
@@ -131,6 +170,7 @@ export component AppSurface inherits Rectangle {
         // Background gesture listener:
         // - Swiping UP opens App Drawer
         // - Swiping LEFT/RIGHT navigates between homescreen pages
+        // - Tap and Hold (450ms) opens Android-style Homescreen Context Menu
         // - Tap exits edit mode
         if root.active-mode == 0 && !root.is-folder-open: TouchArea {
             x: 0px;
@@ -141,14 +181,29 @@ export component AppSurface inherits Rectangle {
             property <float> start-x: 0.0;
             property <float> start-y: 0.0;
             property <bool> is-active: false;
+            property <bool> hold-triggered: false;
+
+            hold-timer := Timer {
+                interval: 450ms;
+                running: false;
+                triggered => {
+                    if (is-active && !hold-triggered && !root.is-dragging-app) {
+                        hold-triggered = true;
+                        root.show-context-menu = true;
+                    }
+                }
+            }
 
             pointer-event(event) => {
                 if (event.kind == PointerEventKind.down) {
                     self.start-x = self.mouse-x / 1px;
                     self.start-y = self.mouse-y / 1px;
                     self.is-active = true;
+                    self.hold-triggered = false;
+                    hold-timer.running = true;
                 } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
-                    if (self.is-active) {
+                    hold-timer.running = false;
+                    if (self.is-active && !self.hold-triggered) {
                         self.is-active = false;
                         let dx = (self.mouse-x / 1px) - self.start-x;
                         let dy = self.start-y - (self.mouse-y / 1px);
@@ -168,6 +223,16 @@ export component AppSurface inherits Rectangle {
                         } else if (Math.abs(dx) < 15.0 && Math.abs(dy) < 15.0 && root.is-editing) {
                             root.is-editing = false; // Tap background -> exit edit mode
                         }
+                    }
+                }
+            }
+
+            moved => {
+                if (self.is-active) {
+                    let move-dx = Math.abs((self.mouse-x / 1px) - self.start-x);
+                    let move-dy = Math.abs((self.mouse-y / 1px) - self.start-y);
+                    if (move-dx > 12.0 || move-dy > 12.0) {
+                        hold-timer.running = false;
                     }
                 }
             }
@@ -942,6 +1007,54 @@ export component AppSurface inherits Rectangle {
                     }
                 }
             }
+        }
+    }
+
+    // Android Homescreen Long-Press Context Menu
+    HomescreenContextMenu {
+        is-open <=> root.show-context-menu;
+        wallpaper-clicked => {
+            root.show-wallpaper-picker = true;
+        }
+        edit-clicked => {
+            root.is-editing = true;
+        }
+        close => {
+            root.show-context-menu = false;
+        }
+    }
+
+    // Full Wallpaper & Style Picker modal
+    WallpaperPicker {
+        is-open <=> root.show-wallpaper-picker;
+        current-wallpaper-path: root.current-wallpaper-path;
+        has-wallpaper: root.has-wallpaper;
+        current-wallpaper-image: root.wallpaper-image;
+        wallpapers: root.wallpapers;
+        folders: root.wallpaper-folders;
+        file-entries: root.file-entries;
+        current-browse-path: root.current-browse-path;
+
+        select-wallpaper(p) => {
+            root.select-wallpaper(p);
+        }
+        clear-wallpaper => {
+            root.clear-wallpaper();
+        }
+        browse-to(p) => {
+            root.browse-to(p);
+        }
+        add-scan-folder(p) => {
+            root.add-scan-folder(p);
+        }
+        remove-scan-folder(p) => {
+            root.remove-scan-folder(p);
+        }
+        rescan-wallpapers => {
+            root.rescan-wallpapers();
+        }
+        close => {
+            root.show-wallpaper-picker = false;
         }
     }
 }

@@ -2,10 +2,10 @@ import { Theme } from "theme.slint";
 import { StatusBar } from "status_bar.slint";
 import { NavBar } from "nav_bar.slint";
 import { QuickSettingsDrawer } from "quick_settings.slint";
-import { AppSurface, AppItem, TaskItem, HomescreenItem } from "app_surface.slint";
+import { AppSurface, AppItem, TaskItem, HomescreenItem, WallpaperItem, FileEntry, FolderItem } from "app_surface.slint";
 import { DesktopSurface } from "desktop_surface.slint";
 
-export { AppItem, TaskItem, HomescreenItem }
+export { AppItem, TaskItem, HomescreenItem, WallpaperItem, FileEntry, FolderItem }
 
 export component ShellRoot inherits Window {
     title: "Penumbra Mobile & Convergence Desktop Environment";
@@ -99,6 +99,22 @@ export component ShellRoot inherits Window {
     callback save-file(string, string) -> bool;
     callback eval-calc(string, string, string) -> string;
 
+    // Wallpaper properties
+    in-out property <bool> has-wallpaper: false;
+    in-out property <image> wallpaper-image;
+    in-out property <string> current-wallpaper-path: "";
+    in property <[WallpaperItem]> wallpapers: [];
+    in property <[FolderItem]> wallpaper-folders: [];
+    in property <[FileEntry]> file-entries: [];
+    in-out property <string> current-browse-path: "/home/nyl";
+
+    callback select-wallpaper(string);
+    callback clear-wallpaper();
+    callback browse-to(string);
+    callback add-scan-folder(string);
+    callback remove-scan-folder(string);
+    callback rescan-wallpapers();
+
     // =========================================================================
     // SCREEN 1: PHONE DISPLAY (DSI-1 • 412x915 @ 120Hz Strict Mobile Policy)
     // =========================================================================
@@ -190,6 +206,31 @@ export component ShellRoot inherits Window {
             }
             eval-calc(a, op, b) => {
                 return root.eval-calc(a, op, b);
+            }
+            has-wallpaper: root.has-wallpaper;
+            wallpaper-image: root.wallpaper-image;
+            current-wallpaper-path: root.current-wallpaper-path;
+            wallpapers: root.wallpapers;
+            wallpaper-folders: root.wallpaper-folders;
+            file-entries: root.file-entries;
+            current-browse-path <=> root.current-browse-path;
+            select-wallpaper(p) => {
+                root.select-wallpaper(p);
+            }
+            clear-wallpaper => {
+                root.clear-wallpaper();
+            }
+            browse-to(p) => {
+                root.browse-to(p);
+            }
+            add-scan-folder(p) => {
+                root.add-scan-folder(p);
+            }
+            remove-scan-folder(p) => {
+                root.remove-scan-folder(p);
+            }
+            rescan-wallpapers => {
+                root.rescan-wallpapers();
             }
         }
 
@@ -327,6 +368,8 @@ export component ShellRoot inherits Window {
             time-str: root.time-str;
             battery-pct: root.battery-pct;
             wifi-connected: root.wifi-connected;
+            has-wallpaper: root.has-wallpaper;
+            wallpaper-image: root.wallpaper-image;
             toggle-hotplug => {
                 root.hdmi-connected = self.is-connected;
             }

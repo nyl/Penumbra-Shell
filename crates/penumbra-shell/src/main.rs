@@ -56,6 +56,127 @@ fn resolve_app_item(id: &str, apps_list: &[InstalledApp]) -> AppItem {
     }
 }
 
+fn scan_wallpapers_from_folders(folders: &[String]) -> Vec<WallpaperItem> {
+    let mut items = Vec::new();
+    let mut seen_paths = std::collections::HashSet::new();
+    let supported_exts = ["png", "jpg", "jpeg", "webp", "svg", "bmp"];
+
+    for folder in folders {
+        let root_dir = std::path::Path::new(folder);
+        if !root_dir.exists() || !root_dir.is_dir() {
+            continue;
+        }
+
+        // Recursively inspect directory up to depth 2 (e.g. /usr/share/backgrounds/gnome)
+        let mut dirs_to_visit = vec![(root_dir.to_path_buf(), 0)];
+        while let Some((dir, depth)) = dirs_to_visit.pop() {
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        if depth < 2 {
+                            dirs_to_visit.push((path, depth + 1));
+                        }
+                    } else if path.is_file() {
+                        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                            if supported_exts.iter().any(|&s| s.eq_ignore_ascii_case(ext)) {
+                                let canonical_or_lossy = path.to_string_lossy().to_string();
+                                if seen_paths.insert(canonical_or_lossy.clone()) {
+                                    if let Ok(img) = slint::Image::load_from_path(&path) {
+                                        let name = path
+                                            .file_stem()
+                                            .map(|s| s.to_string_lossy().to_string())
+                                            .unwrap_or_else(|| "Wallpaper".to_string());
+                                        let folder_name = path
+                                            .parent()
+                                            .and_then(|p| p.file_name())
+                                            .map(|s| s.to_string_lossy().to_string())
+                                            .unwrap_or_default();
+
+                                        items.push(WallpaperItem {
+                                            path: canonical_or_lossy.into(),
+                                            name: name.into(),
+                                            folder: folder_name.into(),
+                                            thumbnail: img,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    items.sort_by(|a, b| a.name.cmp(&b.name));
+    items
+}
+
+fn read_file_browser_entries(dir_path: &std::path::Path) -> Vec<FileEntry> {
+    let mut dirs = Vec::new();
+    let mut images = Vec::new();
+    let mut others = Vec::new();
+    let supported_exts = ["png", "jpg", "jpeg", "webp", "svg", "bmp"];
+
+    if let Ok(entries) = std::fs::read_dir(dir_path) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') {
+                continue;
+            }
+
+            if path.is_dir() {
+                dirs.push(FileEntry {
+                    name: name.into(),
+                    path: path.to_string_lossy().to_string().into(),
+                    is_dir: true,
+                    is_image: false,
+                    size_str: "Folder".into(),
+                });
+            } else if path.is_file() {
+                let is_image = path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(|ext| supported_exts.iter().any(|&s| s.eq_ignore_ascii_case(ext)))
+                    .unwrap_or(false);
+
+                let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+                let size_str = if size > 1_000_000 {
+                    format!("{:.1} MB", size as f64 / 1_000_000.0)
+                } else if size > 1_000 {
+                    format!("{} KB", size / 1_000)
+                } else {
+                    format!("{} B", size)
+                };
+
+                let entry = FileEntry {
+                    name: name.into(),
+                    path: path.to_string_lossy().to_string().into(),
+                    is_dir: false,
+                    is_image,
+                    size_str: size_str.into(),
+                };
+
+                if is_image {
+                    images.push(entry);
+                } else {
+                    others.push(entry);
+                }
+            }
+        }
+    }
+
+    dirs.sort_by(|a, b| a.name.cmp(&b.name));
+    images.sort_by(|a, b| a.name.cmp(&b.name));
+    others.sort_by(|a, b| a.name.cmp(&b.name));
+
+    let mut result = dirs;
+    result.extend(images);
+    result.extend(others);
+    result
+}
+
 #[derive(Parser, Debug, Clone)]
 #[command(
     name = "penumbra-shell",
@@ -1153,6 +1274,170 @@ fn spawn_real_app(app: &str, target: &str) {
                 info!("Toggled dual-screen convergence mode: {}", !current);
                 ui.set_convergence_mode(!current);
             }
+        });
+    }
+
+    // -------------------------------------------------------------------------
+    // Wallpaper & Style Management (Scanned Folders, File Browser & Persistence)
+    // -------------------------------------------------------------------------
+    let refresh_wallpapers = {
+        let ui_weak = ui_weak.clone();
+        let layout_config = Rc::clone(&layout_config);
+        Rc::new(move || {
+            if let Some(ui) = ui_weak.upgrade() {
+                let folders = layout_config.borrow().wallpaper_folders.clone();
+                let scanned = scan_wallpapers_from_folders(&folders);
+                info!("Scanned {} wallpapers from {:?}", scanned.len(), folders);
+                ui.set_wallpapers(ModelRc::from(Rc::new(VecModel::from(scanned))));
+
+                let folders_model = Rc::new(VecModel::default());
+                for f in &folders {
+                    let is_custom = !f.starts_with("/usr/share/backgrounds") && !f.starts_with("/usr/share/wallpapers");
+                    folders_model.push(FolderItem {
+                        path: f.clone().into(),
+                        is_custom,
+                    });
+                }
+                ui.set_wallpaper_folders(ModelRc::from(folders_model));
+            }
+        })
+    };
+
+    // Initialize wallpaper from layout config
+    {
+        let cfg = layout_config.borrow();
+        if !cfg.wallpaper_path.is_empty() {
+            let wp_path = std::path::Path::new(&cfg.wallpaper_path);
+            if wp_path.exists() {
+                if let Ok(img) = slint::Image::load_from_path(wp_path) {
+                    ui.set_has_wallpaper(true);
+                    ui.set_wallpaper_image(img);
+                    ui.set_current_wallpaper_path(cfg.wallpaper_path.clone().into());
+                    info!("Loaded active wallpaper: {}", cfg.wallpaper_path);
+                }
+            }
+        }
+
+        let default_browse = if let Ok(home) = std::env::var("HOME") {
+            let pic = std::path::PathBuf::from(&home).join("Pictures");
+            if pic.exists() {
+                pic.to_string_lossy().to_string()
+            } else {
+                home
+            }
+        } else {
+            "/home/nyl".to_string()
+        };
+        ui.set_current_browse_path(default_browse.clone().into());
+        let initial_entries = read_file_browser_entries(std::path::Path::new(&default_browse));
+        ui.set_file_entries(ModelRc::from(Rc::new(VecModel::from(initial_entries))));
+    }
+    refresh_wallpapers();
+
+    // Wallpaper callback: select & apply wallpaper
+    {
+        let ui_weak = ui_weak.clone();
+        let layout_config = Rc::clone(&layout_config);
+        ui.on_select_wallpaper(move |path_slint| {
+            let path_str = path_slint.as_str().to_string();
+            let path = std::path::Path::new(&path_str);
+            if path.exists() {
+                if let Ok(img) = slint::Image::load_from_path(path) {
+                    if let Some(ui) = ui_weak.upgrade() {
+                        ui.set_has_wallpaper(true);
+                        ui.set_wallpaper_image(img);
+                        ui.set_current_wallpaper_path(path_str.clone().into());
+                    }
+                    let mut cfg = layout_config.borrow_mut();
+                    cfg.set_wallpaper(&path_str);
+                    save_layout_config(&cfg);
+                    info!("Wallpaper updated and saved: {}", path_str);
+                }
+            }
+        });
+    }
+
+    // Wallpaper callback: clear / revert to default gradient
+    {
+        let ui_weak = ui_weak.clone();
+        let layout_config = Rc::clone(&layout_config);
+        ui.on_clear_wallpaper(move || {
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_has_wallpaper(false);
+                ui.set_current_wallpaper_path("".into());
+            }
+            let mut cfg = layout_config.borrow_mut();
+            cfg.set_wallpaper("");
+            save_layout_config(&cfg);
+            info!("Wallpaper cleared (reverted to default ambient iris gradient)");
+        });
+    }
+
+    // Wallpaper callback: file browser navigation
+    {
+        let ui_weak = ui_weak.clone();
+        ui.on_browse_to(move |target_slint| {
+            if let Some(ui) = ui_weak.upgrade() {
+                let target = target_slint.as_str();
+                let current = ui.get_current_browse_path();
+                let next_path = if target == ".." {
+                    std::path::Path::new(current.as_str())
+                        .parent()
+                        .map(|p| p.to_path_buf())
+                        .unwrap_or_else(|| std::path::PathBuf::from("/"))
+                } else {
+                    std::path::PathBuf::from(target)
+                };
+
+                if next_path.is_dir() {
+                    let path_str = next_path.to_string_lossy().to_string();
+                    ui.set_current_browse_path(path_str.into());
+                    let entries = read_file_browser_entries(&next_path);
+                    ui.set_file_entries(ModelRc::from(Rc::new(VecModel::from(entries))));
+                }
+            }
+        });
+    }
+
+    // Wallpaper callback: add scan directory
+    {
+        let layout_config = Rc::clone(&layout_config);
+        let refresh_wp = refresh_wallpapers.clone();
+        ui.on_add_scan_folder(move |folder_slint| {
+            let folder_str = folder_slint.as_str().to_string();
+            let path = std::path::Path::new(&folder_str);
+            if path.is_dir() {
+                let mut cfg = layout_config.borrow_mut();
+                cfg.add_wallpaper_folder(&folder_str);
+                save_layout_config(&cfg);
+                drop(cfg);
+                info!("Added custom wallpaper directory: {}", folder_str);
+                refresh_wp();
+            }
+        });
+    }
+
+    // Wallpaper callback: remove scan directory
+    {
+        let layout_config = Rc::clone(&layout_config);
+        let refresh_wp = refresh_wallpapers.clone();
+        ui.on_remove_scan_folder(move |folder_slint| {
+            let folder_str = folder_slint.as_str();
+            let mut cfg = layout_config.borrow_mut();
+            cfg.remove_wallpaper_folder(folder_str);
+            save_layout_config(&cfg);
+            drop(cfg);
+            info!("Removed wallpaper directory: {}", folder_str);
+            refresh_wp();
+        });
+    }
+
+    // Wallpaper callback: manually rescan
+    {
+        let refresh_wp = refresh_wallpapers.clone();
+        ui.on_rescan_wallpapers(move || {
+            info!("Rescanning wallpaper directories...");
+            refresh_wp();
         });
     }
 

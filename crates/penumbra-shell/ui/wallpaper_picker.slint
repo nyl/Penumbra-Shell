@@ -1,0 +1,951 @@
+import { Theme } from "theme.slint";
+
+export struct WallpaperItem {
+    path: string,
+    name: string,
+    folder: string,
+    thumbnail: image,
+}
+
+export struct FileEntry {
+    name: string,
+    path: string,
+    is-dir: bool,
+    is-image: bool,
+    size-str: string,
+}
+
+export struct FolderItem {
+    path: string,
+    is-custom: bool,
+}
+
+// Android-style floating context menu when tap-and-holding an empty area of the homescreen
+export component HomescreenContextMenu inherits Rectangle {
+    in-out property <bool> is-open: false;
+
+    callback wallpaper-clicked();
+    callback edit-clicked();
+    callback close();
+
+    if root.is-open: Rectangle {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        z: 90;
+
+        // Dismiss backdrop
+        TouchArea {
+            x: 0px;
+            y: 0px;
+            width: parent.width;
+            height: parent.height;
+            clicked => { root.close(); }
+        }
+
+        // Floating popup card centered above bottom dock
+        Rectangle {
+            x: (parent.width - 290px) / 2;
+            y: parent.height - 300px;
+            width: 290px;
+            height: 140px;
+            border-radius: 24px;
+            background: #1A1722F0;
+            border-width: 1px;
+            border-color: Theme.specular-rim;
+            drop-shadow-blur: 24px;
+            drop-shadow-color: #00000088;
+            clip: true;
+
+            VerticalLayout {
+                padding: 10px;
+                spacing: 6px;
+                alignment: center;
+
+                // Wallpaper & Style item
+                Rectangle {
+                    height: 54px;
+                    border-radius: 16px;
+                    background: wp-ta.has-hover ? #ffffff18 : transparent;
+
+                    HorizontalLayout {
+                        padding-left: 14px;
+                        padding-right: 14px;
+                        spacing: 14px;
+                        alignment: center;
+
+                        Rectangle {
+                            width: 36px;
+                            height: 36px;
+                            border-radius: 18px;
+                            background: Theme.primary;
+
+                            Text {
+                                text: "🎨";
+                                font-size: 18px;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: 1px;
+
+                            Text {
+                                text: "Wallpaper & style";
+                                font-size: 15px;
+                                font-weight: 700;
+                                color: Theme.on-surface;
+                            }
+                            Text {
+                                text: "Choose or scan wallpapers";
+                                font-size: 11px;
+                                color: Theme.on-surface-variant;
+                            }
+                        }
+                    }
+
+                    wp-ta := TouchArea {
+                        clicked => {
+                            root.close();
+                            root.wallpaper-clicked();
+                        }
+                    }
+                }
+
+                // Edit Homescreen item
+                Rectangle {
+                    height: 54px;
+                    border-radius: 16px;
+                    background: edit-ta.has-hover ? #ffffff18 : transparent;
+
+                    HorizontalLayout {
+                        padding-left: 14px;
+                        padding-right: 14px;
+                        spacing: 14px;
+                        alignment: center;
+
+                        Rectangle {
+                            width: 36px;
+                            height: 36px;
+                            border-radius: 18px;
+                            background: #2E2838;
+
+                            Text {
+                                text: "✏️";
+                                font-size: 18px;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: 1px;
+
+                            Text {
+                                text: "Edit homescreen";
+                                font-size: 15px;
+                                font-weight: 700;
+                                color: Theme.on-surface;
+                            }
+                            Text {
+                                text: "Rearrange apps & shortcuts";
+                                font-size: 11px;
+                                color: Theme.on-surface-variant;
+                            }
+                        }
+                    }
+
+                    edit-ta := TouchArea {
+                        clicked => {
+                            root.close();
+                            root.edit-clicked();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Full Wallpaper Picker & Manager modal panel
+export component WallpaperPicker inherits Rectangle {
+    in-out property <bool> is-open: false;
+    in property <string> current-wallpaper-path: "";
+    in property <bool> has-wallpaper: false;
+    in property <image> current-wallpaper-image;
+
+    in property <[WallpaperItem]> wallpapers: [];
+    in property <[FolderItem]> folders: [];
+    in property <[FileEntry]> file-entries: [];
+    in property <string> current-browse-path: "/home/nyl";
+
+    // 0: Gallery, 1: File Browser, 2: Folders
+    in-out property <int> active-tab: 0;
+    property <string> selected-filter-folder: "All";
+    property <string> new-folder-input: "";
+
+    callback select-wallpaper(string); // path
+    callback clear-wallpaper();
+    callback browse-to(string); // dir_path
+    callback add-scan-folder(string); // dir_path
+    callback remove-scan-folder(string); // dir_path
+    callback rescan-wallpapers();
+    callback close();
+
+    if root.is-open: Rectangle {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        background: #0A080ECC;
+        z: 100;
+
+        // Dismiss backdrop
+        TouchArea {
+            x: 0px;
+            y: 0px;
+            width: parent.width;
+            height: 110px;
+            clicked => { root.close(); }
+        }
+
+        // Bottom Sheet Container
+        Rectangle {
+            x: 0px;
+            y: 90px;
+            width: parent.width;
+            height: parent.height - 90px;
+            border-top-left-radius: 28px;
+            border-top-right-radius: 28px;
+            background: #141118;
+            border-width: 1px;
+            border-color: Theme.specular-rim;
+            clip: true;
+
+            // Sheet Drag Pill Handle
+            Rectangle {
+                x: (parent.width - 40px) / 2;
+                y: 10px;
+                width: 40px;
+                height: 4px;
+                border-radius: 2px;
+                background: #FFFFFF44;
+            }
+
+            // Header Bar
+            Rectangle {
+                x: 0px;
+                y: 20px;
+                width: parent.width;
+                height: 48px;
+
+                HorizontalLayout {
+                    padding-left: 20px;
+                    padding-right: 20px;
+                    alignment: space-between;
+
+                    VerticalLayout {
+                        alignment: center;
+                        Text {
+                            text: "Wallpaper & Style";
+                            font-size: 20px;
+                            font-weight: 800;
+                            color: Theme.on-surface;
+                        }
+                    }
+
+                    // Close Button (✕)
+                    Rectangle {
+                        width: 36px;
+                        height: 36px;
+                        border-radius: 18px;
+                        background: #25202E;
+
+                        Text {
+                            text: "✕";
+                            font-size: 16px;
+                            font-weight: 700;
+                            color: Theme.on-surface;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+
+                        TouchArea {
+                            clicked => { root.close(); }
+                        }
+                    }
+                }
+            }
+
+            // Tab Navigation Bar (Gallery, File Browser, Scan Folders)
+            Rectangle {
+                x: 16px;
+                y: 74px;
+                width: parent.width - 32px;
+                height: 42px;
+                border-radius: 21px;
+                background: #1F1B27;
+
+                HorizontalLayout {
+                    spacing: 4px;
+                    padding: 4px;
+
+                    // Gallery Tab
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        border-radius: 17px;
+                        background: root.active-tab == 0 ? Theme.primary : transparent;
+
+                        Text {
+                            text: "🖼️ Gallery";
+                            font-size: 13px;
+                            font-weight: 700;
+                            color: root.active-tab == 0 ? #000000 : Theme.on-surface;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+
+                        TouchArea {
+                            clicked => { root.active-tab = 0; }
+                        }
+                    }
+
+                    // File Browser Tab
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        border-radius: 17px;
+                        background: root.active-tab == 1 ? Theme.primary : transparent;
+
+                        Text {
+                            text: "📂 Browse";
+                            font-size: 13px;
+                            font-weight: 700;
+                            color: root.active-tab == 1 ? #000000 : Theme.on-surface;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+
+                        TouchArea {
+                            clicked => { root.active-tab = 1; }
+                        }
+                    }
+
+                    // Folders Tab
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        border-radius: 17px;
+                        background: root.active-tab == 2 ? Theme.primary : transparent;
+
+                        Text {
+                            text: "📁 Folders";
+                            font-size: 13px;
+                            font-weight: 700;
+                            color: root.active-tab == 2 ? #000000 : Theme.on-surface;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+
+                        TouchArea {
+                            clicked => { root.active-tab = 2; }
+                        }
+                    }
+                }
+            }
+
+            // ==========================================
+            // TAB 0: WALLPAPER GALLERY
+            // ==========================================
+            if root.active-tab == 0: Flickable {
+                x: 0px;
+                y: 126px;
+                width: parent.width;
+                height: parent.height - 126px;
+                content-width: parent.width;
+                content-height: 820px;
+
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 16px;
+
+                    // Active Wallpaper Preview Strip
+                    Rectangle {
+                        height: 90px;
+                        border-radius: 18px;
+                        background: #1B1822;
+                        border-width: 1px;
+                        border-color: Theme.specular-rim;
+                        clip: true;
+
+                        HorizontalLayout {
+                            padding: 10px;
+                            spacing: 14px;
+                            alignment: start;
+
+                            // Small preview image
+                            Rectangle {
+                                width: 52px;
+                                height: 70px;
+                                border-radius: 10px;
+                                background: #2A2535;
+                                clip: true;
+
+                                if root.has-wallpaper: Image {
+                                    width: 100%;
+                                    height: 100%;
+                                    source: root.current-wallpaper-image;
+                                    image-fit: cover;
+                                }
+                                if !root.has-wallpaper: Text {
+                                    text: "🎨";
+                                    font-size: 24px;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            VerticalLayout {
+                                alignment: center;
+                                spacing: 4px;
+
+                                Text {
+                                    text: root.has-wallpaper ? "Current Wallpaper" : "Default Gradient";
+                                    font-size: 14px;
+                                    font-weight: 700;
+                                    color: Theme.on-surface;
+                                }
+                                Text {
+                                    text: root.has-wallpaper ? root.current-wallpaper-path : "Penumbra ambient iris theme";
+                                    font-size: 11px;
+                                    color: Theme.on-surface-variant;
+                                    overflow: elide;
+                                }
+                            }
+
+                            // Reset / Clear button
+                            if root.has-wallpaper: Rectangle {
+                                width: 80px;
+                                height: 34px;
+                                border-radius: 17px;
+                                background: #2A2535;
+
+                                Text {
+                                    text: "Reset";
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                    color: #FFB4AB;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+
+                                TouchArea {
+                                    clicked => { root.clear-wallpaper(); }
+                                }
+                            }
+                        }
+                    }
+
+                    // Scanned Wallpapers Header
+                    HorizontalLayout {
+                        alignment: space-between;
+
+                        Text {
+                            text: "Available Wallpapers (" + root.wallpapers.length + ")";
+                            font-size: 16px;
+                            font-weight: 700;
+                            color: Theme.on-surface;
+                        }
+
+                        // Rescan button
+                        Rectangle {
+                            width: 82px;
+                            height: 28px;
+                            border-radius: 14px;
+                            background: #25202E;
+
+                            Text {
+                                text: "🔄 Refresh";
+                                font-size: 11px;
+                                font-weight: 600;
+                                color: Theme.primary;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+
+                            TouchArea {
+                                clicked => { root.rescan-wallpapers(); }
+                            }
+                        }
+                    }
+
+                    // Empty state
+                    if root.wallpapers.length == 0: Rectangle {
+                        height: 160px;
+                        border-radius: 16px;
+                        background: #1B1822;
+
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: 8px;
+
+                            Text {
+                                text: "No wallpapers found in scanned folders";
+                                font-size: 14px;
+                                color: Theme.on-surface-variant;
+                                horizontal-alignment: center;
+                            }
+                            Text {
+                                text: "Use Browse tab or add folders in the Folders tab";
+                                font-size: 12px;
+                                color: Theme.primary;
+                                horizontal-alignment: center;
+                            }
+                        }
+                    }
+
+                    // Wallpaper Grid (2 columns: left column & right column)
+                    if root.wallpapers.length > 0: HorizontalLayout {
+                        spacing: 12px;
+
+                        // Left Column
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            spacing: 12px;
+
+                            for wp[idx] in root.wallpapers: Rectangle {
+                                if Math.mod(idx, 2) == 0: Rectangle {
+                                    height: 180px;
+                                    border-radius: 16px;
+                                    background: #1F1B27;
+                                    border-width: wp.path == root.current-wallpaper-path ? 3px : 1px;
+                                    border-color: wp.path == root.current-wallpaper-path ? Theme.primary : #ffffff18;
+                                    clip: true;
+
+                                    Image {
+                                        width: 100%;
+                                        height: 100%;
+                                        source: wp.thumbnail;
+                                        image-fit: cover;
+                                    }
+
+                                    // Bottom gradient card label
+                                    Rectangle {
+                                        x: 0px;
+                                        y: parent.height - 42px;
+                                        width: parent.width;
+                                        height: 42px;
+                                        background: #0A080ECC;
+
+                                        VerticalLayout {
+                                            padding-left: 8px;
+                                            padding-right: 8px;
+                                            alignment: center;
+
+                                            Text {
+                                                text: wp.name;
+                                                font-size: 11px;
+                                                font-weight: 600;
+                                                color: #FFFFFF;
+                                                overflow: elide;
+                                            }
+                                            Text {
+                                                text: wp.folder;
+                                                font-size: 9px;
+                                                color: #CCCCCC;
+                                                overflow: elide;
+                                            }
+                                        }
+                                    }
+
+                                    // Active checkmark badge
+                                    if wp.path == root.current-wallpaper-path: Rectangle {
+                                        x: parent.width - 28px;
+                                        y: 8px;
+                                        width: 20px;
+                                        height: 20px;
+                                        border-radius: 10px;
+                                        background: Theme.primary;
+
+                                        Text {
+                                            text: "✓";
+                                            font-size: 13px;
+                                            font-weight: 900;
+                                            color: #000000;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+
+                                    TouchArea {
+                                        clicked => {
+                                            root.select-wallpaper(wp.path);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Right Column
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            spacing: 12px;
+
+                            for wp[idx] in root.wallpapers: Rectangle {
+                                if Math.mod(idx, 2) == 1: Rectangle {
+                                    height: 180px;
+                                    border-radius: 16px;
+                                    background: #1F1B27;
+                                    border-width: wp.path == root.current-wallpaper-path ? 3px : 1px;
+                                    border-color: wp.path == root.current-wallpaper-path ? Theme.primary : #ffffff18;
+                                    clip: true;
+
+                                    Image {
+                                        width: 100%;
+                                        height: 100%;
+                                        source: wp.thumbnail;
+                                        image-fit: cover;
+                                    }
+
+                                    // Bottom gradient card label
+                                    Rectangle {
+                                        x: 0px;
+                                        y: parent.height - 42px;
+                                        width: parent.width;
+                                        height: 42px;
+                                        background: #0A080ECC;
+
+                                        VerticalLayout {
+                                            padding-left: 8px;
+                                            padding-right: 8px;
+                                            alignment: center;
+
+                                            Text {
+                                                text: wp.name;
+                                                font-size: 11px;
+                                                font-weight: 600;
+                                                color: #FFFFFF;
+                                                overflow: elide;
+                                            }
+                                            Text {
+                                                text: wp.folder;
+                                                font-size: 9px;
+                                                color: #CCCCCC;
+                                                overflow: elide;
+                                            }
+                                        }
+                                    }
+
+                                    // Active checkmark badge
+                                    if wp.path == root.current-wallpaper-path: Rectangle {
+                                        x: parent.width - 28px;
+                                        y: 8px;
+                                        width: 20px;
+                                        height: 20px;
+                                        border-radius: 10px;
+                                        background: Theme.primary;
+
+                                        Text {
+                                            text: "✓";
+                                            font-size: 13px;
+                                            font-weight: 900;
+                                            color: #000000;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+
+                                    TouchArea {
+                                        clicked => {
+                                            root.select-wallpaper(wp.path);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ==========================================
+            // TAB 1: FILE BROWSER
+            // ==========================================
+            if root.active-tab == 1: Rectangle {
+                x: 0px;
+                y: 126px;
+                width: parent.width;
+                height: parent.height - 126px;
+
+                // Path Header Bar with Up button
+                Rectangle {
+                    x: 16px;
+                    y: 6px;
+                    width: parent.width - 32px;
+                    height: 40px;
+                    border-radius: 12px;
+                    background: #1B1822;
+
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        padding-right: 10px;
+                        spacing: 8px;
+                        alignment: start;
+
+                        // Up Button
+                        Rectangle {
+                            width: 32px;
+                            height: 28px;
+                            border-radius: 6px;
+                            background: #2E2838;
+
+                            Text {
+                                text: "⬆ ..";
+                                font-size: 12px;
+                                font-weight: 700;
+                                color: Theme.primary;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+
+                            TouchArea {
+                                clicked => {
+                                    root.browse-to("..");
+                                }
+                            }
+                        }
+
+                        Text {
+                            text: root.current-browse-path;
+                            font-size: 12px;
+                            color: Theme.on-surface;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                    }
+                }
+
+                // Add Current Folder Action Strip
+                Rectangle {
+                    x: 16px;
+                    y: 52px;
+                    width: parent.width - 32px;
+                    height: 34px;
+                    border-radius: 10px;
+                    background: #25407033;
+                    border-width: 1px;
+                    border-color: Theme.primary;
+
+                    HorizontalLayout {
+                        alignment: center;
+                        spacing: 8px;
+
+                        Text {
+                            text: "➕ Add this folder to Wallpaper Scan Library";
+                            font-size: 12px;
+                            font-weight: 700;
+                            color: Theme.primary;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    TouchArea {
+                        clicked => {
+                            root.add-scan-folder(root.current-browse-path);
+                        }
+                    }
+                }
+
+                // File list
+                Flickable {
+                    x: 16px;
+                    y: 94px;
+                    width: parent.width - 32px;
+                    height: parent.height - 100px;
+                    content-width: parent.width - 32px;
+                    content-height: root.file-entries.length * 48px + 30px;
+
+                    VerticalLayout {
+                        spacing: 4px;
+
+                        for file in root.file-entries: Rectangle {
+                            height: 44px;
+                            border-radius: 10px;
+                            background: file.is-dir ? #1C1824 : #17141E;
+
+                            HorizontalLayout {
+                                padding-left: 12px;
+                                padding-right: 12px;
+                                spacing: 10px;
+                                alignment: space-between;
+
+                                HorizontalLayout {
+                                    spacing: 10px;
+                                    alignment: start;
+
+                                    Text {
+                                        text: file.is-dir ? "📁" : (file.is-image ? "🖼️" : "📄");
+                                        font-size: 16px;
+                                        vertical-alignment: center;
+                                    }
+
+                                    Text {
+                                        text: file.name;
+                                        font-size: 13px;
+                                        font-weight: file.is-dir ? 700 : 500;
+                                        color: file.is-image ? Theme.primary : Theme.on-surface;
+                                        vertical-alignment: center;
+                                        overflow: elide;
+                                    }
+                                }
+
+                                Text {
+                                    text: file.size-str;
+                                    font-size: 11px;
+                                    color: Theme.on-surface-variant;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            TouchArea {
+                                clicked => {
+                                    if (file.is-dir) {
+                                        root.browse-to(file.path);
+                                    } else if (file.is-image) {
+                                        root.select-wallpaper(file.path);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ==========================================
+            // TAB 2: SCAN FOLDERS MANAGEMENT
+            // ==========================================
+            if root.active-tab == 2: Flickable {
+                x: 0px;
+                y: 126px;
+                width: parent.width;
+                height: parent.height - 126px;
+                content-width: parent.width;
+                content-height: root.folders.length * 70px + 200px;
+
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 14px;
+
+                    Text {
+                        text: "Wallpaper Scan Directories";
+                        font-size: 16px;
+                        font-weight: 700;
+                        color: Theme.on-surface;
+                    }
+
+                    Text {
+                        text: "Penumbra automatically scans these directories (and subfolders) for wallpaper images.";
+                        font-size: 12px;
+                        color: Theme.on-surface-variant;
+                    }
+
+                    // Folder Cards List
+                    for folder in root.folders: Rectangle {
+                        height: 60px;
+                        border-radius: 14px;
+                        background: #1C1824;
+                        border-width: 1px;
+                        border-color: Theme.specular-rim;
+
+                        HorizontalLayout {
+                            padding-left: 14px;
+                            padding-right: 14px;
+                            spacing: 12px;
+                            alignment: space-between;
+
+                            HorizontalLayout {
+                                spacing: 12px;
+                                alignment: start;
+
+                                Text {
+                                    text: "📁";
+                                    font-size: 22px;
+                                    vertical-alignment: center;
+                                }
+
+                                VerticalLayout {
+                                    alignment: center;
+                                    spacing: 2px;
+
+                                    Text {
+                                        text: folder.path;
+                                        font-size: 13px;
+                                        font-weight: 600;
+                                        color: Theme.on-surface;
+                                        overflow: elide;
+                                    }
+
+                                    Text {
+                                        text: folder.is-custom ? "Custom Library Folder" : "System / User Backgrounds";
+                                        font-size: 10px;
+                                        color: folder.is-custom ? Theme.primary : Theme.on-surface-variant;
+                                    }
+                                }
+                            }
+
+                            // Remove button for custom folders
+                            if folder.is-custom: Rectangle {
+                                width: 32px;
+                                height: 32px;
+                                border-radius: 16px;
+                                background: #351C22;
+
+                                Text {
+                                    text: "🗑️";
+                                    font-size: 14px;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+
+                                TouchArea {
+                                    clicked => {
+                                        root.remove-scan-folder(folder.path);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Browse & Add new folder prompt
+                    Rectangle {
+                        height: 50px;
+                        border-radius: 14px;
+                        background: #25407033;
+                        border-width: 1px;
+                        border-color: Theme.primary;
+
+                        HorizontalLayout {
+                            alignment: center;
+                            spacing: 8px;
+
+                            Text {
+                                text: "📂 Browse File System to Add Folder";
+                                font-size: 14px;
+                                font-weight: 700;
+                                color: Theme.primary;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        TouchArea {
+                            clicked => {
+                                root.active-tab = 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -28,6 +28,34 @@ fn default_pages() -> i32 {
     1
 }
 
+pub fn default_wallpaper_folders() -> Vec<String> {
+    let mut folders = Vec::new();
+    if PathBuf::from("/usr/share/backgrounds").exists() {
+        folders.push("/usr/share/backgrounds".to_string());
+    }
+    if PathBuf::from("/usr/share/wallpapers").exists() {
+        folders.push("/usr/share/wallpapers".to_string());
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        let p_wall = PathBuf::from(&home).join("Pictures").join("Wallpapers");
+        if p_wall.exists() {
+            folders.push(p_wall.to_string_lossy().to_string());
+        }
+        let p_pic = PathBuf::from(&home).join("Pictures");
+        if p_pic.exists() && !folders.contains(&p_pic.to_string_lossy().to_string()) {
+            folders.push(p_pic.to_string_lossy().to_string());
+        }
+        let p_bg = PathBuf::from(&home).join(".local").join("share").join("backgrounds");
+        if p_bg.exists() && !folders.contains(&p_bg.to_string_lossy().to_string()) {
+            folders.push(p_bg.to_string_lossy().to_string());
+        }
+    }
+    if folders.is_empty() {
+        folders.push("/usr/share/backgrounds".to_string());
+    }
+    folders
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellLayoutConfig {
     pub dock_apps: Vec<String>,
@@ -36,6 +64,10 @@ pub struct ShellLayoutConfig {
     pub folders: Vec<FolderEntry>,
     #[serde(default = "default_pages")]
     pub num_pages: i32,
+    #[serde(default)]
+    pub wallpaper_path: String,
+    #[serde(default = "default_wallpaper_folders")]
+    pub wallpaper_folders: Vec<String>,
 }
 
 impl Default for ShellLayoutConfig {
@@ -50,6 +82,8 @@ impl Default for ShellLayoutConfig {
             homescreen_apps: Vec::new(),
             folders: Vec::new(),
             num_pages: 1,
+            wallpaper_path: String::new(),
+            wallpaper_folders: default_wallpaper_folders(),
         }
     }
 }
@@ -141,6 +175,21 @@ impl ShellLayoutConfig {
         self.homescreen_apps.retain(|e| e.id != id);
         self.folders.retain(|f| f.id != id);
     }
+
+    pub fn set_wallpaper(&mut self, path: &str) {
+        self.wallpaper_path = path.to_string();
+    }
+
+    pub fn add_wallpaper_folder(&mut self, folder: &str) {
+        let f_str = folder.to_string();
+        if !self.wallpaper_folders.contains(&f_str) {
+            self.wallpaper_folders.push(f_str);
+        }
+    }
+
+    pub fn remove_wallpaper_folder(&mut self, folder: &str) {
+        self.wallpaper_folders.retain(|f| f != folder);
+    }
 }
 
 pub fn get_layout_config_path() -> PathBuf {
@@ -219,6 +268,8 @@ pub fn create_default_layout(available_app_ids: &[String]) -> ShellLayoutConfig 
         homescreen_apps: Vec::new(),
         folders: Vec::new(),
         num_pages: 1,
+        wallpaper_path: String::new(),
+        wallpaper_folders: default_wallpaper_folders(),
     }
 }
 
@@ -282,6 +333,8 @@ mod tests {
                 }
             ],
             num_pages: 2,
+            wallpaper_path: "/usr/share/backgrounds/gnome/adwaita-d.jxl".to_string(),
+            wallpaper_folders: vec!["/usr/share/backgrounds".to_string()],
         };
 
         let json = serde_json::to_string_pretty(&cfg).expect("Serialization failed");
@@ -294,6 +347,8 @@ mod tests {
         assert_eq!(deserialized.folders.len(), 1);
         assert_eq!(deserialized.folders[0].name, "Utilities");
         assert_eq!(deserialized.num_pages, 2);
+        assert_eq!(deserialized.wallpaper_path, "/usr/share/backgrounds/gnome/adwaita-d.jxl");
+        assert_eq!(deserialized.wallpaper_folders, vec!["/usr/share/backgrounds".to_string()]);
     }
 
     #[test]

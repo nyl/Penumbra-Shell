@@ -5,6 +5,8 @@ export component DesktopSurface inherits Rectangle {
     in property <string> time-str: "17:30";
     in property <float> battery-pct: 100.0;
     in property <bool> wifi-connected: true;
+    in property <bool> has-wallpaper: false;
+    in property <image> wallpaper-image;
     callback toggle-hotplug();
     callback app-clicked(string);
 
@@ -87,8 +89,23 @@ export component DesktopSurface inherits Rectangle {
             height: parent.height;
             background: #0E0C13;
 
-            // Ambient glow orbs
-            Rectangle {
+            // Active wallpaper rendering
+            if root.has-wallpaper: Image {
+                width: 100%;
+                height: 100%;
+                source: root.wallpaper-image;
+                image-fit: cover;
+            }
+
+            // Dark overlay scrim
+            if root.has-wallpaper: Rectangle {
+                width: 100%;
+                height: 100%;
+                background: #00000030;
+            }
+
+            // Ambient glow orbs (when no wallpaper is set)
+            if !root.has-wallpaper: Rectangle {
                 x: parent.width * 0.35;
                 y: parent.height * 0.15;
                 width: 520px;
@@ -96,7 +113,7 @@ export component DesktopSurface inherits Rectangle {
                 border-radius: 260px;
                 background: #25407026;
             }
-            Rectangle {
+            if !root.has-wallpaper: Rectangle {
                 x: parent.width * 0.65;
                 y: parent.height * 0.45;
                 width: 440px;
