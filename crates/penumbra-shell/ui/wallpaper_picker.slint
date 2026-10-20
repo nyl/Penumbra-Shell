@@ -365,90 +365,95 @@ export component WallpaperPicker inherits Rectangle {
                 width: parent.width;
                 height: parent.height - 126px;
                 content-width: parent.width;
-                content-height: 820px;
+                content-height: 180px + (((root.wallpapers.length + 1) / 2) * 230px) + 60px;
 
-                VerticalLayout {
-                    padding: 16px;
-                    spacing: 16px;
+                // Active Wallpaper Preview Strip
+                Rectangle {
+                    x: 16px;
+                    y: 12px;
+                    width: parent.width - 32px;
+                    height: 90px;
+                    border-radius: 18px;
+                    background: #1B1822;
+                    border-width: 1px;
+                    border-color: Theme.specular-rim;
+                    clip: true;
 
-                    // Active Wallpaper Preview Strip
-                    Rectangle {
-                        height: 90px;
-                        border-radius: 18px;
-                        background: #1B1822;
-                        border-width: 1px;
-                        border-color: Theme.specular-rim;
-                        clip: true;
+                    HorizontalLayout {
+                        padding: 10px;
+                        spacing: 14px;
+                        alignment: start;
 
-                        HorizontalLayout {
-                            padding: 10px;
-                            spacing: 14px;
-                            alignment: start;
+                        // Small preview image
+                        Rectangle {
+                            width: 52px;
+                            height: 70px;
+                            border-radius: 10px;
+                            background: #2A2535;
+                            clip: true;
 
-                            // Small preview image
-                            Rectangle {
-                                width: 52px;
-                                height: 70px;
-                                border-radius: 10px;
-                                background: #2A2535;
-                                clip: true;
+                            if root.has-wallpaper: Image {
+                                width: 100%;
+                                height: 100%;
+                                source: root.current-wallpaper-image;
+                                image-fit: cover;
+                            }
+                            if !root.has-wallpaper: Text {
+                                text: "🎨";
+                                font-size: 24px;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
 
-                                if root.has-wallpaper: Image {
-                                    width: 100%;
-                                    height: 100%;
-                                    source: root.current-wallpaper-image;
-                                    image-fit: cover;
-                                }
-                                if !root.has-wallpaper: Text {
-                                    text: "🎨";
-                                    font-size: 24px;
-                                    horizontal-alignment: center;
-                                    vertical-alignment: center;
-                                }
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: 4px;
+
+                            Text {
+                                text: root.has-wallpaper ? "Current Wallpaper" : "Default Gradient";
+                                font-size: 14px;
+                                font-weight: 700;
+                                color: Theme.on-surface;
+                            }
+                            Text {
+                                text: root.has-wallpaper ? root.current-wallpaper-path : "Penumbra ambient iris theme";
+                                font-size: 11px;
+                                color: Theme.on-surface-variant;
+                                overflow: elide;
+                            }
+                        }
+
+                        // Reset / Clear button
+                        if root.has-wallpaper: Rectangle {
+                            width: 80px;
+                            height: 34px;
+                            border-radius: 17px;
+                            background: #2A2535;
+
+                            Text {
+                                text: "Reset";
+                                font-size: 12px;
+                                font-weight: 600;
+                                color: #FFB4AB;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
                             }
 
-                            VerticalLayout {
-                                alignment: center;
-                                spacing: 4px;
-
-                                Text {
-                                    text: root.has-wallpaper ? "Current Wallpaper" : "Default Gradient";
-                                    font-size: 14px;
-                                    font-weight: 700;
-                                    color: Theme.on-surface;
-                                }
-                                Text {
-                                    text: root.has-wallpaper ? root.current-wallpaper-path : "Penumbra ambient iris theme";
-                                    font-size: 11px;
-                                    color: Theme.on-surface-variant;
-                                    overflow: elide;
-                                }
-                            }
-
-                            // Reset / Clear button
-                            if root.has-wallpaper: Rectangle {
-                                width: 80px;
-                                height: 34px;
-                                border-radius: 17px;
-                                background: #2A2535;
-
-                                Text {
-                                    text: "Reset";
-                                    font-size: 12px;
-                                    font-weight: 600;
-                                    color: #FFB4AB;
-                                    horizontal-alignment: center;
-                                    vertical-alignment: center;
-                                }
-
-                                TouchArea {
-                                    clicked => { root.clear-wallpaper(); }
-                                }
+                            TouchArea {
+                                clicked => { root.clear-wallpaper(); }
                             }
                         }
                     }
+                }
 
-                    // Scanned Wallpapers Header
+                // Scanned Wallpapers Header
+                Rectangle {
+                    x: 16px;
+                    y: 114px;
+                    width: parent.width - 32px;
+                    height: 32px;
+
                     HorizontalLayout {
                         alignment: space-between;
 
@@ -457,11 +462,12 @@ export component WallpaperPicker inherits Rectangle {
                             font-size: 16px;
                             font-weight: 700;
                             color: Theme.on-surface;
+                            vertical-alignment: center;
                         }
 
                         // Rescan button
                         Rectangle {
-                            width: 82px;
+                            width: 86px;
                             height: 28px;
                             border-radius: 14px;
                             background: #25202E;
@@ -480,190 +486,112 @@ export component WallpaperPicker inherits Rectangle {
                             }
                         }
                     }
+                }
 
-                    // Empty state
-                    if root.wallpapers.length == 0: Rectangle {
-                        height: 160px;
-                        border-radius: 16px;
-                        background: #1B1822;
+                // Empty state
+                if root.wallpapers.length == 0: Rectangle {
+                    x: 16px;
+                    y: 160px;
+                    width: parent.width - 32px;
+                    height: 160px;
+                    border-radius: 16px;
+                    background: #1B1822;
+
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 8px;
+
+                        Text {
+                            text: "No wallpapers found in scanned folders";
+                            font-size: 14px;
+                            color: Theme.on-surface-variant;
+                            horizontal-alignment: center;
+                        }
+                        Text {
+                            text: "Use Browse tab or add folders in the Folders tab";
+                            font-size: 12px;
+                            color: Theme.primary;
+                            horizontal-alignment: center;
+                        }
+                    }
+                }
+
+                // Two-Column Grid of Wallpaper Cards
+                for wp[idx] in root.wallpapers: Rectangle {
+                    property <int> grid-col: Math.mod(idx, 2);
+                    property <int> grid-row: Math.floor(idx / 2);
+
+                    x: 16px + (self.grid-col * 200px);
+                    y: 160px + (self.grid-row * 230px);
+                    width: 180px;
+                    height: 216px;
+                    border-radius: 18px;
+                    background: #1F1B27;
+                    border-width: wp.path == root.current-wallpaper-path ? 3px : 1px;
+                    border-color: wp.path == root.current-wallpaper-path ? Theme.primary : #ffffff18;
+                    clip: true;
+
+                    Image {
+                        x: 0px;
+                        y: 0px;
+                        width: 100%;
+                        height: 100%;
+                        source: wp.thumbnail;
+                        image-fit: cover;
+                    }
+
+                    // Bottom gradient card label
+                    Rectangle {
+                        x: 0px;
+                        y: parent.height - 48px;
+                        width: parent.width;
+                        height: 48px;
+                        background: #0A080ECC;
 
                         VerticalLayout {
+                            padding-left: 10px;
+                            padding-right: 10px;
                             alignment: center;
-                            spacing: 8px;
+                            spacing: 2px;
 
                             Text {
-                                text: "No wallpapers found in scanned folders";
-                                font-size: 14px;
-                                color: Theme.on-surface-variant;
-                                horizontal-alignment: center;
+                                text: wp.name;
+                                font-size: 11px;
+                                font-weight: 700;
+                                color: #FFFFFF;
+                                overflow: elide;
                             }
                             Text {
-                                text: "Use Browse tab or add folders in the Folders tab";
-                                font-size: 12px;
-                                color: Theme.primary;
-                                horizontal-alignment: center;
+                                text: wp.folder;
+                                font-size: 9px;
+                                color: #AAAAAA;
+                                overflow: elide;
                             }
                         }
                     }
 
-                    // Wallpaper Grid (2 columns: left column & right column)
-                    if root.wallpapers.length > 0: HorizontalLayout {
-                        spacing: 12px;
+                    // Active checkmark badge
+                    if wp.path == root.current-wallpaper-path: Rectangle {
+                        x: parent.width - 32px;
+                        y: 10px;
+                        width: 22px;
+                        height: 22px;
+                        border-radius: 11px;
+                        background: Theme.primary;
 
-                        // Left Column
-                        VerticalLayout {
-                            horizontal-stretch: 1;
-                            spacing: 12px;
-
-                            for wp[idx] in root.wallpapers: Rectangle {
-                                if Math.mod(idx, 2) == 0: Rectangle {
-                                    height: 180px;
-                                    border-radius: 16px;
-                                    background: #1F1B27;
-                                    border-width: wp.path == root.current-wallpaper-path ? 3px : 1px;
-                                    border-color: wp.path == root.current-wallpaper-path ? Theme.primary : #ffffff18;
-                                    clip: true;
-
-                                    Image {
-                                        width: 100%;
-                                        height: 100%;
-                                        source: wp.thumbnail;
-                                        image-fit: cover;
-                                    }
-
-                                    // Bottom gradient card label
-                                    Rectangle {
-                                        x: 0px;
-                                        y: parent.height - 42px;
-                                        width: parent.width;
-                                        height: 42px;
-                                        background: #0A080ECC;
-
-                                        VerticalLayout {
-                                            padding-left: 8px;
-                                            padding-right: 8px;
-                                            alignment: center;
-
-                                            Text {
-                                                text: wp.name;
-                                                font-size: 11px;
-                                                font-weight: 600;
-                                                color: #FFFFFF;
-                                                overflow: elide;
-                                            }
-                                            Text {
-                                                text: wp.folder;
-                                                font-size: 9px;
-                                                color: #CCCCCC;
-                                                overflow: elide;
-                                            }
-                                        }
-                                    }
-
-                                    // Active checkmark badge
-                                    if wp.path == root.current-wallpaper-path: Rectangle {
-                                        x: parent.width - 28px;
-                                        y: 8px;
-                                        width: 20px;
-                                        height: 20px;
-                                        border-radius: 10px;
-                                        background: Theme.primary;
-
-                                        Text {
-                                            text: "✓";
-                                            font-size: 13px;
-                                            font-weight: 900;
-                                            color: #000000;
-                                            horizontal-alignment: center;
-                                            vertical-alignment: center;
-                                        }
-                                    }
-
-                                    TouchArea {
-                                        clicked => {
-                                            root.select-wallpaper(wp.path);
-                                        }
-                                    }
-                                }
-                            }
+                        Text {
+                            text: "✓";
+                            font-size: 13px;
+                            font-weight: 900;
+                            color: #000000;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
                         }
+                    }
 
-                        // Right Column
-                        VerticalLayout {
-                            horizontal-stretch: 1;
-                            spacing: 12px;
-
-                            for wp[idx] in root.wallpapers: Rectangle {
-                                if Math.mod(idx, 2) == 1: Rectangle {
-                                    height: 180px;
-                                    border-radius: 16px;
-                                    background: #1F1B27;
-                                    border-width: wp.path == root.current-wallpaper-path ? 3px : 1px;
-                                    border-color: wp.path == root.current-wallpaper-path ? Theme.primary : #ffffff18;
-                                    clip: true;
-
-                                    Image {
-                                        width: 100%;
-                                        height: 100%;
-                                        source: wp.thumbnail;
-                                        image-fit: cover;
-                                    }
-
-                                    // Bottom gradient card label
-                                    Rectangle {
-                                        x: 0px;
-                                        y: parent.height - 42px;
-                                        width: parent.width;
-                                        height: 42px;
-                                        background: #0A080ECC;
-
-                                        VerticalLayout {
-                                            padding-left: 8px;
-                                            padding-right: 8px;
-                                            alignment: center;
-
-                                            Text {
-                                                text: wp.name;
-                                                font-size: 11px;
-                                                font-weight: 600;
-                                                color: #FFFFFF;
-                                                overflow: elide;
-                                            }
-                                            Text {
-                                                text: wp.folder;
-                                                font-size: 9px;
-                                                color: #CCCCCC;
-                                                overflow: elide;
-                                            }
-                                        }
-                                    }
-
-                                    // Active checkmark badge
-                                    if wp.path == root.current-wallpaper-path: Rectangle {
-                                        x: parent.width - 28px;
-                                        y: 8px;
-                                        width: 20px;
-                                        height: 20px;
-                                        border-radius: 10px;
-                                        background: Theme.primary;
-
-                                        Text {
-                                            text: "✓";
-                                            font-size: 13px;
-                                            font-weight: 900;
-                                            color: #000000;
-                                            horizontal-alignment: center;
-                                            vertical-alignment: center;
-                                        }
-                                    }
-
-                                    TouchArea {
-                                        clicked => {
-                                            root.select-wallpaper(wp.path);
-                                        }
-                                    }
-                                }
-                            }
+                    TouchArea {
+                        clicked => {
+                            root.select-wallpaper(wp.path);
                         }
                     }
                 }
