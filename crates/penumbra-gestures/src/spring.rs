@@ -51,6 +51,18 @@ impl Spring {
         }
     }
 
+    /// Creates a spring from raw physical parameters: stiffness k, damping coefficient c, and mass m.
+    ///
+    /// Damping ratio zeta is calculated as:
+    ///   zeta = c / (2 * sqrt(k * m))
+    pub fn from_physics(stiffness: f64, damping_coeff: f64, mass: f64) -> Self {
+        assert!(stiffness > 0.0, "Stiffness must be positive");
+        assert!(damping_coeff >= 0.0, "Damping coefficient cannot be negative");
+        assert!(mass > 0.0, "Mass must be positive");
+        let damping_ratio = damping_coeff / (2.0 * (stiffness * mass).sqrt());
+        Self::new(stiffness, damping_ratio, mass)
+    }
+
     /// Material 3 Expressive preset:
     /// Snappy, responsive with a subtle, natural bounce (stiffness 320.0, damping 0.82).
     pub fn expressive() -> Self {

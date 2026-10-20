@@ -77,9 +77,9 @@ use smithay::{
 
 use crate::args::CliArgs;
 use crate::phone::{
-    self, card_x, parse_commands, runtime_path, task_line, write_atomic, PhoneMode, ShellCommand,
-    ShellState, APP_H, APP_Y, CARD_H, CARD_W, CARD_Y, NAV_BAR_H, NAV_BAR_Y, OVERVIEW_SCALE,
-    PHONE_H, PHONE_W, STATUS_BAR_H,
+    self, card_transform, parse_commands, runtime_path, task_line, write_atomic,
+    PhoneMode, ShellCommand, ShellState, APP_H, APP_Y, NAV_BAR_H,
+    NAV_BAR_Y, PHONE_H, PHONE_W, STATUS_BAR_H,
 };
 use crate::policy::{AsymmetricOutputManager, OutputRole};
 use penumbra_gestures::{GestureStateMachine, NavigationGesture, Spring};
@@ -1174,21 +1174,26 @@ impl PenumbraCompositor {
                 let mut overview_elements = Vec::new();
                 if state.shell_state.mode == PhoneMode::Overview && !drawer_open {
                     for (i, task) in state.phone_tasks.iter().enumerate() {
-                        let x = card_x(i, state.overview_scroll);
-                        if x + CARD_W <= 0 || x >= PHONE_W {
+                        let (x, y, w, h, scale) = card_transform(
+                            i,
+                            state.overview_scroll,
+                            state.shell_state.overview_index,
+                            state.shell_state.active_card_dy,
+                        );
+                        if x + w <= 0 || x >= PHONE_W {
                             continue;
                         }
                         let Some(toplevel) = task.window.toplevel() else {
                             continue;
                         };
-                        let card = phys_rect(x, CARD_Y, CARD_W, CARD_H);
+                        let card = phys_rect(x, y, w, h);
                         if let Some(clip) = card.intersection(phone_rect) {
                             overview_elements.extend(cropped(
                                 surface_elements(
                                     renderer,
                                     toplevel.wl_surface(),
-                                    (x, CARD_Y),
-                                    OVERVIEW_SCALE,
+                                    (x, y),
+                                    scale,
                                 ),
                                 clip,
                             ));
@@ -1260,7 +1265,7 @@ impl PenumbraCompositor {
                 // Top layer-shell (panels, docks, applets)
                 draw_render_elements(&mut frame, 1.0, &top_elements, &[damage])?;
 
-                // LAYER 5: Overlay (e.g. popups / lock)
+                // LAYER 5: Overlay (e.g. popups / lock / overview overlay)
                 draw_render_elements(&mut frame, 1.0, &overlay_elements, &[damage])?;
 
                 let _ = frame.finish()?;
@@ -1284,8 +1289,15 @@ impl PenumbraCompositor {
 
             backend.submit(Some(&[damage]))?;
 
-            // Avoid pegging CPU when idle
-            std::thread::sleep(Duration::from_millis(8));
+            // Avoid pegging CPU when idle, but ensure stutter-free 60Hz/120Hz tracking during active drag
+            let is_animating = state.shell_state.is_dragging
+                || (state.shell_state.mode == PhoneMode::Overview
+                    && (state.shell_state.overview_scroll - state.overview_scroll).abs() > 0.001);
+            if is_animating {
+                std::thread::sleep(Duration::from_millis(1));
+            } else {
+                std::thread::sleep(Duration::from_millis(8));
+            }
         }
 
         Ok(())

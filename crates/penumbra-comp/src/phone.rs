@@ -28,15 +28,15 @@ pub const APP_H: i32 = PHONE_H - STATUS_BAR_H - NAV_BAR_H;
 pub const NAV_BAR_Y: i32 = PHONE_H - NAV_BAR_H;
 
 /// Scale applied to app surfaces when shown as overview cards.
-pub const OVERVIEW_SCALE: f64 = 0.62;
-/// Overview card width (412 * 0.62, rounded).
-pub const CARD_W: i32 = 255;
-/// Overview card height (841 * 0.62, rounded).
-pub const CARD_H: i32 = 521;
+pub const OVERVIEW_SCALE: f64 = 0.78;
+/// Overview card width (412 * 0.78, rounded).
+pub const CARD_W: i32 = 321;
+/// Overview card height (841 * 0.78, rounded).
+pub const CARD_H: i32 = 656;
 /// Overview card top edge.
 pub const CARD_Y: i32 = APP_Y + 70;
-/// Horizontal distance between adjacent cards (290px card container + 18px gap).
-pub const CARD_STEP: i32 = 308;
+/// Horizontal distance between adjacent cards (321px width + 20px gap).
+pub const CARD_STEP: i32 = 341;
 
 pub const SHELL_STATE_FILE: &str = "penumbra-shell-state";
 pub const SHELL_CMD_FILE: &str = "penumbra-shell-cmd";
@@ -68,6 +68,7 @@ pub struct ShellState {
     pub overview_index: usize,
     pub overview_scroll: f64,
     pub is_dragging: bool,
+    pub active_card_dy: f64,
 }
 
 impl ShellState {
@@ -90,6 +91,7 @@ impl ShellState {
                     has_scroll = true;
                 }
                 ("is_dragging", v) => s.is_dragging = v == "1" || v == "true",
+                ("active_card_dy", v) => s.active_card_dy = v.parse().unwrap_or(0.0),
                 _ => {}
             }
         }
@@ -106,12 +108,13 @@ impl ShellState {
             PhoneMode::Overview => "overview",
         };
         format!(
-            "mode={}\ndrawer={}\noverview_index={}\noverview_scroll={:.3}\nis_dragging={}\n",
+            "mode={}\ndrawer={}\noverview_index={}\noverview_scroll={:.3}\nis_dragging={}\nactive_card_dy={:.1}\n",
             mode,
             if self.drawer_open { 1 } else { 0 },
             self.overview_index,
             self.overview_scroll,
-            if self.is_dragging { 1 } else { 0 }
+            if self.is_dragging { 1 } else { 0 },
+            self.active_card_dy
         )
     }
 }
@@ -143,6 +146,39 @@ pub fn parse_commands(text: &str) -> Vec<ShellCommand> {
 pub fn card_x(index: usize, scroll: f64) -> i32 {
     let center = ((PHONE_W - CARD_W) / 2) as f64;
     (center - (index as f64 - scroll) * CARD_STEP as f64).round() as i32
+}
+
+/// Computes the exact (x, y, w, h, scale) transform for an overview card,
+/// applying progressive parallax scaling and vertical dismissal translation.
+pub fn card_transform(
+    index: usize,
+    scroll: f64,
+    active_index: usize,
+    active_card_dy: f64,
+) -> (i32, i32, i32, i32, f64) {
+    let dist = (index as f64) - scroll;
+    let abs_dist = dist.abs();
+    // Parallax progressive scaling: Center 1.0, Left/Right neighbors 0.90, Outer cards down to 0.82
+    let card_scale = if abs_dist <= 1.0 {
+        1.0 - (abs_dist * 0.10)
+    } else {
+        (0.90 - ((abs_dist - 1.0) * 0.08)).max(0.82)
+    };
+    let scale = OVERVIEW_SCALE * card_scale;
+    let w = (CARD_W as f64 * card_scale).round() as i32;
+    let h = (CARD_H as f64 * card_scale).round() as i32;
+    let base_centered_x = ((PHONE_W - w) / 2) as f64;
+    let target_x = base_centered_x - (dist * CARD_STEP as f64);
+    let x = target_x.round() as i32;
+    let dy = if index == active_index {
+        active_card_dy
+    } else {
+        0.0
+    };
+    let base_centered_y = ((PHONE_H - h) / 2) as f64;
+    let target_y = base_centered_y + dy;
+    let y = target_y.round() as i32;
+    (x, y, w, h, scale)
 }
 
 /// Serializes a task list line, stripping separators from user-controlled strings.
@@ -178,6 +214,7 @@ mod tests {
             overview_index: 2,
             overview_scroll: 2.0,
             is_dragging: false,
+            active_card_dy: 0.0,
         };
         assert_eq!(ShellState::parse(&s.serialize()), s);
         assert_eq!(ShellState::parse("garbage"), ShellState::default());
@@ -197,10 +234,12 @@ mod tests {
 
     #[test]
     fn overview_cards_layout() {
-        // Active card centered, older card to the left
-        assert_eq!(card_x(0, 0.0), 78);
-        assert_eq!(card_x(1, 0.0), 78 - CARD_STEP);
+        // Active card centered: (412 - 321) / 2 = 45.5 -> round = 46 (or 45)
+        let center = ((PHONE_W - CARD_W) / 2) as f64;
+        let expected_center = center.round() as i32;
+        assert_eq!(card_x(0, 0.0), expected_center);
+        assert_eq!(card_x(1, 0.0), expected_center - CARD_STEP);
         // Scrolling to index 1 centers it
-        assert_eq!(card_x(1, 1.0), 78);
+        assert_eq!(card_x(1, 1.0), expected_center);
     }
 }

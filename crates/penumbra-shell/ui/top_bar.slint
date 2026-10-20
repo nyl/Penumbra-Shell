@@ -16,9 +16,31 @@ export component TopBarWindow inherits Window {
     in-out property <bool> privacy-active: false;
 
     callback top-bar-clicked();
+    callback top-bar-pulled-down(float /* dy */);
 
     touch-area := TouchArea {
-        clicked => { root.top-bar-clicked(); }
+        property <length> press-y: 0px;
+
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.down) {
+                self.press-y = touch-area.mouse-y;
+            } else if (event.kind == PointerEventKind.up) {
+                let dy = touch-area.mouse-y - self.press-y;
+                if (dy > 8px) {
+                    root.top-bar-pulled-down(dy / 1px);
+                } else {
+                    root.top-bar-clicked();
+                }
+            }
+        }
+        moved => {
+            if (touch-area.pressed) {
+                let dy = touch-area.mouse-y - self.press-y;
+                if (dy > 12px) {
+                    root.top-bar-pulled-down(dy / 1px);
+                }
+            }
+        }
     }
 
     // Specular subtle bottom border separating the top bar from underlying windows

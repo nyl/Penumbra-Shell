@@ -715,12 +715,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // 11. Spring physics engine for overview carousel flick momentum & magnetic snap
-    // Underdamped spring-damper system: stiffness 280.0, damping: 26.0 (c = 26.0 -> zeta = 26 / (2*sqrt(280)) = 0.776887)
-    let spring_state = Rc::new(RefCell::new(Spring::new(
-        280.0,
-        26.0 / (2.0 * (280.0_f64).sqrt()),
-        1.0,
-    )));
+    // Underdamped spring-damper system: stiffness 280.0, damping: 26.0 (F = -k*(x - target) - c*v)
+    let spring_state = Rc::new(RefCell::new(Spring::from_physics(280.0, 26.0, 1.0)));
     let spring_timer = Rc::new(RefCell::new(Timer::default()));
     let last_spring_time = Rc::new(RefCell::new(Instant::now()));
 
@@ -746,8 +742,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         ui.on_overview_drag_released(move |current_scroll, velocity_px_s| {
             let release_scroll = current_scroll as f64;
-            // 308px per card step:
-            let step = 308.0;
+            // 341px per card step (321px width + 20px gap):
+            let step = 341.0;
             // velocity_px_s is positive when dragging right (scroll increases towards older tasks),
             // negative when dragging left (scroll decreases towards newer tasks).
             let v_scroll = velocity_px_s as f64 / step;
@@ -827,10 +823,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     {
+        ui.on_active_card_dy_changed(move |dy| {
+            let mut state = ShellState::load();
+            state.active_card_dy = dy as f64;
+            let _ = state.save();
+        });
+    }
+
+    {
         ui.on_exit_overview(move || {
             info!("Overview: Exiting to Home");
             let mut state = ShellState::load();
             state.mode = PhoneMode::Home;
+            state.active_card_dy = 0.0;
             let _ = state.save();
         });
     }
@@ -901,7 +906,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             (display, false, slint::Image::default())
                         };
 
-                        tasks_model.push(TaskItem {
+                        tasks_model.push(AppCardData {
                             id: win.id as i32,
                             app_id: win.app_id.into(),
                             name: name.into(),

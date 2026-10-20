@@ -47,6 +47,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    bar.on_top_bar_pulled_down({
+        move |dy| {
+            let mut state = penumbra_shell::ipc::ShellState::load();
+            if !state.drawer_open {
+                state.drawer_open = true;
+                let _ = state.save();
+                info!("Top Bar pulled down (dy={:.1}) -> opened Quick Settings drawer", dy);
+            }
+        }
+    });
+
     // 3. Telemetry Clock Timer (updates every second)
     let clock_timer = Timer::default();
     {

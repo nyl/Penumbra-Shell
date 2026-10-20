@@ -47,9 +47,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 3. Navigation Gesture Recognizer
     let mut gesture_config = NavGestureConfig::default();
-    gesture_config.overview_distance = 45.0; // Distance needed for slow drag & hold to trigger overview
-    gesture_config.hold_duration = Duration::from_millis(180); // 180ms hold
-    gesture_config.flick_velocity = 500.0;
+    gesture_config.overview_distance = 90.0; // Per spec: "Drag and Pause (y > 90px, v ≈ 0)"
+    gesture_config.hold_duration = Duration::from_millis(150);
+    gesture_config.flick_velocity = 700.0; // Per spec: "Quick Flick Up (v > 700px/s, displacement < 80px)"
     gesture_config.flick_min_distance = 15.0;
     gesture_config.switch_app_min_distance = 35.0;
 

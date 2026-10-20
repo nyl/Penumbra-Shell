@@ -455,7 +455,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         (display_name, false, slint::Image::default())
                     };
 
-                    slint_tasks.push(TaskItem {
+                    slint_tasks.push(AppCardData {
                         id: task.id,
                         app_id: task.app_id.into(),
                         name: name.into(),

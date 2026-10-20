@@ -32,6 +32,7 @@ pub struct ShellState {
     pub overview_index: usize,
     pub overview_scroll: f64,
     pub is_dragging: bool,
+    pub active_card_dy: f64,
 }
 
 impl ShellState {
@@ -53,6 +54,7 @@ impl ShellState {
                     has_scroll = true;
                 }
                 ("is_dragging", v) => s.is_dragging = v == "1" || v == "true",
+                ("active_card_dy", v) => s.active_card_dy = v.parse().unwrap_or(0.0),
                 _ => {}
             }
         }
@@ -69,12 +71,13 @@ impl ShellState {
             PhoneMode::Overview => "overview",
         };
         format!(
-            "mode={}\ndrawer={}\noverview_index={}\noverview_scroll={:.3}\nis_dragging={}\n",
+            "mode={}\ndrawer={}\noverview_index={}\noverview_scroll={:.3}\nis_dragging={}\nactive_card_dy={:.1}\n",
             mode,
             if self.drawer_open { 1 } else { 0 },
             self.overview_index,
             self.overview_scroll,
-            if self.is_dragging { 1 } else { 0 }
+            if self.is_dragging { 1 } else { 0 },
+            self.active_card_dy
         )
     }
 

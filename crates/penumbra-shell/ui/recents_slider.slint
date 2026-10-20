@@ -1,0 +1,242 @@
+import { Theme } from "theme.slint";
+
+export struct AppCardData {
+    id: int,
+    app-id: string,
+    name: string,
+    has-icon: bool,
+    icon: image,
+}
+
+export component RecentsSlider inherits Rectangle {
+    in-out property <length> stage-offset-y: 0px;   // Enters from bottom (915px -> 0px)
+    in-out property <length> track-offset-x: 0px;   // Horizontal slide offset
+    in property <float> backdrop-scrim: 0.55;       // Progressive backdrop scrim (0.0 to 0.55)
+
+    in property <int> active-index: 0;
+    in-out property <float> horizontal-offset: 0.0; // In card units (e.g. 0.0, 1.0)
+    in property <float> scale-factor: 1.0;
+    in-out property <[AppCardData]> running-apps: [];
+
+    callback switch-to-app(int /* app_id */);
+    callback dismiss-app(int /* app_id */);
+    callback horizontal-drag(float /* offset */, bool /* is_dragging */);
+    callback drag-released(float /* current_offset */, float /* velocity */);
+    callback vertical-drag(float /* dy */);
+    callback exit-overview();
+    callback clear-all-recents();
+
+    // Internal interactive tracking
+    in-out property <bool> is-dragging-carousel: false;
+    property <int> safe-index: Math.max(0, Math.min(root.active-index, Math.max(0, root.running-apps.length - 1)));
+    property <length> active-card-dy: 0px;
+    property <int> dismissing-id: -1;
+
+    background: #000000.with-alpha(root.backdrop-scrim);
+    clip: true;
+
+    // Scrim tap to exit overview
+    scrim-tap := TouchArea {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        clicked => {
+            root.exit-overview();
+        }
+    }
+
+    // Empty state when no applications are running
+    if root.running-apps.length == 0: VerticalLayout {
+        alignment: center;
+        spacing: 12px;
+
+        Text {
+            text: "✨";
+            font-size: 42px;
+            horizontal-alignment: center;
+        }
+        Text {
+            text: "No recent applications";
+            font-size: Theme.font-title;
+            font-weight: 700;
+            color: Theme.on-surface;
+            horizontal-alignment: center;
+        }
+        Text {
+            text: "Tap anywhere to return home";
+            font-size: Theme.font-label;
+            color: Theme.on-surface-variant;
+            horizontal-alignment: center;
+        }
+    }
+
+    // Dismissal animation timer
+    dismiss-timer := Timer {
+        interval: 220ms;
+        running: false;
+        triggered => {
+            self.running = false;
+            if (root.dismissing-id >= 0) {
+                root.dismiss-app(root.dismissing-id);
+                root.dismissing-id = -1;
+                root.active-card-dy = 0px;
+                root.vertical-drag(0.0);
+            }
+        }
+    }
+
+    // Transparent HUD & Gesture Capture Layer (NO fake background wireframes/cards)
+    if root.running-apps.length > 0: Rectangle {
+        y: root.stage-offset-y;
+        width: 100%;
+        height: 100%;
+        background: transparent;
+
+        // Motion TouchArea handling direct 1:1 horizontal tracking and vertical dismissal
+        recents-gesture-ta := TouchArea {
+            x: 0px;
+            y: 50px;
+            width: parent.width;
+            height: 740px;
+            z: 20;
+
+            property <float> start-x: 0.0;
+            property <float> start-y: 0.0;
+            property <float> start-offset: 0.0;
+            property <float> last-move-x: 0.0;
+            property <float> velocity-x: 0.0;
+            property <bool> is-horizontal: false;
+            property <bool> is-vertical: false;
+
+            pointer-event(event) => {
+                if (event.kind == PointerEventKind.down) {
+                    self.start-x = recents-gesture-ta.mouse-x / 1px;
+                    self.start-y = recents-gesture-ta.mouse-y / 1px;
+                    self.last-move-x = self.start-x;
+                    self.start-offset = root.horizontal-offset != 0.0 ? root.horizontal-offset : (root.active-index * 1.0);
+                    self.velocity-x = 0.0;
+                    self.is-horizontal = false;
+                    self.is-vertical = false;
+                    root.is-dragging-carousel = false;
+                } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
+                    if (self.is-vertical) {
+                        // Upward dismissal threshold: > 120px
+                        if (root.active-card-dy < -120px) {
+                            if (root.safe-index < root.running-apps.length) {
+                                root.dismissing-id = root.running-apps[root.safe-index].id;
+                                dismiss-timer.running = true;
+                            }
+                        } else {
+                            root.active-card-dy = 0px;
+                            root.vertical-drag(0.0);
+                        }
+                    } else if (self.is-horizontal) {
+                        root.is-dragging-carousel = false;
+                        root.drag-released(root.horizontal-offset, self.velocity-x);
+                    } else {
+                        // Direct tap on the active Wayland window surface selects and focuses it
+                        let click-x = recents-gesture-ta.mouse-x / 1px;
+                        let click-y = recents-gesture-ta.mouse-y / 1px;
+                        if (click-x >= 35.0 && click-x <= 377.0 && click-y >= 100.0 && click-y <= 780.0) {
+                            if (root.safe-index < root.running-apps.length) {
+                                root.switch-to-app(root.running-apps[root.safe-index].id);
+                            }
+                        }
+                    }
+                    self.is-horizontal = false;
+                    self.is-vertical = false;
+                }
+            }
+
+            moved => {
+                if (recents-gesture-ta.pressed) {
+                    let cur-x = recents-gesture-ta.mouse-x / 1px;
+                    let cur-y = recents-gesture-ta.mouse-y / 1px;
+                    let dx = cur-x - self.start-x;
+                    let dy = cur-y - self.start-y;
+
+                    // Disambiguate gesture direction once moved past 8px slop
+                    if (!self.is-horizontal && !self.is-vertical) {
+                        if (Math.abs(dx) > 8.0 && Math.abs(dx) > Math.abs(dy)) {
+                            self.is-horizontal = true;
+                            root.is-dragging-carousel = true;
+                        } else if (dy < -8.0 && Math.abs(dy) > Math.abs(dx)) {
+                            self.is-vertical = true;
+                        }
+                    }
+
+                    if (self.is-horizontal) {
+                        // Direct 1:1 touch displacement tracking (step = 341px)
+                        // Moving finger to the right (dx > 0) increases offset (translates right)
+                        let card-step = 341.0;
+                        let delta-cards = dx / card-step;
+                        let new-offset = self.start-offset + delta-cards;
+
+                        let move-dx = cur-x - self.last-move-x;
+                        self.velocity-x = (move-dx / 0.016); // px/sec
+                        self.last-move-x = cur-x;
+
+                        root.horizontal-offset = new-offset;
+                        root.horizontal-drag(new-offset, true);
+                    } else if (self.is-vertical) {
+                        if (dy <= 0.0) {
+                            root.active-card-dy = dy * 1px;
+                            root.vertical-drag(dy);
+                        }
+                    }
+                }
+            }
+        }
+
+        // HUD: Pagination Dots Indicator
+        HorizontalLayout {
+            y: 796px;
+            height: 12px;
+            alignment: center;
+            spacing: 8px;
+
+            for task[idx] in root.running-apps: Rectangle {
+                width: idx == root.safe-index ? 22px : 8px;
+                height: 8px;
+                border-radius: 4px;
+                background: idx == root.safe-index ? Theme.primary : #ffffff40;
+                animate width { duration: 180ms; easing: ease-out; }
+                animate background { duration: 180ms; easing: ease-out; }
+            }
+        }
+
+        // HUD: "Clear All" Recents Action Button
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: 820px;
+            width: 136px;
+            height: 40px;
+            border-radius: 20px;
+            background: #231F33D0;
+            border-width: 1px;
+            border-color: #ffffff20;
+
+            HorizontalLayout {
+                alignment: center;
+                spacing: 8px;
+                padding-left: 14px;
+                padding-right: 14px;
+
+                Text {
+                    text: "Clear all";
+                    font-size: 14px;
+                    font-weight: 700;
+                    color: Theme.on-surface;
+                    vertical-alignment: center;
+                }
+            }
+
+            TouchArea {
+                clicked => {
+                    root.clear-all-recents();
+                }
+            }
+        }
+    }
+}

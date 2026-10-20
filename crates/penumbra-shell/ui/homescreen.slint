@@ -1,7 +1,7 @@
 import { Theme } from "theme.slint";
-import { AppSurface, AppItem, TaskItem, HomescreenItem, WallpaperItem, FileEntry, FolderItem } from "app_surface.slint";
+import { AppSurface, AppItem, TaskItem, HomescreenItem, WallpaperItem, FileEntry, FolderItem, AppCardData } from "app_surface.slint";
 
-export { AppItem, TaskItem, HomescreenItem, WallpaperItem, FileEntry, FolderItem }
+export { AppItem, TaskItem, HomescreenItem, WallpaperItem, FileEntry, FolderItem, AppCardData }
 
 export component HomescreenWindow inherits Window {
     title: "Penumbra Homescreen";
@@ -30,7 +30,7 @@ export component HomescreenWindow inherits Window {
     in property <bool> reject-dock-drop: false;
 
     // Running Tasks & Overview Carousel
-    in property <[TaskItem]> running-tasks: [];
+    in property <[AppCardData]> running-tasks: [];
     in-out property <int> overview-index: 0;
     in-out property <float> overview-scroll: 0.0;
     in-out property <bool> is-dragging-carousel: false;
@@ -71,6 +71,7 @@ export component HomescreenWindow inherits Window {
     callback overview-index-changed(int);
     callback overview-scroll-changed(float, bool);
     callback overview-drag-released(float, float);
+    callback active-card-dy-changed(float);
     callback exit-overview();
     callback execute-command(string) -> string;
     callback list-directory(string) -> string;
@@ -133,6 +134,7 @@ export component HomescreenWindow inherits Window {
         overview-index-changed(idx) => { root.overview-index-changed(idx); }
         overview-scroll-changed(sc, dragging) => { root.overview-scroll-changed(sc, dragging); }
         overview-drag-released(sc, vel) => { root.overview-drag-released(sc, vel); }
+        active-card-dy-changed(dy) => { root.active-card-dy-changed(dy); }
         exit-overview => { root.exit-overview(); }
         execute-command(cmd) => { return root.execute-command(cmd); }
         list-directory(path) => { return root.list-directory(path); }

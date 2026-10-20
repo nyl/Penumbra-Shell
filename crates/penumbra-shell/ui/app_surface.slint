@@ -4,8 +4,9 @@ import { BottomDock } from "dock.slint";
 import { ShortcutTile } from "shortcut_tile.slint";
 import { AppDrawer } from "app_drawer.slint";
 import { WallpaperItem, FileEntry, FolderItem, HomescreenContextMenu, WallpaperPicker } from "wallpaper_picker.slint";
+import { RecentsSwitcher, AppCardData } from "recents_switcher.slint";
 
-export { AppItem, TaskItem, HomescreenItem, WallpaperItem, FileEntry, FolderItem }
+export { AppItem, TaskItem, HomescreenItem, WallpaperItem, FileEntry, FolderItem, RecentsSwitcher, AppCardData }
 
 export component AppSurface inherits Rectangle {
     in-out property <int> active-mode: 0; // 0: Home, 1: Recents Overview, 2: App Drawer, 3: Active App
@@ -37,7 +38,7 @@ export component AppSurface inherits Rectangle {
     property <int> dwell-ticks: 0;
 
     // Overview running tasks and carousel index
-    in property <[TaskItem]> running-tasks: [];
+    in property <[AppCardData]> running-tasks: [];
     in-out property <int> overview-index: 0;
     in-out property <float> overview-scroll: 0.0;
     in-out property <bool> is-dragging-carousel: false;
@@ -64,6 +65,7 @@ export component AppSurface inherits Rectangle {
     callback overview-index-changed(int);
     callback overview-scroll-changed(float, bool);
     callback overview-drag-released(float, float);
+    callback active-card-dy-changed(float);
     callback exit-overview();
     callback execute-command(string) -> string;
     callback list-directory(string) -> string;
@@ -787,445 +789,39 @@ export component AppSurface inherits Rectangle {
     // =========================================================================
     // MODE 1: RECENTS / OVERVIEW APP SWITCHER (Fluid 120Hz Kinetic Flickable Carousel)
     // =========================================================================
-    if root.active-mode == 1: Rectangle {
+    if root.active-mode == 1: RecentsSwitcher {
         x: 0px;
         y: 0px;
         width: 100%;
         height: 100%;
-        // Dark translucent scrim that dims homescreen and wallpaper cleanly
-        background: #000000B8;
+        active-index: root.safe-overview-index;
+        horizontal-offset: root.overview-scroll;
+        scale-factor: 1.0;
+        running-apps: root.running-tasks;
 
-        // Background tap handler to dismiss app switcher and return home
-        TouchArea {
-            x: 0px;
-            y: 0px;
-            width: parent.width;
-            height: parent.height;
-            clicked => {
-                root.exit-overview();
-            }
+        switch-to-app(id) => {
+            root.select-task(id);
         }
-
-        // Empty state when no apps are running
-        if root.running-tasks.length == 0: VerticalLayout {
-            alignment: center;
-            spacing: 12px;
-
-            Text {
-                text: "✨";
-                font-size: 42px;
-                horizontal-alignment: center;
-            }
-            Text {
-                text: "No recent applications";
-                font-size: Theme.font-title;
-                font-weight: 700;
-                color: Theme.on-surface;
-                horizontal-alignment: center;
-            }
-            Text {
-                text: "Tap anywhere or swipe up to return home";
-                font-size: Theme.font-label;
-                color: Theme.on-surface-variant;
-                horizontal-alignment: center;
-            }
+        dismiss-app(id) => {
+            root.close-task(id);
         }
-
-        // Fluid Kinetic Horizontal Carousel when tasks exist
-        if root.running-tasks.length > 0: Rectangle {
-            x: 0px;
-            y: 0px;
-            width: 100%;
-            height: 100%;
-
-            // Interactive drag tracking timer for flick velocity
-            property <int> drag-tick-count: 0;
-            property <int> dismissing-id: -1;
-            property <length> active-card-dy: 0px;
-
-            overview-drag-timer := Timer {
-                interval: 16ms;
-                running: false;
-                triggered => {
-                    drag-tick-count += 1;
-                }
-            }
-
-            dismiss-timer := Timer {
-                interval: 220ms;
-                running: false;
-                triggered => {
-                    self.running = false;
-                    if (dismissing-id >= 0) {
-                        root.close-task(dismissing-id);
-                        dismissing-id = -1;
-                        active-card-dy = 0px;
-                    }
-                }
-            }
-
-            // Cards Carousel: Progressive scaling & parallax centered at x = (412 - 290) / 2 = 61px
-            for task[idx] in root.running-tasks: Rectangle {
-                // Distance from viewport center in cards:
-                property <float> dist: (idx * 1.0) - root.overview-scroll;
-                property <float> abs-dist: Math.abs(self.dist);
-
-                // Progressive scaling: Center 1.0, Left/Right neighbors 0.90, Outer cards 0.82
-                property <float> card-scale: self.abs-dist <= 1.0
-                    ? (1.0 - (self.abs-dist * 0.10))
-                    : Math.max(0.82, 0.90 - ((self.abs-dist - 1.0) * 0.08));
-
-                // Ambient opacity: Diminishes as cards move off-center (1.0 -> 0.75)
-                property <float> card-opacity: Math.max(0.75, 1.0 - (self.abs-dist * 0.125));
-
-                width: 290px * self.card-scale;
-                height: 580px * self.card-scale;
-
-                // Center x = 61px + (290px / 2) = 206px; track moves by 308px per card
-                x: 206px - (self.dist * 308px) - (self.width / 2);
-                y: 62px + 290px - (self.height / 2)
-                    + (task.id == dismissing-id ? -750px : (idx == root.safe-overview-index ? active-card-dy : 0px));
-
-                opacity: task.id == dismissing-id ? 0.0 : self.card-opacity;
-
-                animate y {
-                    duration: task.id == dismissing-id ? 220ms : 0ms;
-                    easing: ease-in;
-                }
-                animate opacity {
-                    duration: task.id == dismissing-id ? 200ms : 0ms;
-                }
-
-                // Ambient drop shadow for the card container
-                Rectangle {
-                    x: 0px;
-                    y: 6px;
-                    width: parent.width;
-                    height: parent.height;
-                    border-radius: 26px;
-                    background: #00000080;
-                }
-
-                // Main Card Container: Encloses the header AND app window inside rounded borders
-                Rectangle {
-                    x: 0px;
-                    y: 0px;
-                    width: parent.width;
-                    height: parent.height;
-                    border-radius: 24px;
-                    background: #171420FA;
-                    border-width: 2px;
-                    border-color: idx == root.safe-overview-index ? Theme.primary : #ffffff24;
-
-                    // Card Header Bar (App Icon + Title + Close Button)
-                    Rectangle {
-                        x: 12px;
-                        y: 8px;
-                        width: parent.width - 24px;
-                        height: 36px;
-
-                        HorizontalLayout {
-                            spacing: 8px;
-                            alignment: start;
-
-                            Rectangle {
-                                width: 26px;
-                                height: 26px;
-                                border-radius: 8px;
-                                background: #252332;
-                                clip: true;
-
-                                if task.has-icon: Image {
-                                    source: task.icon;
-                                    width: 20px;
-                                    height: 20px;
-                                    x: 3px;
-                                    y: 3px;
-                                }
-                                if !task.has-icon: Text {
-                                    text: "📱";
-                                    font-size: 14px;
-                                    vertical-alignment: center;
-                                    horizontal-alignment: center;
-                                }
-                            }
-
-                            Text {
-                                text: task.name;
-                                font-size: 14px;
-                                font-weight: 600;
-                                color: #FFFFFF;
-                                vertical-alignment: center;
-                                overflow: elide;
-                                horizontal-stretch: 1;
-                            }
-
-                            // Close button for the card
-                            Rectangle {
-                                width: 26px;
-                                height: 26px;
-                                border-radius: 13px;
-                                background: #ffffff15;
-
-                                Text {
-                                    text: "✕";
-                                    font-size: 11px;
-                                    font-weight: 700;
-                                    color: #FFFFFFB0;
-                                    vertical-alignment: center;
-                                    horizontal-alignment: center;
-                                }
-
-                                TouchArea {
-                                    clicked => {
-                                        dismissing-id = task.id;
-                                        dismiss-timer.running = true;
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Recessed aperture framing the live Wayland surface (255x521 at global x = card_x, y = 112px)
-                    Rectangle {
-                        x: (parent.width - 255px) / 2;
-                        y: 50px;
-                        width: 255px;
-                        height: 521px;
-                        border-radius: 16px;
-                        background: #0c0a12;
-                        border-width: 1px;
-                        border-color: #ffffff14;
-                    }
-                }
-            }
-
-            // Overview Gesture Area (fluid 1:1 finger tracking drag, vertical dismissal, and magnetic snap)
-            overview-gesture-ta := TouchArea {
-                x: 0px;
-                y: 50px;
-                width: parent.width;
-                height: 595px;
-                z: 10;
-
-                property <float> start-x: 0.0;
-                property <float> start-y: 0.0;
-                property <float> start-scroll: 0.0;
-                property <bool> is-active: false;
-                property <bool> is-horizontal-drag: false;
-                property <bool> is-vertical-drag: false;
-
-                pointer-event(event) => {
-                    if (event.kind == PointerEventKind.down) {
-                        self.start-x = overview-gesture-ta.mouse-x / 1px;
-                        self.start-y = overview-gesture-ta.mouse-y / 1px;
-                        self.start-scroll = root.overview-scroll;
-                        self.is-active = true;
-                        self.is-horizontal-drag = false;
-                        self.is-vertical-drag = false;
-                        active-card-dy = 0px;
-                        root.is-dragging-carousel = false;
-                        drag-tick-count = 0;
-                        overview-drag-timer.running = true;
-                    } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
-                        overview-drag-timer.running = false;
-                        if (self.is-active) {
-                            self.is-active = false;
-                            let total-dx = (overview-gesture-ta.mouse-x / 1px) - self.start-x;
-                            let total-dy = (overview-gesture-ta.mouse-y / 1px) - self.start-y;
-                            let dt-s = Math.max(0.016, (drag-tick-count * 16) / 1000.0);
-
-                            if (self.is-vertical-drag) {
-                                self.is-vertical-drag = false;
-                                let up-velocity = -total-dy / dt-s; // px/s upward
-                                if (total-dy < -140.0 || up-velocity > 650.0) {
-                                    // Kill animation: accelerate upward while fading to 0.0
-                                    dismissing-id = root.running-tasks[root.safe-overview-index].id;
-                                    dismiss-timer.running = true;
-                                } else {
-                                    // Snap back to resting position
-                                    active-card-dy = 0px;
-                                }
-                            } else if (self.is-horizontal-drag) {
-                                self.is-horizontal-drag = false;
-                                root.is-dragging-carousel = false;
-                                let velocity-px-s = total-dx / dt-s;
-                                root.overview-drag-released(root.overview-scroll, velocity-px-s);
-                            } else {
-                                // Tap / Click detection
-                                if (Math.abs(total-dx) < 15.0 && Math.abs(total-dy) < 15.0) {
-                                    let tap-x = overview-gesture-ta.mouse-x / 1px;
-                                    if (tap-x >= 61.0 && tap-x <= 351.0) {
-                                        // Tap centered card -> restore fullscreen control to xdg_toplevel
-                                        root.select-task(root.running-tasks[root.safe-overview-index].id);
-                                    } else if (tap-x < 61.0 && root.safe-overview-index < root.running-tasks.length - 1) {
-                                        root.overview-drag-released(root.overview-scroll, 850.0);
-                                    } else if (tap-x > 351.0 && root.safe-overview-index > 0) {
-                                        root.overview-drag-released(root.overview-scroll, -850.0);
-                                    } else {
-                                        root.exit-overview();
-                                    }
-                                } else if (total-dy > 60.0 && Math.abs(total-dy) > Math.abs(total-dx)) {
-                                    // Flick downward -> also re-enter centered app
-                                    root.select-task(root.running-tasks[root.safe-overview-index].id);
-                                }
-                            }
-                        }
-                    }
-                }
-
-                moved => {
-                    if (self.is-active) {
-                        let cur-dx = (overview-gesture-ta.mouse-x / 1px) - self.start-x;
-                        let cur-dy = (overview-gesture-ta.mouse-y / 1px) - self.start-y;
-
-                        if (!self.is-horizontal-drag && !self.is-vertical-drag) {
-                            if (cur-dy < -10.0 && Math.abs(cur-dy) > Math.abs(cur-dx) * 1.4) {
-                                self.is-vertical-drag = true;
-                            } else if (Math.abs(cur-dx) > 6.0) {
-                                self.is-horizontal-drag = true;
-                                root.is-dragging-carousel = true;
-                            }
-                        }
-
-                        if (self.is-horizontal-drag) {
-                            let delta-scroll = cur-dx / 308.0;
-                            let raw-candidate = self.start-scroll + delta-scroll;
-                            let max-scroll = (root.running-tasks.length - 1) * 1.0;
-
-                            // Rubber-band resistance at carousel edges
-                            let candidate = raw-candidate < 0.0
-                                ? (raw-candidate * 0.35)
-                                : (raw-candidate > max-scroll
-                                    ? (max-scroll + (raw-candidate - max-scroll) * 0.35)
-                                    : raw-candidate);
-
-                            root.overview-scroll = candidate;
-                            root.overview-scroll-changed(candidate, true);
-                        }
-
-                        if (self.is-vertical-drag) {
-                            // Drag upward on the active card
-                            active-card-dy = Math.min(0.0, cur-dy) * 1px;
-                        }
-                    }
-                }
-            }
-
-            // Left Chevron Arrow (visible when older tasks exist on the left: index < tasks.length - 1)
-            if root.safe-overview-index < root.running-tasks.length - 1: Rectangle {
-                x: 14px;
-                y: 330px;
-                width: 44px;
-                height: 44px;
-                border-radius: 22px;
-                background: #1E1B24DD;
-                border-width: 1px;
-                border-color: Theme.specular-rim;
-                z: 50;
-
-                Text {
-                    text: "‹";
-                    font-size: 26px;
-                    font-weight: 800;
-                    color: #FFFFFF;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                }
-
-                TouchArea {
-                    clicked => {
-                        root.is-dragging-carousel = false;
-                        root.overview-drag-released(root.overview-scroll, 850.0);
-                    }
-                }
-            }
-
-            // Right Chevron Arrow (visible when newer tasks exist on the right: index > 0)
-            if root.safe-overview-index > 0: Rectangle {
-                x: 354px;
-                y: 330px;
-                width: 44px;
-                height: 44px;
-                border-radius: 22px;
-                background: #1E1B24DD;
-                border-width: 1px;
-                border-color: Theme.specular-rim;
-                z: 50;
-
-                Text {
-                    text: "›";
-                    font-size: 26px;
-                    font-weight: 800;
-                    color: #FFFFFF;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                }
-
-                TouchArea {
-                    clicked => {
-                        root.is-dragging-carousel = false;
-                        root.overview-drag-released(root.overview-scroll, -850.0);
-                    }
-                }
-            }
-
-            // Pagination Dots Indicator (centered at y: 654px)
-            HorizontalLayout {
-                x: 0px;
-                y: 654px;
-                width: parent.width;
-                height: 14px;
-                alignment: center;
-                spacing: 8px;
-                z: 50;
-
-                for idx in root.running-tasks.length: Rectangle {
-                    width: idx == root.safe-overview-index ? 22px : 8px;
-                    height: 8px;
-                    border-radius: 4px;
-                    background: idx == root.safe-overview-index ? Theme.primary : #ffffff44;
-
-                    animate width { duration: 150ms; easing: ease-out; }
-                    animate background { duration: 150ms; }
-
-                    TouchArea {
-                        clicked => {
-                            root.is-dragging-carousel = false;
-                            let vel = idx > root.safe-overview-index ? 850.0 : -850.0;
-                            root.overview-drag-released(idx * 1.0, 0.0);
-                        }
-                    }
-                }
-            }
-
-            // Bottom Action Pill: Clear All (centered below card at y: 680px)
-            Rectangle {
-                x: (parent.width - 140px) / 2;
-                y: 680px;
-                width: 140px;
-                height: 42px;
-                border-radius: Theme.radius-pill;
-                background: Theme.surface-highest;
-                border-width: 1px;
-                border-color: Theme.specular-rim;
-
-                Text {
-                    text: "Clear all";
-                    font-size: Theme.font-body;
-                    font-weight: 600;
-                    color: Theme.on-surface;
-                    vertical-alignment: center;
-                    horizontal-alignment: center;
-                }
-
-                TouchArea {
-                    clicked => {
-                        root.active-mode = 0;
-                        root.clear-all-recents();
-                    }
-                }
-            }
+        horizontal-drag(offset, is_drag) => {
+            root.overview-scroll = offset;
+            root.is-dragging-carousel = is_drag;
+            root.overview-scroll-changed(offset, is_drag);
+        }
+        drag-released(cur_offset, vel) => {
+            root.overview-drag-released(cur_offset, vel);
+        }
+        vertical-drag(dy) => {
+            root.active-card-dy-changed(dy);
+        }
+        clear-all-recents => {
+            root.active-mode = 0;
+            root.clear-all-recents();
+        }
+        exit-overview => {
+            root.exit-overview();
         }
     }
 
