@@ -2975,6 +2975,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "layer-shell-slint"
+version = "0.1.0"
+dependencies = [
+ "calloop 0.13.0",
+ "calloop-wayland-source",
+ "env_logger",
+ "log",
+ "raw-window-handle",
+ "slint",
+ "smithay-client-toolkit",
+ "thiserror 1.0.69",
+ "wayland-client",
+ "wayland-protocols",
+ "wayland-protocols-wlr",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5000,23 +5017,6 @@ dependencies = [
  "i-slint-compiler",
  "spin_on",
  "toml_edit",
-]
-
-[[package]]
-name = "slint-layer-shell"
-version = "0.1.0"
-dependencies = [
- "calloop 0.13.0",
- "calloop-wayland-source",
- "env_logger",
- "log",
- "raw-window-handle",
- "slint",
- "smithay-client-toolkit",
- "thiserror 1.0.69",
- "wayland-client",
- "wayland-protocols",
- "wayland-protocols-wlr",
 ]
 
 [[package]]

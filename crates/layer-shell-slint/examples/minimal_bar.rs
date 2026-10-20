@@ -43,8 +43,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
     
     // Initialize custom layer shell platform for a 42px top bar
-    let config = slint_layer_shell::LayerConfig::top_bar(42);
-    slint_layer_shell::init(config)?;
+    let config = layer_shell_slint::LayerConfig::top_bar(42);
+    layer_shell_slint::init(config)?;
     
     let bar = MinimalBar::new()?;
     bar.run()?;

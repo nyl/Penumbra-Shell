@@ -1,4 +1,4 @@
-//! Standalone `slint-layer-shell` Platform Backend
+//! Standalone `layer-shell-slint` Platform Backend
 //!
 //! A zero-winit Wayland layer shell provider for the Slint UI toolkit using
 //! `smithay-client-toolkit` (SCTK) and `wayland-protocols-wlr`.
@@ -13,6 +13,10 @@
 //!   rendering directly into Wayland shared memory (`wl_shm::SlotPool`) using native `ARGB8888`.
 //! - **Wayland-to-Slint Dispatch Bridge**: Translates pointer movements, clicks, scrolls, and touch
 //!   gestures into Slint [`WindowEvent`](slint::platform::WindowEvent)s.
+//!
+//! # Disclaimer
+//! This is an independent community-driven platform backend and is **not** an official
+//! implementation by or affiliated with SixtyFPS GmbH or the official Slint development team.
 
 pub mod error;
 pub mod input;
@@ -55,7 +59,7 @@ pub struct LayerConfig {
 impl Default for LayerConfig {
     fn default() -> Self {
         Self {
-            namespace: "slint-layer-shell".to_string(),
+            namespace: "layer-shell-slint".to_string(),
             layer: Layer::Top,
             anchor: Anchor::Top | Anchor::Left | Anchor::Right,
             width: 0,

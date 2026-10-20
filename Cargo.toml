@@ -5,7 +5,7 @@ members = [
     "crates/penumbra-services",
     "crates/penumbra-shell",
     "crates/penumbra-comp",
-    "crates/slint-layer-shell",
+    "crates/layer-shell-slint",
 ]
 
 [workspace.package]

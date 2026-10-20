@@ -1,4 +1,4 @@
-# slint-layer-shell
+# layer-shell-slint
 
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 [![Rust: 2021](https://img.shields.io/badge/Rust-2021-orange.svg)](https://www.rust-lang.org/)
@@ -6,6 +6,9 @@
 [![Wayland: wlr--layer--shell--v1](https://img.shields.io/badge/Wayland-wlr--layer--shell--v1-0077b6.svg)](https://wayland.freedesktop.org/)
 
 A standalone, zero-Winit native Wayland Layer Shell (`zwlr_layer_shell_v1`) platform backend for the [Slint UI Toolkit](https://slint.dev/).
+
+> [!NOTE]
+> **Community Project Disclaimer**: `layer-shell-slint` is an independent, community-driven project and is **not** developed, maintained by, or officially affiliated with SixtyFPS GmbH or the core Slint development team. Slint is a registered trademark of SixtyFPS GmbH.
 
 ---
 
@@ -32,7 +35,7 @@ System UI components (such as status bars, app docks, on-screen keyboards, notif
 - Anchoring to display edges without window decorations or borders.
 - Responsive touch interactions on mobile and embedded devices.
 
-`slint-layer-shell` provides a custom [`slint::platform::Platform`](src/platform.rs) and [`slint::platform::WindowAdapter`](src/window.rs) built directly atop [Smithay Client Toolkit](https://github.com/Smithay/client-toolkit) (SCTK) and `wayland-protocols-wlr`, completely bypassing Winit.
+`layer-shell-slint` provides a custom [`slint::platform::Platform`](src/platform.rs) and [`slint::platform::WindowAdapter`](src/window.rs) built directly atop [Smithay Client Toolkit](https://github.com/Smithay/client-toolkit) (SCTK) and `wayland-protocols-wlr`, completely bypassing Winit.
 
 ---
 
@@ -45,7 +48,7 @@ flowchart TD
         W --> WA[LayerWindow: WindowAdapter]
     end
 
-    subgraph slint-layer-shell Backend
+    subgraph layer-shell-slint Backend
         WA --> SR[SoftwareRenderer]
         WA --> PING[calloop::ping]
         PLAT[LayerShellPlatform: Platform] --> EL[calloop::EventLoop]
@@ -83,7 +86,7 @@ flowchart TD
 ```toml
 [dependencies]
 slint = { version = "1.8", default-features = false, features = ["compat-1-2", "renderer-software", "std"] }
-slint-layer-shell = { path = "crates/slint-layer-shell" }
+layer-shell-slint = { path = "crates/layer-shell-slint" }
 ```
 
 ### 2. Initialize Platform and Run Component
@@ -108,11 +111,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
 
     // 1. Configure a top bar layer surface
-    let config = slint_layer_shell::LayerConfig::top_bar(40)
+    let config = layer_shell_slint::LayerConfig::top_bar(40)
         .with_namespace("penumbra-top-bar");
 
     // 2. Initialize custom layer shell platform backend
-    slint_layer_shell::init(config)?;
+    layer_shell_slint::init(config)?;
 
     // 3. Create and drive the Slint component
     let bar = TopBar::new()?;
@@ -139,7 +142,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ### Fluent Builder
 
 ```rust
-use slint_layer_shell::{Anchor, KeyboardInteractivity, Layer, LayerConfig};
+use layer_shell_slint::{Anchor, KeyboardInteractivity, Layer, LayerConfig};
 
 let config = LayerConfig::default()
     .with_namespace("desktop-dock")
@@ -191,7 +194,7 @@ Run the included standalone minimal bar example:
 
 ```bash
 # Debug logging with full Wayland protocol wire dumps
-WAYLAND_DEBUG=1 RUST_LOG=debug cargo run --package slint-layer-shell --example minimal_bar
+WAYLAND_DEBUG=1 RUST_LOG=debug cargo run --package layer-shell-slint --example minimal_bar
 ```
 
 ---
