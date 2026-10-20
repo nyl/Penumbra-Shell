@@ -2,10 +2,10 @@ import { Theme } from "theme.slint";
 import { StatusBar } from "status_bar.slint";
 import { NavBar } from "nav_bar.slint";
 import { QuickSettingsDrawer } from "quick_settings.slint";
-import { AppSurface, AppItem, TaskItem } from "app_surface.slint";
+import { AppSurface, AppItem, TaskItem, HomescreenItem } from "app_surface.slint";
 import { DesktopSurface } from "desktop_surface.slint";
 
-export { AppItem, TaskItem }
+export { AppItem, TaskItem, HomescreenItem }
 
 export component ShellRoot inherits Window {
     title: "Penumbra Mobile & Convergence Desktop Environment";
@@ -17,7 +17,16 @@ export component ShellRoot inherits Window {
     // Dynamic XDG Applications Model
     in property <[AppItem]> installed-apps: [];
     in property <[AppItem]> dock-apps: [];
-    in property <[AppItem]> homescreen-apps: [];
+    in property <[HomescreenItem]> homescreen-items: [];
+    in-out property <int> current-page: 0;
+    in-out property <int> num-pages: 1;
+
+    // Folder view modal state
+    in-out property <bool> is-folder-open: false;
+    in-out property <string> open-folder-id: "";
+    in-out property <string> open-folder-name: "Folder";
+    in-out property <[AppItem]> open-folder-apps: [];
+
     in-out property <bool> is-editing: false;
     in property <bool> reject-dock-drop: false;
 
@@ -77,6 +86,10 @@ export component ShellRoot inherits Window {
     callback app-removed-from-homescreen(string);
     callback app-pinned-to-homescreen(string);
     callback app-pinned-to-dock(string);
+    callback app-dropped-on-homescreen(string, int, length, length); // id, page, sx, sy
+    callback folder-renamed(string, string); // folder_id, new_name
+    callback folder-item-removed(string, string); // folder_id, app_id
+    callback open-folder-requested(string); // folder_id
     callback nav-gesture-invoked(string);
     callback brightness-changed(float);
     callback volume-changed(float);
@@ -107,7 +120,13 @@ export component ShellRoot inherits Window {
             active-app <=> root.active-app;
             installed-apps: root.installed-apps;
             dock-apps: root.dock-apps;
-            homescreen-apps: root.homescreen-apps;
+            homescreen-items: root.homescreen-items;
+            current-page <=> root.current-page;
+            num-pages <=> root.num-pages;
+            is-folder-open <=> root.is-folder-open;
+            open-folder-id <=> root.open-folder-id;
+            open-folder-name <=> root.open-folder-name;
+            open-folder-apps: root.open-folder-apps;
             is-editing <=> root.is-editing;
             reject-dock-drop: root.reject-dock-drop;
             running-tasks: root.running-tasks;
@@ -127,6 +146,18 @@ export component ShellRoot inherits Window {
             }
             app-pinned-to-dock(id) => {
                 root.app-pinned-to-dock(id);
+            }
+            app-dropped-on-homescreen(id, page, sx, sy) => {
+                root.app-dropped-on-homescreen(id, page, sx, sy);
+            }
+            folder-renamed(folder-id, new-name) => {
+                root.folder-renamed(folder-id, new-name);
+            }
+            folder-item-removed(folder-id, app-id) => {
+                root.folder-item-removed(folder-id, app-id);
+            }
+            open-folder-requested(folder-id) => {
+                root.open-folder-requested(folder-id);
             }
             app-pinned-to-homescreen(id) => {
                 root.app-pinned-to-homescreen(id);

@@ -15,7 +15,7 @@ mod apps;
 use apps::{discover_installed_apps, launch_app, InstalledApp};
 
 mod config;
-use config::{load_layout_config, save_layout_config, HomescreenAppEntry};
+use config::{load_layout_config, save_layout_config};
 
 slint::include_modules!();
 
@@ -203,9 +203,57 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 let home_model = Rc::new(VecModel::default());
                 for entry in cfg.homescreen_apps.iter() {
-                    home_model.push(resolve_app_item(&entry.id, &apps_list));
+                    let app_item = resolve_app_item(&entry.id, &apps_list);
+                    home_model.push(HomescreenItem {
+                        id: app_item.id.clone(),
+                        name: app_item.name.clone(),
+                        is_folder: false,
+                        folder_id: "".into(),
+                        page: entry.page,
+                        x: entry.x,
+                        y: entry.y,
+                        has_icon: app_item.has_icon,
+                        icon: app_item.icon.clone(),
+                        folder_count: 0,
+                        has_prev_1: false,
+                        preview_1: slint::Image::default(),
+                        has_prev_2: false,
+                        preview_2: slint::Image::default(),
+                        has_prev_3: false,
+                        preview_3: slint::Image::default(),
+                        has_prev_4: false,
+                        preview_4: slint::Image::default(),
+                    });
                 }
-                ui.set_homescreen_apps(ModelRc::from(home_model));
+                for folder in cfg.folders.iter() {
+                    let p1 = folder.app_ids.first().map(|id| resolve_app_item(id, &apps_list));
+                    let p2 = folder.app_ids.get(1).map(|id| resolve_app_item(id, &apps_list));
+                    let p3 = folder.app_ids.get(2).map(|id| resolve_app_item(id, &apps_list));
+                    let p4 = folder.app_ids.get(3).map(|id| resolve_app_item(id, &apps_list));
+
+                    home_model.push(HomescreenItem {
+                        id: folder.id.clone().into(),
+                        name: folder.name.clone().into(),
+                        is_folder: true,
+                        folder_id: folder.id.clone().into(),
+                        page: folder.page,
+                        x: folder.x,
+                        y: folder.y,
+                        has_icon: false,
+                        icon: slint::Image::default(),
+                        folder_count: folder.app_ids.len() as i32,
+                        has_prev_1: p1.as_ref().map_or(false, |p| p.has_icon),
+                        preview_1: p1.map_or_else(slint::Image::default, |p| p.icon),
+                        has_prev_2: p2.as_ref().map_or(false, |p| p.has_icon),
+                        preview_2: p2.map_or_else(slint::Image::default, |p| p.icon),
+                        has_prev_3: p3.as_ref().map_or(false, |p| p.has_icon),
+                        preview_3: p3.map_or_else(slint::Image::default, |p| p.icon),
+                        has_prev_4: p4.as_ref().map_or(false, |p| p.has_icon),
+                        preview_4: p4.map_or_else(slint::Image::default, |p| p.icon),
+                    });
+                }
+                ui.set_homescreen_items(ModelRc::from(home_model));
+                ui.set_num_pages(cfg.num_pages);
             }
         })
     };
@@ -943,21 +991,118 @@ fn spawn_real_app(app: &str, target: &str) {
     {
         let layout_config = Rc::clone(&layout_config);
         let update_ui = update_layout_models.clone();
+        ui.on_app_dropped_on_homescreen(move |app_id_slint, page, sx, sy| {
+            let app_id = app_id_slint.as_str().to_string();
+            let mut cfg = layout_config.borrow_mut();
+
+            // Calculate target cell (4 columns, 4 rows)
+            let col = (((sx - 20.0) / 93.0).round() as i32).clamp(0, 3);
+            let origin_y = if page == 0 { 152.0 } else { 86.0 };
+            let row = (((sy - origin_y) / 105.0).round() as i32).clamp(0, 3);
+
+            // Check if there is already an item at this target slot
+            let existing_app = cfg.homescreen_apps.iter().find(|e| e.page == page && e.x == col && e.y == row).cloned();
+            let existing_folder = cfg.folders.iter().find(|f| f.page == page && f.x == col && f.y == row).cloned();
+
+            if let Some(folder) = existing_folder {
+                info!("Dropping app '{}' into existing folder '{}' ({})", app_id, folder.name, folder.id);
+                cfg.add_to_folder(&folder.id, &app_id);
+            } else if let Some(target) = existing_app {
+                if target.id != app_id {
+                    info!("Merging '{}' and '{}' into new folder at page {}, cell ({}, {})", target.id, app_id, page, col, row);
+                    cfg.merge_into_folder(&target.id, &app_id, page, col, row);
+                } else {
+                    cfg.place_or_move_app(&app_id, page, col, row);
+                }
+            } else {
+                info!("Placing app '{}' at page {}, cell ({}, {})", app_id, page, col, row);
+                cfg.place_or_move_app(&app_id, page, col, row);
+            }
+
+            save_layout_config(&cfg);
+            drop(cfg);
+            update_ui();
+        });
+    }
+
+    {
+        let layout_config = Rc::clone(&layout_config);
+        let update_ui = update_layout_models.clone();
         ui.on_app_pinned_to_homescreen(move |app_id_slint| {
             let app_id = app_id_slint.as_str().to_string();
             let mut cfg = layout_config.borrow_mut();
             if !cfg.homescreen_apps.iter().any(|e| e.id == app_id) {
                 info!("Pinning app '{}' to homescreen", app_id);
-                let count = cfg.homescreen_apps.len() as i32;
-                cfg.homescreen_apps.push(HomescreenAppEntry {
-                    id: app_id,
-                    x: count % 4,
-                    y: count / 4,
-                });
+                let count = (cfg.homescreen_apps.len() + cfg.folders.len()) as i32;
+                let page = count / 16;
+                let slot = count % 16;
+                cfg.place_or_move_app(&app_id, page, slot % 4, slot / 4);
                 save_layout_config(&cfg);
                 drop(cfg);
                 update_ui();
             }
+        });
+    }
+
+    {
+        let ui_weak = ui_weak.clone();
+        let layout_config = Rc::clone(&layout_config);
+        let apps_list = Arc::clone(&apps_list);
+        ui.on_open_folder_requested(move |folder_id_slint| {
+            let folder_id = folder_id_slint.as_str();
+            if let Some(ui) = ui_weak.upgrade() {
+                let cfg = layout_config.borrow();
+                if let Some(folder) = cfg.folders.iter().find(|f| f.id == folder_id) {
+                    let folder_apps = Rc::new(VecModel::default());
+                    for id in &folder.app_ids {
+                        folder_apps.push(resolve_app_item(id, &apps_list));
+                    }
+                    ui.set_open_folder_id(folder.id.clone().into());
+                    ui.set_open_folder_name(folder.name.clone().into());
+                    ui.set_open_folder_apps(ModelRc::from(folder_apps));
+                    ui.set_is_folder_open(true);
+                }
+            }
+        });
+    }
+
+    {
+        let layout_config = Rc::clone(&layout_config);
+        let update_ui = update_layout_models.clone();
+        ui.on_folder_renamed(move |folder_id_slint, new_name_slint| {
+            let mut cfg = layout_config.borrow_mut();
+            cfg.rename_folder(folder_id_slint.as_str(), new_name_slint.as_str());
+            save_layout_config(&cfg);
+            drop(cfg);
+            update_ui();
+        });
+    }
+
+    {
+        let ui_weak = ui_weak.clone();
+        let layout_config = Rc::clone(&layout_config);
+        let apps_list = Arc::clone(&apps_list);
+        let update_ui = update_layout_models.clone();
+        ui.on_folder_item_removed(move |folder_id_slint, app_id_slint| {
+            let folder_id = folder_id_slint.as_str();
+            let app_id = app_id_slint.as_str();
+            let mut cfg = layout_config.borrow_mut();
+            cfg.remove_from_folder(folder_id, app_id);
+            save_layout_config(&cfg);
+
+            if let Some(ui) = ui_weak.upgrade() {
+                if let Some(folder) = cfg.folders.iter().find(|f| f.id == folder_id) {
+                    let folder_apps = Rc::new(VecModel::default());
+                    for id in &folder.app_ids {
+                        folder_apps.push(resolve_app_item(id, &apps_list));
+                    }
+                    ui.set_open_folder_apps(ModelRc::from(folder_apps));
+                } else {
+                    ui.set_is_folder_open(false);
+                }
+            }
+            drop(cfg);
+            update_ui();
         });
     }
 
@@ -983,13 +1128,11 @@ fn spawn_real_app(app: &str, target: &str) {
         ui.on_app_removed_from_homescreen(move |app_id_slint| {
             let app_id = app_id_slint.as_str();
             let mut cfg = layout_config.borrow_mut();
-            if let Some(pos) = cfg.homescreen_apps.iter().position(|e| e.id == app_id) {
-                info!("Removing app '{}' from homescreen", app_id);
-                cfg.homescreen_apps.remove(pos);
-                save_layout_config(&cfg);
-                drop(cfg);
-                update_ui();
-            }
+            info!("Removing item '{}' from homescreen", app_id);
+            cfg.remove_item(app_id);
+            save_layout_config(&cfg);
+            drop(cfg);
+            update_ui();
         });
     }
 

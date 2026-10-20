@@ -3,17 +3,39 @@ use std::fs;
 use std::path::PathBuf;
 use tracing::{info, warn};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct HomescreenAppEntry {
     pub id: String,
+    #[serde(default)]
+    pub page: i32,
     pub x: i32,
     pub y: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FolderEntry {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub page: i32,
+    pub x: i32,
+    pub y: i32,
+    #[serde(default)]
+    pub app_ids: Vec<String>,
+}
+
+fn default_pages() -> i32 {
+    1
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellLayoutConfig {
     pub dock_apps: Vec<String>,
     pub homescreen_apps: Vec<HomescreenAppEntry>,
+    #[serde(default)]
+    pub folders: Vec<FolderEntry>,
+    #[serde(default = "default_pages")]
+    pub num_pages: i32,
 }
 
 impl Default for ShellLayoutConfig {
@@ -26,7 +48,98 @@ impl Default for ShellLayoutConfig {
                 "org.gnome.Console".to_string(),
             ],
             homescreen_apps: Vec::new(),
+            folders: Vec::new(),
+            num_pages: 1,
         }
+    }
+}
+
+impl ShellLayoutConfig {
+    /// Adds an app or moves it to a specific cell (page, x, y).
+    /// If it was already on the homescreen, its position is updated.
+    pub fn place_or_move_app(&mut self, app_id: &str, page: i32, x: i32, y: i32) {
+        if let Some(entry) = self.homescreen_apps.iter_mut().find(|e| e.id == app_id) {
+            entry.page = page;
+            entry.x = x;
+            entry.y = y;
+        } else {
+            self.homescreen_apps.push(HomescreenAppEntry {
+                id: app_id.to_string(),
+                page,
+                x,
+                y,
+            });
+        }
+        if page >= self.num_pages {
+            self.num_pages = page + 1;
+        }
+    }
+
+    /// Creates a new folder or adds to an existing item at (page, x, y).
+    /// If an existing app is at (page, x, y), it is merged with the new app into a folder!
+    pub fn merge_into_folder(
+        &mut self,
+        target_app_id: &str,
+        new_app_id: &str,
+        page: i32,
+        x: i32,
+        y: i32,
+    ) -> String {
+        // Remove both apps from standalone homescreen list
+        self.homescreen_apps.retain(|e| e.id != target_app_id && e.id != new_app_id);
+
+        let folder_id = format!("folder_{}", std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis());
+
+        let folder = FolderEntry {
+            id: folder_id.clone(),
+            name: "Folder".to_string(),
+            page,
+            x,
+            y,
+            app_ids: vec![target_app_id.to_string(), new_app_id.to_string()],
+        };
+        self.folders.push(folder);
+
+        if page >= self.num_pages {
+            self.num_pages = page + 1;
+        }
+
+        folder_id
+    }
+
+    /// Adds an app to an existing folder by folder ID.
+    pub fn add_to_folder(&mut self, folder_id: &str, app_id: &str) {
+        self.homescreen_apps.retain(|e| e.id != app_id);
+        if let Some(folder) = self.folders.iter_mut().find(|f| f.id == folder_id) {
+            if !folder.app_ids.contains(&app_id.to_string()) {
+                folder.app_ids.push(app_id.to_string());
+            }
+        }
+    }
+
+    /// Renames a folder.
+    pub fn rename_folder(&mut self, folder_id: &str, new_name: &str) {
+        if let Some(folder) = self.folders.iter_mut().find(|f| f.id == folder_id) {
+            folder.name = new_name.trim().to_string();
+        }
+    }
+
+    /// Removes an app from a folder. If only 1 app remains, optionally dissolves the folder.
+    pub fn remove_from_folder(&mut self, folder_id: &str, app_id: &str) {
+        if let Some(folder) = self.folders.iter_mut().find(|f| f.id == folder_id) {
+            folder.app_ids.retain(|id| id != app_id);
+        }
+        // If empty, remove folder
+        self.folders.retain(|f| !f.app_ids.is_empty());
+    }
+
+    /// Removes a shortcut or folder from the homescreen.
+    pub fn remove_item(&mut self, id: &str) {
+        self.homescreen_apps.retain(|e| e.id != id);
+        self.folders.retain(|f| f.id != id);
     }
 }
 
@@ -56,8 +169,11 @@ pub fn load_layout_config(available_app_ids: &[String]) -> ShellLayoutConfig {
     let path = get_layout_config_path();
     if path.exists() {
         if let Ok(data) = fs::read_to_string(&path) {
-            if let Ok(config) = serde_json::from_str::<ShellLayoutConfig>(&data) {
+            if let Ok(mut config) = serde_json::from_str::<ShellLayoutConfig>(&data) {
                 info!("Loaded shell layout config from {:?}", path);
+                if config.num_pages < 1 {
+                    config.num_pages = 1;
+                }
                 return config;
             } else {
                 warn!("Failed to parse layout config at {:?}, falling back to default", path);
@@ -92,17 +208,17 @@ pub fn create_default_layout(available_app_ids: &[String]) -> ShellLayoutConfig 
             }
         }
         if !matched {
-            // Push placeholder/fallback ID
             default_dock.push(candidates[0].to_string());
         }
     }
 
-    // Limit to 4
     default_dock.truncate(4);
 
     ShellLayoutConfig {
         dock_apps: default_dock,
         homescreen_apps: Vec::new(),
+        folders: Vec::new(),
+        num_pages: 1,
     }
 }
 
@@ -133,6 +249,8 @@ mod tests {
         assert_eq!(cfg.dock_apps[2], "org.gnome.Epiphany");
         assert_eq!(cfg.dock_apps[3], "org.gnome.Console");
         assert!(cfg.homescreen_apps.is_empty());
+        assert_eq!(cfg.num_pages, 1);
+        assert!(cfg.folders.is_empty());
     }
 
     #[test]
@@ -142,15 +260,28 @@ mod tests {
             homescreen_apps: vec![
                 HomescreenAppEntry {
                     id: "firefox".to_string(),
+                    page: 0,
                     x: 0,
                     y: 0,
                 },
                 HomescreenAppEntry {
                     id: "foot".to_string(),
+                    page: 1,
                     x: 1,
                     y: 0,
                 },
             ],
+            folders: vec![
+                FolderEntry {
+                    id: "f1".to_string(),
+                    name: "Utilities".to_string(),
+                    page: 0,
+                    x: 2,
+                    y: 0,
+                    app_ids: vec!["calc".to_string(), "terminal".to_string()],
+                }
+            ],
+            num_pages: 2,
         };
 
         let json = serde_json::to_string_pretty(&cfg).expect("Serialization failed");
@@ -159,6 +290,10 @@ mod tests {
         assert_eq!(deserialized.homescreen_apps.len(), 2);
         assert_eq!(deserialized.homescreen_apps[0].id, "firefox");
         assert_eq!(deserialized.homescreen_apps[1].id, "foot");
+        assert_eq!(deserialized.homescreen_apps[1].page, 1);
+        assert_eq!(deserialized.folders.len(), 1);
+        assert_eq!(deserialized.folders[0].name, "Utilities");
+        assert_eq!(deserialized.num_pages, 2);
     }
 
     #[test]
@@ -169,15 +304,35 @@ mod tests {
         ];
         let cfg = create_default_layout(&available);
         assert_eq!(cfg.dock_apps.len(), 4);
-        // slot 0 fallback calls
         assert_eq!(cfg.dock_apps[0], "org.gnome.Calls");
-        // slot 1 fallback chatty
         assert_eq!(cfg.dock_apps[1], "sm.puri.Chatty");
-        // slot 2 matched firefox
         assert_eq!(cfg.dock_apps[2], "firefox.desktop");
-        // slot 3 matched alacritty
         assert_eq!(cfg.dock_apps[3], "alacritty.desktop");
-        // homescreen starts empty
         assert!(cfg.homescreen_apps.is_empty());
+    }
+
+    #[test]
+    fn test_folder_creation_and_reorder() {
+        let mut cfg = ShellLayoutConfig::default();
+        cfg.place_or_move_app("firefox", 0, 0, 0);
+        cfg.place_or_move_app("foot", 0, 1, 0);
+        assert_eq!(cfg.homescreen_apps.len(), 2);
+
+        // Drag foot over firefox to merge into folder
+        let folder_id = cfg.merge_into_folder("firefox", "foot", 0, 0, 0);
+        assert_eq!(cfg.homescreen_apps.len(), 0);
+        assert_eq!(cfg.folders.len(), 1);
+        assert_eq!(cfg.folders[0].id, folder_id);
+        assert_eq!(cfg.folders[0].app_ids, vec!["firefox", "foot"]);
+
+        // Rename folder
+        cfg.rename_folder(&folder_id, "Dev Tools");
+        assert_eq!(cfg.folders[0].name, "Dev Tools");
+
+        // Drag to right edge: move app to page 1
+        cfg.place_or_move_app("chatty", 1, 0, 0);
+        assert_eq!(cfg.num_pages, 2);
+        assert_eq!(cfg.homescreen_apps.len(), 1);
+        assert_eq!(cfg.homescreen_apps[0].page, 1);
     }
 }

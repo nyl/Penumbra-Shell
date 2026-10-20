@@ -1,26 +1,35 @@
 import { Theme } from "theme.slint";
-import { AppItem, TaskItem } from "app_item.slint";
+import { AppItem, TaskItem, HomescreenItem } from "app_item.slint";
 import { BottomDock } from "dock.slint";
 import { ShortcutTile } from "shortcut_tile.slint";
-
 import { AppDrawer } from "app_drawer.slint";
 
-export { AppItem, TaskItem }
+export { AppItem, TaskItem, HomescreenItem }
 
 export component AppSurface inherits Rectangle {
-    in-out property <int> active-mode: 0; // 0: Home, 1: Recents Overview, 2: App Drawer, 3: Active In-Shell App
+    in-out property <int> active-mode: 0; // 0: Home, 1: Recents Overview, 2: App Drawer, 3: Active App
     in-out property <string> active-app: "terminal";
     in property <string> time-text: "17:30";
     in property <string> date-text: "Sunday, Oct 19";
     in property <[AppItem]> installed-apps: [];
     in property <[AppItem]> dock-apps: [];
-    in property <[AppItem]> homescreen-apps: [];
+    in property <[HomescreenItem]> homescreen-items: [];
+    in-out property <int> current-page: 0;
+    in-out property <int> num-pages: 1;
     in-out property <bool> is-editing: false;
     in property <bool> reject-dock-drop: false;
+
+    // Drag-and-drop state
     in-out property <bool> is-dragging-app: false;
     in-out property <AppItem> dragging-app-item;
     in-out property <length> drag-x: 0px;
     in-out property <length> drag-y: 0px;
+
+    // Folder view modal state
+    in-out property <bool> is-folder-open: false;
+    in-out property <string> open-folder-id: "";
+    in-out property <string> open-folder-name: "Folder";
+    in-out property <[AppItem]> open-folder-apps: [];
 
     // Overview running tasks and carousel index
     in property <[TaskItem]> running-tasks: [];
@@ -32,7 +41,10 @@ export component AppSurface inherits Rectangle {
     callback app-removed-from-homescreen(string);
     callback app-pinned-to-dock(string);
     callback app-pinned-to-homescreen(string);
-    callback start-drag-app(string, float, float);
+    callback app-dropped-on-homescreen(string, int, length, length); // id, page, sx, sy
+    callback folder-renamed(string, string); // folder_id, new_name
+    callback folder-item-removed(string, string); // folder_id, app_id
+    callback open-folder-requested(string); // folder_id
     callback clear-all-recents();
     callback resume-active-task();
     callback select-task(int);
@@ -42,29 +54,6 @@ export component AppSurface inherits Rectangle {
     callback list-directory(string) -> string;
     callback eval-calc(string, string, string) -> string;
     callback save-file(string, string) -> bool;
-
-    // Terminal internal state
-    property <string> terminal-history: "penumbra@mobile:~$ uname -a\nLinux penumbra-mobile 6.12.0-rust aarch64\npenumbra@mobile:~$ smithay --version\nPenumbra Compositor v0.1.0 (DSI 412x915 @ 120Hz)\npenumbra@mobile:~$ ";
-    property <string> terminal-input: "";
-
-    // Calculator internal state
-    property <string> calc-display: "0";
-    property <string> calc-prev: "0";
-    property <string> calc-operation: "";
-    property <bool> calc-new-entry: true;
-
-    // Notes internal state
-    property <string> note-content: "Penumbra Mobile Notes\n====================\n- Wayland compositor session active\n- In-shell native application execution enabled\n- Touch gestures: swipe up to return home\n";
-    property <string> note-status: "Ready";
-
-    // Browser internal state
-    property <string> browser-url: "https://search.penumbra.dev";
-    property <string> browser-result-title: "Penumbra Linux Mobile Environment";
-    property <string> browser-result-desc: "Mobile-first Wayland desktop environment written in 100% Rust with Slint and Smithay.";
-
-    // Files internal state
-    property <string> files-current-dir: "/home/nyl";
-    property <string> files-listing: "[DIR] Desktop\n[DIR] Documents\n[DIR] Downloads\n[DIR] Music\n[DIR] Pictures\n[DIR] coding\n[FILE] .bashrc (3.8 KB)\n[FILE] Cargo.toml (1.2 KB)\n";
 
     background: Theme.base-surface;
     clip: true;
@@ -79,8 +68,26 @@ export component AppSurface inherits Rectangle {
         background: #25407026;
     }
 
+    // Edge Dwell Timer for dragging apps across homescreen pages (Android Workspace behavior)
+    edge-dwell-timer := Timer {
+        interval: 380ms;
+        running: root.is-dragging-app;
+        triggered => {
+            if (root.is-dragging-app) {
+                if (root.drag-x > parent.width - 45px) {
+                    root.current-page += 1;
+                    if (root.current-page >= root.num-pages) {
+                        root.num-pages = root.current-page + 1;
+                    }
+                } else if (root.drag-x < 45px && root.current-page > 0) {
+                    root.current-page -= 1;
+                }
+            }
+        }
+    }
+
     // =========================================================================
-    // MODE 0: HOMESCREEN
+    // MODE 0: MULTI-PAGE HOMESCREEN WORKSPACE (Material 3 Expressive)
     // =========================================================================
     if root.active-mode == 0 || root.active-mode == 2: Rectangle {
         x: 0px;
@@ -88,217 +95,426 @@ export component AppSurface inherits Rectangle {
         width: parent.width;
         height: parent.height;
 
-        // Background gesture listener: Swiping up anywhere (even middle) opens App Drawer
-        if root.active-mode == 0: TouchArea {
+        // Background gesture listener:
+        // - Swiping UP opens App Drawer
+        // - Swiping LEFT/RIGHT navigates between homescreen pages
+        // - Tap exits edit mode
+        if root.active-mode == 0 && !root.is-folder-open: TouchArea {
             x: 0px;
             y: 0px;
             width: parent.width;
             height: parent.height;
 
+            property <float> start-x: 0.0;
             property <float> start-y: 0.0;
             property <bool> is-active: false;
 
             pointer-event(event) => {
                 if (event.kind == PointerEventKind.down) {
+                    self.start-x = self.mouse-x / 1px;
                     self.start-y = self.mouse-y / 1px;
                     self.is-active = true;
                 } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
                     if (self.is-active) {
                         self.is-active = false;
+                        let dx = (self.mouse-x / 1px) - self.start-x;
                         let dy = self.start-y - (self.mouse-y / 1px);
-                        if (dy > 25.0) {
-                            root.active-mode = 2; // Open App Drawer
-                        } else if (Math.abs(dy) < 15.0 && root.is-editing) {
-                            root.is-editing = false; // Exit Edit Mode
+
+                        if (dy > 30.0 && Math.abs(dy) > Math.abs(dx)) {
+                            root.active-mode = 2; // Swipe UP -> Open App Drawer
+                        } else if (dx < -40.0 && Math.abs(dx) > Math.abs(dy)) {
+                            // Swipe LEFT -> next page
+                            if (root.current-page < root.num-pages - 1) {
+                                root.current-page += 1;
+                            }
+                        } else if (dx > 40.0 && Math.abs(dx) > Math.abs(dy)) {
+                            // Swipe RIGHT -> previous page
+                            if (root.current-page > 0) {
+                                root.current-page -= 1;
+                            }
+                        } else if (Math.abs(dx) < 15.0 && Math.abs(dy) < 15.0 && root.is-editing) {
+                            root.is-editing = false; // Tap background -> exit edit mode
                         }
                     }
                 }
             }
         }
 
-        VerticalLayout {
-            padding-top: 56px;
-            padding-bottom: 50px;
-            padding-left: 20px;
-            padding-right: 20px;
-            alignment: space-between;
+        // Top At-a-Glance Clock Widget (Displayed on Page 0)
+        if root.current-page == 0: VerticalLayout {
+            x: 20px;
+            y: 56px;
+            width: parent.width - 40px;
+            spacing: 8px;
 
-            // Top: At a Glance Widget
-            VerticalLayout {
+            Text {
+                text: root.time-text;
+                font-size: Theme.font-clock-large;
+                font-weight: 800;
+                color: Theme.on-surface;
+            }
+
+            HorizontalLayout {
                 spacing: 8px;
+                alignment: start;
 
                 Text {
-                    text: root.time-text;
-                    font-size: Theme.font-clock-large;
-                    font-weight: 800;
-                    color: Theme.on-surface;
+                    text: "\{root.date-text}  •  21°C Clear";
+                    font-size: Theme.font-body;
+                    font-weight: 600;
+                    color: Theme.primary;
+                }
+            }
+        }
+
+        // Top Subtle Page Label on Pages 1+
+        if root.current-page > 0: HorizontalLayout {
+            x: 20px;
+            y: 54px;
+            width: parent.width - 40px;
+            alignment: space-between;
+
+            Text {
+                text: "Page \{root.current-page + 1}";
+                font-size: Theme.font-title;
+                font-weight: 700;
+                color: Theme.on-surface-variant;
+            }
+
+            Text {
+                text: "Swipe right for home";
+                font-size: Theme.font-label;
+                color: Theme.outline-variant;
+                vertical-alignment: center;
+            }
+        }
+
+        // Dynamic 4x4 Grid Shortcuts for the Current Page
+        for item[idx] in root.homescreen-items: Rectangle {
+            property <bool> is-on-page: item.page == root.current-page;
+            visible: self.is-on-page;
+
+            x: 20px + (item.x * 93px) + 6px;
+            y: (root.current-page == 0 ? 152px : 86px) + (item.y * 105px);
+            width: 72px;
+            height: 88px;
+
+            ShortcutTile {
+                item: item;
+                is-editing: root.is-editing;
+                show-label: true;
+                base-x: parent.x;
+                base-y: parent.y;
+
+                clicked => {
+                    if (item.is-folder) {
+                        root.open-folder-requested(item.folder-id);
+                    } else {
+                        root.app-clicked(item.id);
+                    }
+                }
+                remove-clicked => {
+                    root.app-removed-from-homescreen(item.id);
+                }
+                long-pressed => {
+                    root.is-editing = true;
+                }
+                drag-started(id, sx, sy) => {
+                    root.is-dragging-app = true;
+                    root.dragging-app-item = {
+                        id: item.id,
+                        name: item.name,
+                        has-icon: item.has-icon,
+                        icon: item.icon,
+                    };
+                    root.drag-x = sx;
+                    root.drag-y = sy;
+                }
+                drag-moved(sx, sy) => {
+                    root.drag-x = sx;
+                    root.drag-y = sy;
+                }
+                drag-ended(id, sx, sy) => {
+                    root.is-dragging-app = false;
+                    let drop-y = sy / 1px;
+                    if (drop-y >= 740.0) {
+                        root.app-pinned-to-dock(id);
+                    } else if (drop-y < 740.0) {
+                        root.app-dropped-on-homescreen(id, root.current-page, sx, sy);
+                    }
+                }
+            }
+        }
+
+        // Empty Homescreen Hint on Page 0 when no shortcuts are pinned
+        if root.homescreen-items.length == 0 && root.current-page == 0: VerticalLayout {
+            x: 0px;
+            y: 320px;
+            width: parent.width;
+            alignment: center;
+            spacing: 8px;
+
+            Text {
+                text: "✨";
+                font-size: 28px;
+                horizontal-alignment: center;
+            }
+            Text {
+                text: "Swipe up to open App Drawer";
+                font-size: Theme.font-label;
+                color: Theme.on-surface-variant;
+                horizontal-alignment: center;
+            }
+        }
+
+        // Bottom Page Indicator Dots (Pills)
+        if root.num-pages > 1: HorizontalLayout {
+            x: 0px;
+            y: 692px;
+            width: parent.width;
+            height: 12px;
+            alignment: center;
+            spacing: 8px;
+
+            for p in root.num-pages: Rectangle {
+                width: p == root.current-page ? 20px : 8px;
+                height: 8px;
+                border-radius: 4px;
+                background: p == root.current-page ? Theme.primary : #ffffff44;
+
+                animate width { duration: 150ms; easing: ease-out; }
+                animate background { duration: 150ms; }
+
+                TouchArea {
+                    clicked => {
+                        root.current-page = p;
+                    }
+                }
+            }
+        }
+
+        // Bottom Fixed Area: Search Pill & Persistent Dock
+        VerticalLayout {
+            x: 20px;
+            y: 712px;
+            width: parent.width - 40px;
+            spacing: 12px;
+            alignment: end;
+
+            // Search Pill
+            Rectangle {
+                height: 48px;
+                border-radius: Theme.radius-pill;
+                background: Theme.surface-high;
+                border-width: 1px;
+                border-color: Theme.specular-rim;
+
+                search-ta := TouchArea {
+                    property <float> start-y: 0.0;
+                    property <bool> is-active: false;
+
+                    pointer-event(event) => {
+                        if (event.kind == PointerEventKind.down) {
+                            self.start-y = search-ta.mouse-y / 1px;
+                            self.is-active = true;
+                        } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
+                            if (self.is-active) {
+                                self.is-active = false;
+                                let dy = self.start-y - (search-ta.mouse-y / 1px);
+                                if (dy > 25.0) {
+                                    root.active-mode = 2; // Open App Drawer
+                                } else if (Math.abs(dy) < 15.0) {
+                                    root.app-clicked("browser");
+                                }
+                            }
+                        }
+                    }
                 }
 
                 HorizontalLayout {
-                    spacing: 8px;
-                    alignment: start;
-
-                    Text {
-                        text: "\{root.date-text}  •  21°C Clear";
-                        font-size: Theme.font-body;
-                        font-weight: 600;
-                        color: Theme.primary;
-                    }
-                }
-            }
-
-            // Middle: Clean Homescreen Shortcuts Grid (Dynamic Real Installed Apps, No Mockups!)
-            Rectangle {
-                vertical-stretch: 1;
-                clip: false;
-
-                if root.homescreen-apps.length > 0: Flickable {
-                    width: 100%;
-                    height: 100%;
-                    content-height: (root.homescreen-apps.length / 4 + 1) * 98px;
-
-                    VerticalLayout {
-                        spacing: 12px;
-                        alignment: start;
-
-                        for row in (root.homescreen-apps.length / 4 + 1): HorizontalLayout {
-                            alignment: space-around;
-                            for col in 4: Rectangle {
-                                width: 72px;
-                                height: 88px;
-                                property <int> idx: row * 4 + col;
-
-                                if self.idx < root.homescreen-apps.length: ShortcutTile {
-                                    app: root.homescreen-apps[parent.idx];
-                                    is-editing: root.is-editing;
-                                    show-label: true;
-                                    clicked => {
-                                        root.app-clicked(root.homescreen-apps[parent.idx].id);
-                                    }
-                                    remove-clicked => {
-                                        root.app-removed-from-homescreen(root.homescreen-apps[parent.idx].id);
-                                    }
-                                    long-pressed => {
-                                        root.is-editing = true;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // If homescreen is empty, show subtle hint
-                if root.homescreen-apps.length == 0: VerticalLayout {
-                    alignment: center;
-                    spacing: 8px;
-
-                    Text {
-                        text: "✨";
-                        font-size: 28px;
-                        horizontal-alignment: center;
-                    }
-                    Text {
-                        text: "Swipe up to open App Drawer";
-                        font-size: Theme.font-label;
-                        color: Theme.on-surface-variant;
-                        horizontal-alignment: center;
-                    }
-                }
-            }
-
-            // Bottom Area: Search Pill & Bottom Dock (Max 4 slots)
-            VerticalLayout {
-                spacing: 12px;
-                alignment: end;
-
-                // Search Pill
-                Rectangle {
-                    height: 50px;
-                    border-radius: Theme.radius-pill;
-                    background: Theme.surface-high;
-                    border-width: 1px;
-                    border-color: Theme.specular-rim;
-
-                    search-ta := TouchArea {
-                        property <float> start-y: 0.0;
-                        property <bool> is-active: false;
-
-                        pointer-event(event) => {
-                            if (event.kind == PointerEventKind.down) {
-                                self.start-y = search-ta.mouse-y / 1px;
-                                self.is-active = true;
-                            } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
-                                if (self.is-active) {
-                                    self.is-active = false;
-                                    let dy = self.start-y - (search-ta.mouse-y / 1px);
-                                    if (dy > 25.0) {
-                                        root.active-mode = 2; // Open App Drawer
-                                    } else if (Math.abs(dy) < 15.0) {
-                                        root.active-app = "browser";
-                                        root.active-mode = 3;
-                                        root.app-clicked("browser");
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    padding-left: 18px;
+                    padding-right: 18px;
+                    alignment: space-between;
 
                     HorizontalLayout {
-                        padding-left: 18px;
-                        padding-right: 18px;
-                        alignment: space-between;
-
-                        HorizontalLayout {
-                            spacing: 10px;
-                            alignment: center;
-
-                            Text {
-                                text: "G";
-                                font-size: 20px;
-                                font-weight: 800;
-                                color: Theme.primary;
-                                vertical-alignment: center;
-                            }
-
-                            Text {
-                                text: "Search apps, web, & devices...";
-                                font-size: Theme.font-label;
-                                color: Theme.on-surface-variant;
-                                vertical-alignment: center;
-                            }
-                        }
+                        spacing: 10px;
+                        alignment: center;
 
                         Text {
-                            text: "🎙";
-                            font-size: 16px;
+                            text: "G";
+                            font-size: 18px;
+                            font-weight: 800;
                             color: Theme.primary;
                             vertical-alignment: center;
                         }
+
+                        Text {
+                            text: "Search apps, web, & devices...";
+                            font-size: Theme.font-label;
+                            color: Theme.on-surface-variant;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    Text {
+                        text: "🎙";
+                        font-size: 16px;
+                        color: Theme.primary;
+                        vertical-alignment: center;
                     }
                 }
+            }
 
-                // Pinned Mobile Bottom Dock (Max 4 slots)
-                HorizontalLayout {
-                    alignment: center;
-                    BottomDock {
-                        dock-apps: root.dock-apps;
-                        is-editing: root.is-editing;
-                        reject-drop: root.reject-dock-drop;
-                        app-clicked(id) => {
-                            root.app-clicked(id);
-                        }
-                        app-removed(id) => {
-                            root.app-removed-from-dock(id);
-                        }
-                        request-edit-mode => {
-                            root.is-editing = true;
-                        }
+            // Pinned Mobile Bottom Dock (Max 4 slots)
+            HorizontalLayout {
+                alignment: center;
+                BottomDock {
+                    dock-apps: root.dock-apps;
+                    is-editing: root.is-editing;
+                    reject-drop: root.reject-dock-drop;
+                    app-clicked(id) => {
+                        root.app-clicked(id);
+                    }
+                    app-removed(id) => {
+                        root.app-removed-from-dock(id);
+                    }
+                    request-edit-mode => {
+                        root.is-editing = true;
                     }
                 }
             }
         }
     }
 
+    // =========================================================================
+    // FOLDER MODAL POPUP DIALOG (Like iOS / Android Folder Overlay)
+    // =========================================================================
+    if root.is-folder-open: Rectangle {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        z: 900;
+        background: #00000088;
+
+        // Click outside closes folder
+        TouchArea {
+            clicked => {
+                root.is-folder-open = false;
+            }
+        }
+
+        // Folder Card
+        Rectangle {
+            x: 36px;
+            y: 180px;
+            width: parent.width - 72px;
+            height: 380px;
+            border-radius: 28px;
+            background: #1C1924F8;
+            border-width: 1.5px;
+            border-color: #ffffff22;
+            drop-shadow-blur: 24px;
+            drop-shadow-color: #000000AA;
+            clip: true;
+
+            VerticalLayout {
+                padding: 24px;
+                spacing: 16px;
+                alignment: start;
+
+                // Folder Title Header (Editable)
+                HorizontalLayout {
+                    alignment: space-between;
+
+                    folder-name-input := TextInput {
+                        text: root.open-folder-name;
+                        font-size: 20px;
+                        font-weight: 700;
+                        color: Theme.on-surface;
+                        vertical-alignment: center;
+                        accepted => {
+                            root.folder-renamed(root.open-folder-id, self.text);
+                        }
+                    }
+
+                    Rectangle {
+                        width: 32px;
+                        height: 32px;
+                        border-radius: 16px;
+                        background: #322E3E;
+
+                        Text {
+                            text: "✕";
+                            font-size: 13px;
+                            font-weight: 700;
+                            color: #FFFFFF;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+
+                        TouchArea {
+                            clicked => {
+                                root.folder-renamed(root.open-folder-id, folder-name-input.text);
+                                root.is-folder-open = false;
+                            }
+                        }
+                    }
+                }
+
+                // Apps Grid inside Folder
+                Flickable {
+                    vertical-stretch: 1;
+                    content-height: (root.open-folder-apps.length / 3 + 1) * 96px;
+
+                    VerticalLayout {
+                        spacing: 12px;
+                        alignment: start;
+
+                        for r in (root.open-folder-apps.length / 3 + 1): HorizontalLayout {
+                            alignment: space-around;
+                            for c in 3: Rectangle {
+                                width: 72px;
+                                height: 88px;
+                                property <int> item-idx: r * 3 + c;
+
+                                if self.item-idx < root.open-folder-apps.length: ShortcutTile {
+                                    item: {
+                                        id: root.open-folder-apps[parent.item-idx].id,
+                                        name: root.open-folder-apps[parent.item-idx].name,
+                                        is-folder: false,
+                                        folder-id: "",
+                                        page: 0,
+                                        x: 0,
+                                        y: 0,
+                                        has-icon: root.open-folder-apps[parent.item-idx].has-icon,
+                                        icon: root.open-folder-apps[parent.item-idx].icon,
+                                        folder-count: 0,
+                                        has-prev-1: false,
+                                        preview-1: root.open-folder-apps[parent.item-idx].icon,
+                                        has-prev-2: false,
+                                        preview-2: root.open-folder-apps[parent.item-idx].icon,
+                                        has-prev-3: false,
+                                        preview-3: root.open-folder-apps[parent.item-idx].icon,
+                                        has-prev-4: false,
+                                        preview-4: root.open-folder-apps[parent.item-idx].icon,
+                                    };
+                                    show-label: true;
+                                    clicked => {
+                                        root.is-folder-open = false;
+                                        root.app-clicked(root.open-folder-apps[parent.item-idx].id);
+                                    }
+                                    remove-clicked => {
+                                        root.folder-item-removed(root.open-folder-id, root.open-folder-apps[parent.item-idx].id);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // =========================================================================
     // MODE 2: APP DRAWER (All Applications Overlay)
@@ -342,8 +558,8 @@ export component AppSurface inherits Rectangle {
                 let drop-y = sy / 1px;
                 if (drop-y >= 740.0) {
                     root.app-pinned-to-dock(id);
-                } else if (drop-y >= 60.0 && drop-y < 740.0) {
-                    root.app-pinned-to-homescreen(id);
+                } else if (drop-y < 740.0) {
+                    root.app-dropped-on-homescreen(id, root.current-page, sx, sy);
                 }
             }
             close-requested => {
@@ -352,7 +568,7 @@ export component AppSurface inherits Rectangle {
         }
     }
 
-    // Floating drag overlay when moving an app from drawer to homescreen or dock
+    // Floating drag overlay when moving an app across homescreen or to dock
     if root.is-dragging-app: Rectangle {
         x: 0px;
         y: 0px;
@@ -400,7 +616,7 @@ export component AppSurface inherits Rectangle {
     }
 
     // =========================================================================
-    // MODE 1: RECENTS / OVERVIEW APP SWITCHER (Live Multitasking Carousel)
+    // MODE 1: RECENTS / OVERVIEW APP SWITCHER (Fluid 120Hz Kinetic Flickable Carousel)
     // =========================================================================
     if root.active-mode == 1: Rectangle {
         x: 0px;
@@ -441,70 +657,127 @@ export component AppSurface inherits Rectangle {
             }
         }
 
-        // Active task details when apps are running
+        // Fluid Kinetic Horizontal Carousel when tasks exist
         if root.running-tasks.length > 0: Rectangle {
             x: 0px;
             y: 0px;
             width: 100%;
             height: 100%;
 
-            property <TaskItem> cur-task: root.running-tasks[root.safe-overview-index];
+            overview-flick := Flickable {
+                x: 0px;
+                y: 54px;
+                width: parent.width;
+                height: 590px;
+                content-width: (root.running-tasks.length * 273px) + 156px;
+                content-height: 590px;
 
-            // Top App Header above the active card (y: 64px..100px)
-            HorizontalLayout {
-                x: 78px;
-                y: 64px;
-                width: 255px;
-                height: 38px;
-                spacing: 10px;
-                alignment: center;
+                HorizontalLayout {
+                    padding-left: 78px;
+                    padding-right: 78px;
+                    spacing: 18px;
+                    alignment: start;
 
-                Rectangle {
-                    width: 30px;
-                    height: 30px;
-                    border-radius: 9px;
-                    background: #1E2522;
-                    clip: true;
+                    for task[idx] in root.running-tasks: Rectangle {
+                        width: 255px;
+                        height: 580px;
 
-                    if cur-task.has-icon: Image {
-                        source: cur-task.icon;
-                        width: 22px;
-                        height: 22px;
-                        x: 4px;
-                        y: 4px;
+                        // Card Header: Icon + Title
+                        HorizontalLayout {
+                            x: 0px;
+                            y: 0px;
+                            width: 255px;
+                            height: 38px;
+                            spacing: 10px;
+                            alignment: center;
+
+                            Rectangle {
+                                width: 30px;
+                                height: 30px;
+                                border-radius: 9px;
+                                background: #1E2522;
+                                clip: true;
+
+                                if task.has-icon: Image {
+                                    source: task.icon;
+                                    width: 22px;
+                                    height: 22px;
+                                    x: 4px;
+                                    y: 4px;
+                                }
+                                if !task.has-icon: Text {
+                                    text: "📱";
+                                    font-size: 15px;
+                                    vertical-alignment: center;
+                                    horizontal-alignment: center;
+                                }
+                            }
+
+                            Text {
+                                text: task.name;
+                                font-size: Theme.font-title;
+                                font-weight: 600;
+                                color: Theme.on-surface;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                        }
+
+                        // Card Live Surface Frame (y: 48px, 255x521)
+                        Rectangle {
+                            x: 0px;
+                            y: 48px;
+                            width: 255px;
+                            height: 521px;
+                            border-radius: 20px;
+                            background: #14111833;
+                            border-width: 2px;
+                            border-color: idx == root.safe-overview-index ? Theme.primary : #ffffff22;
+                            clip: true;
+
+                            // Tap to focus, swipe up to dismiss
+                            card-ta := TouchArea {
+                                property <float> start-y: 0.0;
+                                property <bool> is-active: false;
+
+                                pointer-event(event) => {
+                                    if (event.kind == PointerEventKind.down) {
+                                        self.start-y = card-ta.mouse-y / 1px;
+                                        self.is-active = true;
+                                    } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
+                                        if (self.is-active) {
+                                            self.is-active = false;
+                                            let dy = self.start-y - (card-ta.mouse-y / 1px);
+                                            if (dy > 60.0) {
+                                                // Swipe UP -> dismiss task
+                                                root.close-task(task.id);
+                                            } else if (Math.abs(dy) < 15.0) {
+                                                // Tap -> select task
+                                                root.select-task(task.id);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
-                    if !cur-task.has-icon: Text {
-                        text: "📱";
-                        font-size: 15px;
-                        vertical-alignment: center;
-                        horizontal-alignment: center;
-                    }
-                }
-
-                Text {
-                    text: cur-task.name;
-                    font-size: Theme.font-title;
-                    font-weight: 600;
-                    color: Theme.on-surface;
-                    vertical-alignment: center;
-                    overflow: elide;
                 }
             }
 
-            // Live Task Card Frame: perfectly matches compositor thumbnail (x: 78px, y: 112px, 255x521)
-            Rectangle {
-                x: 78px;
-                y: 112px;
-                width: 255px;
-                height: 521px;
-                border-radius: 20px;
-                background: #14111833;
-                border-width: 2px;
-                border-color: Theme.primary;
-                clip: true;
+            // Sync carousel index with flickable content-x position
+            sync-timer := Timer {
+                interval: 60ms;
+                running: root.active-mode == 1;
+                triggered => {
+                    let idx = Math.max(0, Math.min(root.running-tasks.length - 1, Math.round(-overview-flick.content-x / 273px)));
+                    if (idx != root.overview-index) {
+                        root.overview-index = idx;
+                        root.overview-index-changed(idx);
+                    }
+                }
             }
 
-            // Carousel Left Chevron Arrow (visible when older tasks exist, i.e. index > 0)
+            // Left Chevron Arrow (visible when older tasks exist, i.e. index > 0)
             if root.safe-overview-index > 0: Rectangle {
                 x: 14px;
                 y: 330px;
@@ -528,12 +801,13 @@ export component AppSurface inherits Rectangle {
                 TouchArea {
                     clicked => {
                         root.overview-index = Math.max(0, root.overview-index - 1);
+                        overview-flick.content-x = -(root.overview-index * 273px);
                         root.overview-index-changed(root.overview-index);
                     }
                 }
             }
 
-            // Carousel Right Chevron Arrow (visible when newer tasks exist, i.e. index < tasks.length - 1)
+            // Right Chevron Arrow (visible when newer tasks exist, i.e. index < tasks.length - 1)
             if root.safe-overview-index < root.running-tasks.length - 1: Rectangle {
                 x: 354px;
                 y: 330px;
@@ -557,66 +831,16 @@ export component AppSurface inherits Rectangle {
                 TouchArea {
                     clicked => {
                         root.overview-index = Math.min(root.running-tasks.length - 1, root.overview-index + 1);
+                        overview-flick.content-x = -(root.overview-index * 273px);
                         root.overview-index-changed(root.overview-index);
                     }
                 }
             }
 
-            // Full-screen gesture detector for horizontal swipe carousel & card tap / dismiss
-            overview-swipe-ta := TouchArea {
-                x: 0px;
-                y: 60px;
-                width: parent.width;
-                height: 580px;
-
-                property <float> touch-start-x: 0.0;
-                property <float> touch-start-y: 0.0;
-                property <bool> is-active: false;
-
-                pointer-event(event) => {
-                    if (event.kind == PointerEventKind.down) {
-                        self.touch-start-x = overview-swipe-ta.mouse-x / 1px;
-                        self.touch-start-y = overview-swipe-ta.mouse-y / 1px;
-                        self.is-active = true;
-                    } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
-                        if (self.is-active) {
-                            self.is-active = false;
-                            let dx = (overview-swipe-ta.mouse-x / 1px) - self.touch-start-x;
-                            let dy = (overview-swipe-ta.mouse-y / 1px) - self.touch-start-y;
-
-                            if (Math.abs(dx) < 15.0 && Math.abs(dy) < 15.0) {
-                                // Tap! If tapped inside central card area (x: 70..340, y: 100..635), select app
-                                if (self.touch-start-x >= 70.0 && self.touch-start-x <= 340.0 &&
-                                    self.touch-start-y >= 100.0 && self.touch-start-y <= 635.0) {
-                                    root.select-task(cur-task.id);
-                                } else {
-                                    root.active-mode = 0; // Tap outside returns home
-                                }
-                            } else if (dy < -60.0 && Math.abs(dy) > Math.abs(dx)) {
-                                // Swiped UP -> Dismiss / close current task!
-                                root.close-task(cur-task.id);
-                            } else if (dx > 35.0 && Math.abs(dx) > Math.abs(dy)) {
-                                // Swiped RIGHT -> carousel to adjacent task (older task, index + 1)
-                                if (root.overview-index < root.running-tasks.length - 1) {
-                                    root.overview-index += 1;
-                                    root.overview-index-changed(root.overview-index);
-                                }
-                            } else if (dx < -35.0 && Math.abs(dx) > Math.abs(dy)) {
-                                // Swiped LEFT -> carousel to adjacent task (newer task, index - 1)
-                                if (root.overview-index > 0) {
-                                    root.overview-index -= 1;
-                                    root.overview-index-changed(root.overview-index);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Pagination Dots Indicator (centered at y: 642px)
+            // Pagination Dots Indicator (centered at y: 654px)
             HorizontalLayout {
                 x: 0px;
-                y: 642px;
+                y: 654px;
                 width: parent.width;
                 height: 14px;
                 alignment: center;
@@ -634,16 +858,17 @@ export component AppSurface inherits Rectangle {
                     TouchArea {
                         clicked => {
                             root.overview-index = idx;
+                            overview-flick.content-x = -(idx * 273px);
                             root.overview-index-changed(idx);
                         }
                     }
                 }
             }
 
-            // Bottom Action Pill: Clear All (centered below card at y: 668px)
+            // Bottom Action Pill: Clear All (centered below card at y: 680px)
             Rectangle {
                 x: (parent.width - 140px) / 2;
-                y: 668px;
+                y: 680px;
                 width: 140px;
                 height: 42px;
                 border-radius: Theme.radius-pill;
