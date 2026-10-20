@@ -110,6 +110,38 @@ fn send_shell_cmd(cmd: &str) {
     }
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct RunningTask {
+    pub id: i32,
+    pub app_id: String,
+    pub title: String,
+}
+
+fn load_running_tasks() -> Vec<RunningTask> {
+    let runtime_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
+    let path = std::path::Path::new(&runtime_dir).join("penumbra-windows");
+    if let Ok(content) = std::fs::read_to_string(path) {
+        content
+            .lines()
+            .filter_map(|line| {
+                let parts: Vec<&str> = line.split('\t').collect();
+                if parts.len() >= 3 {
+                    let id = parts[0].parse::<i32>().ok()?;
+                    Some(RunningTask {
+                        id,
+                        app_id: parts[1].to_string(),
+                        title: parts[2].to_string(),
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect()
+    } else {
+        Vec::new()
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = ShellArgs::parse();
 
@@ -178,6 +210,63 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
     };
     update_layout_models();
+
+    // Helper to refresh Slint running-tasks model from compositor IPC
+    let refresh_running_tasks = {
+        let ui_weak = ui_weak.clone();
+        let apps_list = Arc::clone(&apps_list);
+        Rc::new(move || {
+            if let Some(ui) = ui_weak.upgrade() {
+                let tasks = load_running_tasks();
+                let slint_tasks = Rc::new(VecModel::default());
+                for task in tasks {
+                    let (name, has_icon, icon) = if let Some(app) = apps_list.iter().find(|a| {
+                        a.id.eq_ignore_ascii_case(&task.app_id)
+                            || a.name.eq_ignore_ascii_case(&task.app_id)
+                            || task.app_id.contains(&a.id)
+                    }) {
+                        let (has_icon, img) = if let Some(ref path) = app.icon_path {
+                            match slint::Image::load_from_path(path) {
+                                Ok(img) => (true, img),
+                                Err(_) => (false, slint::Image::default()),
+                            }
+                        } else {
+                            (false, slint::Image::default())
+                        };
+                        (app.name.clone(), has_icon, img)
+                    } else {
+                        let display_name = if !task.title.is_empty() {
+                            task.title.clone()
+                        } else if !task.app_id.is_empty() {
+                            task.app_id.clone()
+                        } else {
+                            format!("Task {}", task.id)
+                        };
+                        (display_name, false, slint::Image::default())
+                    };
+
+                    slint_tasks.push(TaskItem {
+                        id: task.id,
+                        app_id: task.app_id.into(),
+                        name: name.into(),
+                        has_icon,
+                        icon,
+                    });
+                }
+                ui.set_running_tasks(ModelRc::from(slint_tasks));
+            }
+        })
+    };
+    refresh_running_tasks();
+
+    // Periodic task poller to keep running-tasks model synced with compositor
+    let task_poll_timer = Timer::default();
+    {
+        let refresh_tasks = refresh_running_tasks.clone();
+        task_poll_timer.start(TimerMode::Repeated, Duration::from_millis(250), move || {
+            refresh_tasks();
+        });
+    }
 
     // 1. Damped Spring Physics State for Quick Settings Drawer
     let drawer_spring = Rc::new(std::cell::RefCell::new(
@@ -387,6 +476,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let apply_nav_gesture = {
         let ui_weak = ui_weak.clone();
+        let refresh_tasks = refresh_running_tasks.clone();
         Rc::new(move |gesture: NavGesture| {
             if let Some(ui) = ui_weak.upgrade() {
                 match gesture {
@@ -397,8 +487,46 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     NavGesture::OpenOverview => {
                         info!("NavGesture: OpenOverview (Drag up & hold > 80px) -> Opening Task Switcher");
+                        refresh_tasks();
+                        ui.set_overview_index(0);
                         ui.set_active_mode(1);
                         sync_shell_state("overview", ui.get_drawer_open(), 0);
+                    }
+                    NavGesture::SwitchNextApp => {
+                        info!("NavGesture: SwitchNextApp (Swipe left on bottom bar)");
+                        let tasks = load_running_tasks();
+                        if tasks.len() >= 2 {
+                            let next_task = &tasks[1];
+                            info!("Switching to next app: {} (id: {})", next_task.title, next_task.id);
+                            send_shell_cmd(&format!("focus {}", next_task.id));
+                            let target_name = if !next_task.title.is_empty() {
+                                next_task.title.clone()
+                            } else {
+                                next_task.app_id.clone()
+                            };
+                            ui.set_active_app(target_name.into());
+                            ui.set_active_mode(3);
+                            sync_shell_state("app", ui.get_drawer_open(), 0);
+                            refresh_tasks();
+                        }
+                    }
+                    NavGesture::SwitchPrevApp => {
+                        info!("NavGesture: SwitchPrevApp (Swipe right on bottom bar)");
+                        let tasks = load_running_tasks();
+                        if tasks.len() >= 2 {
+                            let prev_task = tasks.last().unwrap();
+                            info!("Switching to prev app: {} (id: {})", prev_task.title, prev_task.id);
+                            send_shell_cmd(&format!("focus {}", prev_task.id));
+                            let target_name = if !prev_task.title.is_empty() {
+                                prev_task.title.clone()
+                            } else {
+                                prev_task.app_id.clone()
+                            };
+                            ui.set_active_app(target_name.into());
+                            ui.set_active_mode(3);
+                            sync_shell_state("app", ui.get_drawer_open(), 0);
+                            refresh_tasks();
+                        }
                     }
                 }
             }
@@ -663,12 +791,81 @@ fn spawn_real_app(app: &str, target: &str) {
     // Clear all tasks from recents overview
     {
         let ui_weak = ui_weak.clone();
+        let refresh_tasks = refresh_running_tasks.clone();
         ui.on_clear_all_recents(move || {
             info!("Overview: clear all tasks requested");
             send_shell_cmd("close-all");
+            let ui_weak = ui_weak.clone();
+            let refresh_tasks = refresh_tasks.clone();
+            slint::Timer::single_shot(Duration::from_millis(100), move || {
+                refresh_tasks();
+                if let Some(ui) = ui_weak.upgrade() {
+                    ui.set_active_mode(0);
+                    sync_shell_state("home", ui.get_drawer_open(), 0);
+                }
+            });
+        });
+    }
+
+    // Select task from overview carousel tap
+    {
+        let ui_weak = ui_weak.clone();
+        let refresh_tasks = refresh_running_tasks.clone();
+        ui.on_select_task(move |task_id| {
+            info!("Overview: selecting task id={}", task_id);
+            send_shell_cmd(&format!("focus {}", task_id));
             if let Some(ui) = ui_weak.upgrade() {
-                ui.set_active_mode(0);
-                sync_shell_state("home", ui.get_drawer_open(), 0);
+                let tasks = load_running_tasks();
+                if let Some(t) = tasks.iter().find(|t| t.id == task_id) {
+                    let name = if !t.title.is_empty() {
+                        t.title.clone()
+                    } else {
+                        t.app_id.clone()
+                    };
+                    ui.set_active_app(name.into());
+                }
+                ui.set_active_mode(3);
+                sync_shell_state("app", ui.get_drawer_open(), 0);
+                refresh_tasks();
+            }
+        });
+    }
+
+    // Close individual task from overview card swipe-up
+    {
+        let ui_weak = ui_weak.clone();
+        let refresh_tasks = refresh_running_tasks.clone();
+        ui.on_close_task(move |task_id| {
+            info!("Overview: closing task id={}", task_id);
+            send_shell_cmd(&format!("close {}", task_id));
+            let ui_weak = ui_weak.clone();
+            let refresh_tasks = refresh_tasks.clone();
+            slint::Timer::single_shot(Duration::from_millis(80), move || {
+                refresh_tasks();
+                if let Some(ui) = ui_weak.upgrade() {
+                    let tasks = load_running_tasks();
+                    if tasks.is_empty() {
+                        ui.set_active_mode(0);
+                        sync_shell_state("home", ui.get_drawer_open(), 0);
+                    } else {
+                        let cur_idx = ui.get_overview_index();
+                        if cur_idx >= tasks.len() as i32 {
+                            ui.set_overview_index((tasks.len() - 1) as i32);
+                        }
+                        sync_shell_state("overview", ui.get_drawer_open(), ui.get_overview_index() as usize);
+                    }
+                }
+            });
+        });
+    }
+
+    // Overview carousel index changed (swiped left/right or chevron clicked)
+    {
+        let ui_weak = ui_weak.clone();
+        ui.on_overview_index_changed(move |idx| {
+            info!("Overview: carousel index changed to {}", idx);
+            if let Some(ui) = ui_weak.upgrade() {
+                sync_shell_state("overview", ui.get_drawer_open(), idx as usize);
             }
         });
     }
@@ -688,6 +885,7 @@ fn spawn_real_app(app: &str, target: &str) {
     // Nav gesture invoked callback from UI
     {
         let ui_weak = ui_weak.clone();
+        let refresh_tasks = refresh_running_tasks.clone();
         ui.on_nav_gesture_invoked(move |action| {
             info!("Nav bar direct action: {action}");
             if let Some(ui) = ui_weak.upgrade() {
@@ -697,6 +895,8 @@ fn spawn_real_app(app: &str, target: &str) {
                         sync_shell_state("home", ui.get_drawer_open(), 0);
                     }
                     "recents" => {
+                        refresh_tasks();
+                        ui.set_overview_index(0);
                         ui.set_active_mode(1);
                         sync_shell_state("overview", ui.get_drawer_open(), 0);
                     }

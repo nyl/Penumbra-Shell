@@ -19,6 +19,10 @@ pub enum NavGesture {
     GoHome,
     /// Drag up and hold -> open task switcher.
     OpenOverview,
+    /// Swipe left on bottom bar -> switch to next running app.
+    SwitchNextApp,
+    /// Swipe right on bottom bar -> switch to previous running app.
+    SwitchPrevApp,
 }
 
 /// Tunable thresholds for the navigation gesture recognizer.
@@ -34,6 +38,8 @@ pub struct NavGestureConfig {
     pub flick_velocity: f64,
     /// Minimum upward travel (px) for a flick to count.
     pub flick_min_distance: f64,
+    /// Minimum horizontal travel (px) to switch apps.
+    pub switch_app_min_distance: f64,
     /// Window over which release velocity is estimated.
     pub velocity_window: Duration,
 }
@@ -46,6 +52,7 @@ impl Default for NavGestureConfig {
             hold_slop: 6.0,
             flick_velocity: 650.0,
             flick_min_distance: 24.0,
+            switch_app_min_distance: 35.0,
             velocity_window: Duration::from_millis(90),
         }
     }
@@ -62,6 +69,8 @@ struct Sample {
 pub struct NavGestureRecognizer {
     pub config: NavGestureConfig,
     active: bool,
+    start_x: f64,
+    current_x: f64,
     start_y: f64,
     current_y: f64,
     /// Anchor used for hold detection; reset whenever the finger leaves `hold_slop`.
@@ -82,6 +91,8 @@ impl NavGestureRecognizer {
         Self {
             config,
             active: false,
+            start_x: 0.0,
+            current_x: 0.0,
             start_y: 0.0,
             current_y: 0.0,
             anchor_y: 0.0,
@@ -101,8 +112,15 @@ impl NavGestureRecognizer {
         (self.start_y - self.current_y).max(0.0)
     }
 
-    pub fn on_down(&mut self, _x: f64, y: f64, t: Duration) {
+    /// Horizontal travel in px since touch-down (positive = moved right, negative = moved left).
+    pub fn horizontal_distance(&self) -> f64 {
+        self.current_x - self.start_x
+    }
+
+    pub fn on_down(&mut self, x: f64, y: f64, t: Duration) {
         self.active = true;
+        self.start_x = x;
+        self.current_x = x;
         self.start_y = y;
         self.current_y = y;
         self.anchor_y = y;
@@ -113,10 +131,11 @@ impl NavGestureRecognizer {
     }
 
     /// Records motion. May return [`NavGesture::OpenOverview`] once a hold is detected.
-    pub fn on_move(&mut self, _x: f64, y: f64, t: Duration) -> Option<NavGesture> {
+    pub fn on_move(&mut self, x: f64, y: f64, t: Duration) -> Option<NavGesture> {
         if !self.active {
             return None;
         }
+        self.current_x = x;
         self.current_y = y;
         self.samples.push(Sample { y, t });
         let window = self.config.velocity_window * 3;
@@ -171,15 +190,28 @@ impl NavGestureRecognizer {
             return None;
         }
 
-        let distance = self.upward_distance();
+        let distance_y = self.upward_distance();
+        let distance_x = self.horizontal_distance();
+        let abs_dx = distance_x.abs();
+
+        // 1. Prioritize horizontal edge bar swipe for quick app switching
+        if abs_dx >= self.config.switch_app_min_distance && abs_dx > distance_y * 1.2 {
+            return if distance_x < 0.0 {
+                Some(NavGesture::SwitchNextApp)
+            } else {
+                Some(NavGesture::SwitchPrevApp)
+            };
+        }
+
+        // 2. Vertical gestures: Flick to Home or Drag & Hold to Overview
         let velocity = self.upward_velocity(t);
 
-        if velocity >= self.config.flick_velocity && distance >= self.config.flick_min_distance {
+        if velocity >= self.config.flick_velocity && distance_y >= self.config.flick_min_distance {
             Some(NavGesture::GoHome)
-        } else if distance >= self.config.overview_distance {
+        } else if distance_y >= self.config.overview_distance {
             // Slow drag past the threshold released without a fling.
             Some(NavGesture::OpenOverview)
-        } else if distance >= self.config.flick_min_distance {
+        } else if distance_y >= self.config.flick_min_distance {
             Some(NavGesture::GoHome)
         } else {
             None
@@ -239,5 +271,23 @@ mod tests {
         let mut r = NavGestureRecognizer::default();
         r.on_down(200.0, 900.0, ms(0));
         assert_eq!(r.on_up(201.0, 898.0, ms(80)), None);
+    }
+
+    #[test]
+    fn switch_next_app_on_swipe_left() {
+        let mut r = NavGestureRecognizer::default();
+        r.on_down(200.0, 900.0, ms(0));
+        assert_eq!(r.on_move(160.0, 898.0, ms(30)), None);
+        assert_eq!(r.on_move(120.0, 896.0, ms(60)), None);
+        assert_eq!(r.on_up(110.0, 895.0, ms(90)), Some(NavGesture::SwitchNextApp));
+    }
+
+    #[test]
+    fn switch_prev_app_on_swipe_right() {
+        let mut r = NavGestureRecognizer::default();
+        r.on_down(200.0, 900.0, ms(0));
+        assert_eq!(r.on_move(240.0, 898.0, ms(30)), None);
+        assert_eq!(r.on_move(280.0, 896.0, ms(60)), None);
+        assert_eq!(r.on_up(290.0, 895.0, ms(90)), Some(NavGesture::SwitchPrevApp));
     }
 }

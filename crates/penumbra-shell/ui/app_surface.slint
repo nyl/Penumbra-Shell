@@ -1,13 +1,11 @@
 import { Theme } from "theme.slint";
-import { AppItem } from "app_item.slint";
+import { AppItem, TaskItem } from "app_item.slint";
 import { BottomDock } from "dock.slint";
 import { ShortcutTile } from "shortcut_tile.slint";
 
 import { AppDrawer } from "app_drawer.slint";
 
-export { AppItem }
-
-
+export { AppItem, TaskItem }
 
 export component AppSurface inherits Rectangle {
     in-out property <int> active-mode: 0; // 0: Home, 1: Recents Overview, 2: App Drawer, 3: Active In-Shell App
@@ -24,6 +22,11 @@ export component AppSurface inherits Rectangle {
     in-out property <length> drag-x: 0px;
     in-out property <length> drag-y: 0px;
 
+    // Overview running tasks and carousel index
+    in property <[TaskItem]> running-tasks: [];
+    in-out property <int> overview-index: 0;
+    property <int> safe-overview-index: Math.max(0, Math.min(root.overview-index, Math.max(0, root.running-tasks.length - 1)));
+
     callback app-clicked(string);
     callback app-removed-from-dock(string);
     callback app-removed-from-homescreen(string);
@@ -32,6 +35,9 @@ export component AppSurface inherits Rectangle {
     callback start-drag-app(string, float, float);
     callback clear-all-recents();
     callback resume-active-task();
+    callback select-task(int);
+    callback close-task(int);
+    callback overview-index-changed(int);
     callback execute-command(string) -> string;
     callback list-directory(string) -> string;
     callback eval-calc(string, string, string) -> string;
@@ -325,7 +331,20 @@ export component AppSurface inherits Rectangle {
                 root.dragging-app-item = item;
                 root.drag-x = sx;
                 root.drag-y = sy;
-                root.active-mode = 0; // Close drawer to drop onto homescreen or dock
+            }
+            drag-moved(sx, sy) => {
+                root.drag-x = sx;
+                root.drag-y = sy;
+            }
+            drag-ended(id, sx, sy) => {
+                root.is-dragging-app = false;
+                root.active-mode = 0; // Return to homescreen
+                let drop-y = sy / 1px;
+                if (drop-y >= 740.0) {
+                    root.app-pinned-to-dock(id);
+                } else if (drop-y >= 60.0 && drop-y < 740.0) {
+                    root.app-pinned-to-homescreen(id);
+                }
             }
             close-requested => {
                 root.active-mode = 0;
@@ -340,24 +359,6 @@ export component AppSurface inherits Rectangle {
         width: parent.width;
         height: parent.height;
         z: 1000;
-        background: #00000033;
-
-        drag-ta := TouchArea {
-            pointer-event(event) => {
-                if (event.kind == PointerEventKind.move) {
-                    root.drag-x = drag-ta.mouse-x;
-                    root.drag-y = drag-ta.mouse-y;
-                } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
-                    root.is-dragging-app = false;
-                    let drop-y = drag-ta.mouse-y / 1px;
-                    if (drop-y >= 740.0) {
-                        root.app-pinned-to-dock(root.dragging-app-item.id);
-                    } else if (drop-y >= 100.0 && drop-y < 740.0) {
-                        root.app-pinned-to-homescreen(root.dragging-app-item.id);
-                    }
-                }
-            }
-        }
 
         // Floating App Icon under pointer
         Rectangle {
@@ -386,7 +387,6 @@ export component AppSurface inherits Rectangle {
         }
     }
 
-
     // =========================================================================
     // MODE 3: ACTIVE REAL WAYLAND APPLICATION CANVAS (Composited by penumbra-comp)
     // =========================================================================
@@ -407,89 +407,264 @@ export component AppSurface inherits Rectangle {
         y: 0px;
         width: 100%;
         height: 100%;
-        background: #08060BCC;
+        background: #08060BDD;
 
-        // Top App Header above the active card (y: 64px..100px)
-        HorizontalLayout {
-            x: 78px;
-            y: 68px;
-            width: 255px;
-            height: 36px;
-            spacing: 8px;
+        // Empty state when no apps are running
+        if root.running-tasks.length == 0: VerticalLayout {
             alignment: center;
+            spacing: 12px;
 
-            Rectangle {
-                width: 28px;
-                height: 28px;
-                border-radius: 8px;
-                background: #1E2522;
+            Text {
+                text: "✨";
+                font-size: 42px;
+                horizontal-alignment: center;
+            }
+            Text {
+                text: "No recent applications";
+                font-size: Theme.font-title;
+                font-weight: 700;
+                color: Theme.on-surface;
+                horizontal-alignment: center;
+            }
+            Text {
+                text: "Tap anywhere or swipe up to return home";
+                font-size: Theme.font-label;
+                color: Theme.on-surface-variant;
+                horizontal-alignment: center;
+            }
+        }
+
+        // Tap empty area to return home
+        if root.running-tasks.length == 0: TouchArea {
+            clicked => {
+                root.active-mode = 0;
+            }
+        }
+
+        // Active task details when apps are running
+        if root.running-tasks.length > 0: Rectangle {
+            x: 0px;
+            y: 0px;
+            width: 100%;
+            height: 100%;
+
+            property <TaskItem> cur-task: root.running-tasks[root.safe-overview-index];
+
+            // Top App Header above the active card (y: 64px..100px)
+            HorizontalLayout {
+                x: 78px;
+                y: 64px;
+                width: 255px;
+                height: 38px;
+                spacing: 10px;
+                alignment: center;
+
+                Rectangle {
+                    width: 30px;
+                    height: 30px;
+                    border-radius: 9px;
+                    background: #1E2522;
+                    clip: true;
+
+                    if cur-task.has-icon: Image {
+                        source: cur-task.icon;
+                        width: 22px;
+                        height: 22px;
+                        x: 4px;
+                        y: 4px;
+                    }
+                    if !cur-task.has-icon: Text {
+                        text: "📱";
+                        font-size: 15px;
+                        vertical-alignment: center;
+                        horizontal-alignment: center;
+                    }
+                }
+
                 Text {
-                    text: root.active-app == "terminal" ? "" :
-                          root.active-app == "files" ? "📁" :
-                          root.active-app == "calc" ? "🖩" :
-                          root.active-app == "notes" ? "📝" :
-                          root.active-app == "settings" ? "⚙" : "★";
-                    font-size: 14px;
-                    color: #48E885;
+                    text: cur-task.name;
+                    font-size: Theme.font-title;
+                    font-weight: 600;
+                    color: Theme.on-surface;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+
+            // Live Task Card Frame: perfectly matches compositor thumbnail (x: 78px, y: 112px, 255x521)
+            Rectangle {
+                x: 78px;
+                y: 112px;
+                width: 255px;
+                height: 521px;
+                border-radius: 20px;
+                background: #14111833;
+                border-width: 2px;
+                border-color: Theme.primary;
+                clip: true;
+            }
+
+            // Carousel Left Chevron Arrow (visible when older tasks exist, i.e. index > 0)
+            if root.safe-overview-index > 0: Rectangle {
+                x: 14px;
+                y: 330px;
+                width: 44px;
+                height: 44px;
+                border-radius: 22px;
+                background: #1E1B24DD;
+                border-width: 1px;
+                border-color: Theme.specular-rim;
+                z: 50;
+
+                Text {
+                    text: "‹";
+                    font-size: 26px;
+                    font-weight: 800;
+                    color: #FFFFFF;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+
+                TouchArea {
+                    clicked => {
+                        root.overview-index = Math.max(0, root.overview-index - 1);
+                        root.overview-index-changed(root.overview-index);
+                    }
+                }
+            }
+
+            // Carousel Right Chevron Arrow (visible when newer tasks exist, i.e. index < tasks.length - 1)
+            if root.safe-overview-index < root.running-tasks.length - 1: Rectangle {
+                x: 354px;
+                y: 330px;
+                width: 44px;
+                height: 44px;
+                border-radius: 22px;
+                background: #1E1B24DD;
+                border-width: 1px;
+                border-color: Theme.specular-rim;
+                z: 50;
+
+                Text {
+                    text: "›";
+                    font-size: 26px;
+                    font-weight: 800;
+                    color: #FFFFFF;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+
+                TouchArea {
+                    clicked => {
+                        root.overview-index = Math.min(root.running-tasks.length - 1, root.overview-index + 1);
+                        root.overview-index-changed(root.overview-index);
+                    }
+                }
+            }
+
+            // Full-screen gesture detector for horizontal swipe carousel & card tap / dismiss
+            overview-swipe-ta := TouchArea {
+                x: 0px;
+                y: 60px;
+                width: parent.width;
+                height: 580px;
+
+                property <float> touch-start-x: 0.0;
+                property <float> touch-start-y: 0.0;
+                property <bool> is-active: false;
+
+                pointer-event(event) => {
+                    if (event.kind == PointerEventKind.down) {
+                        self.touch-start-x = overview-swipe-ta.mouse-x / 1px;
+                        self.touch-start-y = overview-swipe-ta.mouse-y / 1px;
+                        self.is-active = true;
+                    } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
+                        if (self.is-active) {
+                            self.is-active = false;
+                            let dx = (overview-swipe-ta.mouse-x / 1px) - self.touch-start-x;
+                            let dy = (overview-swipe-ta.mouse-y / 1px) - self.touch-start-y;
+
+                            if (Math.abs(dx) < 15.0 && Math.abs(dy) < 15.0) {
+                                // Tap! If tapped inside central card area (x: 70..340, y: 100..635), select app
+                                if (self.touch-start-x >= 70.0 && self.touch-start-x <= 340.0 &&
+                                    self.touch-start-y >= 100.0 && self.touch-start-y <= 635.0) {
+                                    root.select-task(cur-task.id);
+                                } else {
+                                    root.active-mode = 0; // Tap outside returns home
+                                }
+                            } else if (dy < -60.0 && Math.abs(dy) > Math.abs(dx)) {
+                                // Swiped UP -> Dismiss / close current task!
+                                root.close-task(cur-task.id);
+                            } else if (dx > 35.0 && Math.abs(dx) > Math.abs(dy)) {
+                                // Swiped RIGHT -> carousel to adjacent task (older task, index + 1)
+                                if (root.overview-index < root.running-tasks.length - 1) {
+                                    root.overview-index += 1;
+                                    root.overview-index-changed(root.overview-index);
+                                }
+                            } else if (dx < -35.0 && Math.abs(dx) > Math.abs(dy)) {
+                                // Swiped LEFT -> carousel to adjacent task (newer task, index - 1)
+                                if (root.overview-index > 0) {
+                                    root.overview-index -= 1;
+                                    root.overview-index-changed(root.overview-index);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Pagination Dots Indicator (centered at y: 642px)
+            HorizontalLayout {
+                x: 0px;
+                y: 642px;
+                width: parent.width;
+                height: 14px;
+                alignment: center;
+                spacing: 8px;
+
+                for idx in root.running-tasks.length: Rectangle {
+                    width: idx == root.safe-overview-index ? 22px : 8px;
+                    height: 8px;
+                    border-radius: 4px;
+                    background: idx == root.safe-overview-index ? Theme.primary : #ffffff44;
+
+                    animate width { duration: 150ms; easing: ease-out; }
+                    animate background { duration: 150ms; }
+
+                    TouchArea {
+                        clicked => {
+                            root.overview-index = idx;
+                            root.overview-index-changed(idx);
+                        }
+                    }
+                }
+            }
+
+            // Bottom Action Pill: Clear All (centered below card at y: 668px)
+            Rectangle {
+                x: (parent.width - 140px) / 2;
+                y: 668px;
+                width: 140px;
+                height: 42px;
+                border-radius: Theme.radius-pill;
+                background: Theme.surface-highest;
+                border-width: 1px;
+                border-color: Theme.specular-rim;
+
+                Text {
+                    text: "Clear all";
+                    font-size: Theme.font-body;
+                    font-weight: 600;
+                    color: Theme.on-surface;
                     vertical-alignment: center;
                     horizontal-alignment: center;
                 }
-            }
 
-            Text {
-                text: root.active-app;
-                font-size: Theme.font-title;
-                font-weight: 600;
-                color: Theme.on-surface;
-                vertical-alignment: center;
-            }
-        }
-
-        // Live Task Card Frame: perfectly matches compositor thumbnail (x: 78px, y: 112px, 255x521)
-        Rectangle {
-            x: 78px;
-            y: 112px;
-            width: 255px;
-            height: 521px;
-            border-radius: 20px;
-            background: #141118;
-            border-width: 1.5px;
-            border-color: Theme.primary;
-            clip: true;
-
-            // Touch Area to resume app when card is tapped
-            TouchArea {
-                clicked => {
-                    root.active-mode = 3;
-                    root.resume-active-task();
-                }
-            }
-        }
-
-        // Bottom Action Pill: Clear All (centered below card at y: 658px)
-        Rectangle {
-            x: (parent.width - 140px) / 2;
-            y: 658px;
-            width: 140px;
-            height: 44px;
-            border-radius: Theme.radius-pill;
-            background: Theme.surface-highest;
-            border-width: 1px;
-            border-color: Theme.specular-rim;
-
-            Text {
-                text: "Clear all";
-                font-size: Theme.font-body;
-                font-weight: 600;
-                color: Theme.on-surface;
-                vertical-alignment: center;
-                horizontal-alignment: center;
-            }
-
-            TouchArea {
-                clicked => {
-                    root.active-mode = 0;
-                    root.clear-all-recents();
+                TouchArea {
+                    clicked => {
+                        root.active-mode = 0;
+                        root.clear-all-recents();
+                    }
                 }
             }
         }

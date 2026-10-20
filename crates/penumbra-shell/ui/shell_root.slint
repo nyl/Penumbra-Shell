@@ -2,10 +2,10 @@ import { Theme } from "theme.slint";
 import { StatusBar } from "status_bar.slint";
 import { NavBar } from "nav_bar.slint";
 import { QuickSettingsDrawer } from "quick_settings.slint";
-import { AppSurface, AppItem } from "app_surface.slint";
+import { AppSurface, AppItem, TaskItem } from "app_surface.slint";
 import { DesktopSurface } from "desktop_surface.slint";
 
-export { AppItem }
+export { AppItem, TaskItem }
 
 export component ShellRoot inherits Window {
     title: "Penumbra Mobile & Convergence Desktop Environment";
@@ -20,6 +20,10 @@ export component ShellRoot inherits Window {
     in property <[AppItem]> homescreen-apps: [];
     in-out property <bool> is-editing: false;
     in property <bool> reject-dock-drop: false;
+
+    // Running Tasks & Overview Carousel
+    in property <[TaskItem]> running-tasks: [];
+    in-out property <int> overview-index: 0;
 
     // Convergence Dual Screen Switch
     in-out property <bool> convergence-mode: true; // Shows both Phone DSI and External HDMI Monitor
@@ -63,6 +67,9 @@ export component ShellRoot inherits Window {
     callback nav-bar-up(float, float);
     callback clear-all-recents();
     callback resume-active-task();
+    callback select-task(int);
+    callback close-task(int);
+    callback overview-index-changed(int);
     callback toggle-drawer();
     callback app-launched(string);
     callback desktop-app-launched(string);
@@ -103,6 +110,8 @@ export component ShellRoot inherits Window {
             homescreen-apps: root.homescreen-apps;
             is-editing <=> root.is-editing;
             reject-dock-drop: root.reject-dock-drop;
+            running-tasks: root.running-tasks;
+            overview-index <=> root.overview-index;
             time-text: root.time-str;
             date-text: root.date-str;
             app-clicked(name) => {
@@ -129,6 +138,15 @@ export component ShellRoot inherits Window {
             resume-active-task => {
                 root.active-mode = 3;
                 root.resume-active-task();
+            }
+            select-task(id) => {
+                root.select-task(id);
+            }
+            close-task(id) => {
+                root.close-task(id);
+            }
+            overview-index-changed(idx) => {
+                root.overview-index-changed(idx);
             }
             execute-command(cmd) => {
                 return root.execute-command(cmd);

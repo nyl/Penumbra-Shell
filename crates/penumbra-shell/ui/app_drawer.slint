@@ -3,12 +3,18 @@ import { AppItem } from "app_item.slint";
 
 export component DrawerAppTile inherits Rectangle {
     in property <AppItem> app;
+    in property <length> base-x: 0px;
+    in property <length> base-y: 0px;
+
     callback clicked();
     callback drag-started(string, AppItem, length, length); // id, app, screen_x, screen_y
+    callback drag-moved(length, length);
+    callback drag-ended(string, length, length);
 
     property <float> touch-x: 0.0;
     property <float> touch-y: 0.0;
     property <bool> is-down: false;
+    property <bool> is-dragging: false;
 
     width: 80px;
     height: 96px;
@@ -19,8 +25,10 @@ export component DrawerAppTile inherits Rectangle {
         triggered => {
             self.running = false;
             if (root.is-down) {
-                root.is-down = false;
-                root.drag-started(root.app.id, root.app, root.touch-x * 1px, root.touch-y * 1px);
+                root.is-dragging = true;
+                let sx = root.base-x + (root.touch-x * 1px);
+                let sy = root.base-y + (root.touch-y * 1px);
+                root.drag-started(root.app.id, root.app, sx, sy);
             }
         }
     }
@@ -72,9 +80,14 @@ export component DrawerAppTile inherits Rectangle {
                 root.touch-x = tile-ta.mouse-x / 1px;
                 root.touch-y = tile-ta.mouse-y / 1px;
                 root.is-down = true;
+                root.is-dragging = false;
                 lp-timer.running = true;
             } else if (event.kind == PointerEventKind.move) {
-                if (root.is-down) {
+                if (root.is-dragging) {
+                    let sx = root.base-x + tile-ta.mouse-x;
+                    let sy = root.base-y + tile-ta.mouse-y;
+                    root.drag-moved(sx, sy);
+                } else if (root.is-down) {
                     let dx = Math.abs((tile-ta.mouse-x / 1px) - root.touch-x);
                     let dy = Math.abs((tile-ta.mouse-y / 1px) - root.touch-y);
                     if (dx > 12.0 || dy > 12.0) {
@@ -83,7 +96,13 @@ export component DrawerAppTile inherits Rectangle {
                 }
             } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
                 lp-timer.running = false;
-                if (root.is-down) {
+                if (root.is-dragging) {
+                    root.is-dragging = false;
+                    root.is-down = false;
+                    let sx = root.base-x + tile-ta.mouse-x;
+                    let sy = root.base-y + tile-ta.mouse-y;
+                    root.drag-ended(root.app.id, sx, sy);
+                } else if (root.is-down) {
                     root.is-down = false;
                     let dx = Math.abs((tile-ta.mouse-x / 1px) - root.touch-x);
                     let dy = Math.abs((tile-ta.mouse-y / 1px) - root.touch-y);
@@ -102,6 +121,8 @@ export component AppDrawer inherits Rectangle {
 
     callback app-clicked(string);
     callback start-drag(string, AppItem, length, length);
+    callback drag-moved(length, length);
+    callback drag-ended(string, length, length);
     callback close-requested();
 
     width: 100%;
@@ -197,7 +218,7 @@ export component AppDrawer inherits Rectangle {
         }
 
         // Section: Real Installed Applications Grid (Dynamic FreeDesktop XDG Apps)
-        Flickable {
+        flick := Flickable {
             height: 640px;
             content-height: (root.installed-apps.length / 4 + 1) * 105px;
 
@@ -211,14 +232,24 @@ export component AppDrawer inherits Rectangle {
                         width: 80px;
                         height: 96px;
                         property <int> idx: row * 4 + col;
+                        property <length> tile-base-x: 26.5px + col * 93px;
+                        property <length> tile-base-y: 139px + flick.content-y + row * 104px;
 
                         if self.idx < root.installed-apps.length: DrawerAppTile {
                             app: root.installed-apps[parent.idx];
+                            base-x: parent.tile-base-x;
+                            base-y: parent.tile-base-y;
                             clicked => {
                                 root.app-clicked(root.installed-apps[parent.idx].id);
                             }
                             drag-started(id, item, sx, sy) => {
                                 root.start-drag(id, item, sx, sy);
+                            }
+                            drag-moved(sx, sy) => {
+                                root.drag-moved(sx, sy);
+                            }
+                            drag-ended(id, sx, sy) => {
+                                root.drag-ended(id, sx, sy);
                             }
                         }
                     }
