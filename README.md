@@ -18,6 +18,10 @@
 
 ## 🌟 Overview
 
+> [!NOTE]
+> **Hobby Project & AI Collaboration Notice:**
+> **Penumbra** is a personal hobby project built for my daily-driver Linux phone. This project is developed in close collaboration with advanced AI agents (Google DeepMind Antigravity / Gemini), combining human systems architecture, real Linux Wayland compositor engineering, and AI-accelerated implementation.
+
 **Penumbra** is a modern, mobile-first Wayland desktop environment and compositor crafted entirely in **Rust**. Combining the low-level compositor engine of **Smithay** with the reactive, GPU-accelerated UI of **Slint**, Penumbra delivers a fluid, gesture-driven smartphone user experience paired with a seamless desktop convergence mode when docked to an external monitor.
 
 Designed under the **Material 3 Expressive** OLED pitch-black design language, Penumbra operates directly against real FreeDesktop XDG applications with zero mockup launchers or simulated window frames.
@@ -49,22 +53,38 @@ Designed under the **Material 3 Expressive** OLED pitch-black design language, P
 ## 🚀 Key Features
 
 ### 📱 1. Mobile Shell (`penumbra-shell`)
-- **Clean Homescreen**: Minimalist, distraction-free desktop presenting an At-a-Glance weather/time widget, Google search pill, and persistent navigation dock.
+- **Multi-Page Workspace (Android Launcher3 Architecture)**:
+  - Paged desktop grid supporting multiple horizontal workspaces (`current_page`, `num_pages`).
+  - Smooth horizontal swipe navigation between pages with dynamic page indicator pills.
+  - Page 0 hosts the unified At-a-Glance Clock & Weather widget; pages 1+ feature clean headers and a full 4x4 app grid.
+- **Unified At-a-Glance Clock & Weather Widget**:
+  - Integrated large clock display with immediate date and local temperature/weather telemetry.
+- **Drag-and-Drop Pinning & Reordering**:
+  - Long press (> 400ms) on any app in the App Drawer or Homescreen to pick up and drag.
+  - Floating squircle icon dynamically tracks under the touch point.
+  - Dropping over an empty grid cell places or moves the shortcut.
+  - Dropping over the Bottom Dock pins the shortcut (if a slot is free).
+- **Edge Dwell Page Navigation & Dynamic Creation**:
+  - Holding a dragged app at the right screen edge for a sustained **750ms dwell timer** smoothly advances to the next page or dynamically creates a new page.
+  - Holding at the left screen edge for 750ms returns to the previous page.
+- **App Folders with Inline Rename**:
+  - Dropping an app over another existing app automatically merges them into a **Folder** with a 2x2 mini preview squircle.
+  - Dropping into an existing folder appends the app to that folder.
+  - Tapping a folder opens an animated modal overlay with a live editable title input and an apps grid.
 - **Persistent Bottom Dock**:
-  - Enforces a strict 4-slot mobile layout.
+  - Enforces a strict 4-slot mobile layout cleanly floating above the navigation gesture bar.
   - Automatically populated with GNOME Mobile app fallbacks (`Calls`, `Chatty`, `Web`, `Console`).
   - Drop rejection feedback: Attempting to drag an app onto a full dock triggers a red alert flash and shake animation.
-- **Drag-and-Drop Pinning**:
-  - Long press (> 400ms) on any app inside the App Drawer initiates a drag operation, minimizing the drawer to 0 opacity and tracking the floating icon under the pointer.
-  - Dropping over the Homescreen grid pins the shortcut to `homescreen_apps`.
-  - Dropping over the Bottom Dock pins the shortcut to `dock_apps` (if a slot is free).
 - **iOS-Style "Jiggle / Edit Mode"**:
   - Press and hold any pinned shortcut for > 500ms to enter Edit Mode.
   - Pinned icons enter continuous jiggle oscillation.
   - A red circular `"✕"` badge appears at the top-right corner (`-6px, -6px`) for instant unpinning.
   - Tapping empty background space exits Edit Mode smoothly.
+- **Fluid 120Hz Kinetic Recents Switcher**:
+  - Continuous 1:1 finger tracking horizontal `Flickable` carousel with realistic inertia and momentum matching the App Drawer.
+  - Real-time periodic synchronization with Smithay's Wayland compositor to focus active tasks.
 - **Data Persistence**:
-  - User layouts are automatically serialized to and deserialized from `~/.config/penumbra/layout.json`.
+  - User layouts, folders, and page counts are automatically serialized to and deserialized from `~/.config/penumbra/layout.json`.
   - First-boot initialization auto-detects installed web browsers, terminals, dialers, and messaging clients.
 
 ### 🪟 2. Smithay Wayland Compositor (`penumbra-comp`)
@@ -236,16 +256,31 @@ Example schema:
   "dock_apps": [
     "org.gnome.Calls",
     "sm.puri.Chatty",
-    "firefox.desktop",
-    "alacritty.desktop"
+    "org.gnome.Epiphany",
+    "org.gnome.Console"
   ],
   "homescreen_apps": [
     {
       "id": "org.gnome.Nautilus.desktop",
+      "page": 0,
       "x": 0,
       "y": 0
     }
-  ]
+  ],
+  "folders": [
+    {
+      "id": "folder_1739987654321",
+      "name": "Utilities",
+      "page": 0,
+      "x": 1,
+      "y": 0,
+      "app_ids": [
+        "org.gnome.Calculator",
+        "org.gnome.Calendar"
+      ]
+    }
+  ],
+  "num_pages": 2
 }
 ```
 
