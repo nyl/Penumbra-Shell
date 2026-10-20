@@ -16,6 +16,9 @@ export component ShellRoot inherits Window {
 
     // Dynamic XDG Applications Model
     in property <[AppItem]> installed-apps: [];
+    in-out property <string> app-search-query: "";
+    callback app-search-query-changed(string);
+    callback app-search-accepted(string);
     in property <[AppItem]> dock-apps: [];
     in property <[HomescreenItem]> homescreen-items: [];
     in-out property <int> current-page: 0;
@@ -135,6 +138,13 @@ export component ShellRoot inherits Window {
             active-mode <=> root.active-mode;
             active-app <=> root.active-app;
             installed-apps: root.installed-apps;
+            app-search-query <=> root.app-search-query;
+            app-search-query-changed(q) => {
+                root.app-search-query-changed(q);
+            }
+            app-search-accepted(q) => {
+                root.app-search-accepted(q);
+            }
             dock-apps: root.dock-apps;
             homescreen-items: root.homescreen-items;
             current-page <=> root.current-page;

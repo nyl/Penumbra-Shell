@@ -60,6 +60,10 @@ export component AppSurface inherits Rectangle {
     callback eval-calc(string, string, string) -> string;
     callback save-file(string, string) -> bool;
 
+    in-out property <string> app-search-query: "";
+    callback app-search-query-changed(string);
+    callback app-search-accepted(string);
+
     // Wallpaper properties
     in property <bool> has-wallpaper: false;
     in property <image> wallpaper-image;
@@ -643,6 +647,13 @@ export component AppSurface inherits Rectangle {
         AppDrawer {
             installed-apps: root.installed-apps;
             is-open: root.active-mode == 2;
+            search-query <=> root.app-search-query;
+            search-query-changed(q) => {
+                root.app-search-query-changed(q);
+            }
+            search-accepted(q) => {
+                root.app-search-accepted(q);
+            }
             app-clicked(id) => {
                 root.app-clicked(id);
             }
@@ -672,6 +683,8 @@ export component AppSurface inherits Rectangle {
             }
             close-requested => {
                 root.active-mode = 0;
+                root.app-search-query = "";
+                root.app-search-query-changed("");
             }
         }
     }

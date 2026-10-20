@@ -308,25 +308,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Discover installed XDG applications and populate Slint model
     let apps_list = Arc::new(discover_installed_apps());
-    let slint_apps = Rc::new(VecModel::default());
-    for app in apps_list.iter() {
-        let (has_icon, img) = if let Some(ref path) = app.icon_path {
-            match slint::Image::load_from_path(path) {
-                Ok(img) => (true, img),
-                Err(_) => (false, slint::Image::default()),
-            }
-        } else {
-            (false, slint::Image::default())
-        };
+    let all_slint_apps: Arc<Vec<AppItem>> = {
+        let mut items = Vec::new();
+        for app in apps_list.iter() {
+            let (has_icon, img) = if let Some(ref path) = app.icon_path {
+                match slint::Image::load_from_path(path) {
+                    Ok(img) => (true, img),
+                    Err(_) => (false, slint::Image::default()),
+                }
+            } else {
+                (false, slint::Image::default())
+            };
 
-        slint_apps.push(AppItem {
-            id: app.id.clone().into(),
-            name: app.name.clone().into(),
-            has_icon,
-            icon: img,
-        });
-    }
-    ui.set_installed_apps(ModelRc::from(slint_apps));
+            items.push(AppItem {
+                id: app.id.clone().into(),
+                name: app.name.clone().into(),
+                has_icon,
+                icon: img,
+            });
+        }
+        Arc::new(items)
+    };
+    ui.set_installed_apps(ModelRc::from(Rc::new(VecModel::from((*all_slint_apps).clone()))));
 
     let available_ids: Vec<String> = apps_list.iter().map(|a| a.id.clone()).collect();
     let layout_config = Rc::new(std::cell::RefCell::new(load_layout_config(&available_ids)));
@@ -876,6 +879,86 @@ fn spawn_real_app(app: &str, target: &str) {
                 }
             } else {
                 spawn_real_app(id_str, "desktop");
+            }
+        });
+    }
+
+    // 7. App Drawer Live Search & Filtering Engine
+    {
+        let ui_weak = ui_weak.clone();
+        let all_apps = Arc::clone(&all_slint_apps);
+        let apps_list = Arc::clone(&apps_list);
+        ui.on_app_search_query_changed(move |query_slint| {
+            let query = query_slint.trim().to_lowercase();
+            if let Some(ui) = ui_weak.upgrade() {
+                if query.is_empty() {
+                    ui.set_installed_apps(ModelRc::from(Rc::new(VecModel::from((*all_apps).clone()))));
+                } else {
+                    let mut exact_prefix = Vec::new();
+                    let mut name_matches = Vec::new();
+                    let mut other_matches = Vec::new();
+
+                    for item in all_apps.iter() {
+                        let name_lower = item.name.to_lowercase();
+                        let id_lower = item.id.to_lowercase();
+
+                        if name_lower.starts_with(&query) || id_lower.starts_with(&query) {
+                            exact_prefix.push(item.clone());
+                        } else if name_lower.contains(&query) {
+                            name_matches.push(item.clone());
+                        } else if id_lower.contains(&query) {
+                            other_matches.push(item.clone());
+                        } else if let Some(app) = apps_list.iter().find(|a| a.id == item.id.as_str()) {
+                            if app.exec.to_lowercase().contains(&query) {
+                                other_matches.push(item.clone());
+                            }
+                        }
+                    }
+
+                    let mut filtered = exact_prefix;
+                    filtered.extend(name_matches);
+                    filtered.extend(other_matches);
+
+                    ui.set_installed_apps(ModelRc::from(Rc::new(VecModel::from(filtered))));
+                }
+            }
+        });
+    }
+
+    // App Drawer Search Enter / Accepted -> Launch First Match
+    {
+        let ui_weak = ui_weak.clone();
+        let all_apps = Arc::clone(&all_slint_apps);
+        let apps_list = Arc::clone(&apps_list);
+        ui.on_app_search_accepted(move |query_slint| {
+            let query = query_slint.trim().to_lowercase();
+            if query.is_empty() {
+                return;
+            }
+            if let Some(ui) = ui_weak.upgrade() {
+                let first_match = all_apps.iter().find(|item| {
+                    let name_lower = item.name.to_lowercase();
+                    let id_lower = item.id.to_lowercase();
+                    name_lower.starts_with(&query)
+                        || name_lower.contains(&query)
+                        || id_lower.contains(&query)
+                }).cloned();
+
+                if let Some(app_item) = first_match {
+                    let id_str = app_item.id.as_str().to_string();
+                    let name_str = app_item.name.as_str().to_string();
+                    info!("App search enter: launching top result '{}' (id: {})", name_str, id_str);
+                    if let Some(target_app) = apps_list.iter().find(|a| a.id == id_str) {
+                        if let Err(e) = launch_app(target_app, Some("phone")) {
+                            tracing::warn!("Failed to launch XDG app '{}': {}", target_app.name, e);
+                        }
+                    } else {
+                        spawn_real_app(&id_str, "phone");
+                    }
+                    ui.set_active_app(name_str.into());
+                    ui.set_active_mode(3);
+                    sync_shell_state("app", ui.get_drawer_open(), 0);
+                }
             }
         });
     }
@@ -1619,6 +1702,11 @@ mod tests {
         assert!(!ui.get_hdmi_connected());
         ui.set_convergence_mode(false);
         assert!(!ui.get_convergence_mode());
+
+        // Test app drawer search query property
+        assert_eq!(ui.get_app_search_query(), "");
+        ui.set_app_search_query("calc".into());
+        assert_eq!(ui.get_app_search_query(), "calc");
     }
 
     #[test]
@@ -1649,5 +1737,51 @@ mod tests {
         }
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_app_drawer_search_filtering() {
+        let all_apps = vec![
+            AppItem { id: "org.gnome.Calculator".into(), name: "Calculator".into(), has_icon: false, icon: slint::Image::default() },
+            AppItem { id: "org.gnome.Calendar".into(), name: "Calendar".into(), has_icon: false, icon: slint::Image::default() },
+            AppItem { id: "foot".into(), name: "Terminal".into(), has_icon: false, icon: slint::Image::default() },
+            AppItem { id: "firefox".into(), name: "Web Browser".into(), has_icon: false, icon: slint::Image::default() },
+        ];
+
+        // Search "cal": should match Calculator and Calendar
+        let query = "cal";
+        let mut matches = Vec::new();
+        for item in &all_apps {
+            let name_lower = item.name.to_lowercase();
+            let id_lower = item.id.to_lowercase();
+            if name_lower.contains(query) || id_lower.contains(query) {
+                matches.push(item.name.as_str().to_string());
+            }
+        }
+        assert_eq!(matches, vec!["Calculator", "Calendar"]);
+
+        // Search "term": should match Terminal
+        let query = "term";
+        let mut matches = Vec::new();
+        for item in &all_apps {
+            let name_lower = item.name.to_lowercase();
+            let id_lower = item.id.to_lowercase();
+            if name_lower.contains(query) || id_lower.contains(query) {
+                matches.push(item.name.as_str().to_string());
+            }
+        }
+        assert_eq!(matches, vec!["Terminal"]);
+
+        // Search non-existent: should be empty
+        let query = "xyz123";
+        let mut matches = Vec::new();
+        for item in &all_apps {
+            let name_lower = item.name.to_lowercase();
+            let id_lower = item.id.to_lowercase();
+            if name_lower.contains(query) || id_lower.contains(query) {
+                matches.push(item.name.as_str().to_string());
+            }
+        }
+        assert!(matches.is_empty());
     }
 }

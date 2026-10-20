@@ -118,8 +118,11 @@ export component DrawerAppTile inherits Rectangle {
 export component AppDrawer inherits Rectangle {
     in property <[AppItem]> installed-apps: [];
     in property <bool> is-open: false;
+    in-out property <string> search-query: "";
 
     callback app-clicked(string);
+    callback search-query-changed(string);
+    callback search-accepted(string);
     callback start-drag(string, AppItem, length, length);
     callback drag-moved(length, length);
     callback drag-ended(string, length, length);
@@ -144,6 +147,9 @@ export component AppDrawer inherits Rectangle {
                     self.is-active = false;
                     let dy = (drawer-bg-ta.mouse-y / 1px) - self.start-y;
                     if (dy > 30.0) {
+                        search-input.text = "";
+                        root.search-query = "";
+                        root.search-query-changed("");
                         root.close-requested();
                     }
                 }
@@ -170,7 +176,12 @@ export component AppDrawer inherits Rectangle {
                 background: Theme.outline-variant;
 
                 TouchArea {
-                    clicked => { root.close-requested(); }
+                    clicked => {
+                        search-input.text = "";
+                        root.search-query = "";
+                        root.search-query-changed("");
+                        root.close-requested();
+                    }
                 }
             }
         }
@@ -181,34 +192,93 @@ export component AppDrawer inherits Rectangle {
             border-radius: Theme.radius-pill;
             background: Theme.surface-high;
             border-width: 1px;
-            border-color: Theme.specular-rim;
+            border-color: search-input.has-focus ? Theme.primary : Theme.specular-rim;
+
+            animate border-color { duration: 150ms; }
 
             HorizontalLayout {
                 padding-left: 18px;
-                padding-right: 18px;
-                spacing: 12px;
+                padding-right: 14px;
+                spacing: 10px;
                 alignment: space-between;
 
+                // Left: Search Icon + Text Input
                 HorizontalLayout {
                     spacing: 10px;
                     alignment: center;
+                    horizontal-stretch: 1;
 
                     Text {
                         text: "🔍";
                         font-size: 16px;
-                        color: Theme.on-surface-variant;
+                        color: search-input.has-focus ? Theme.primary : Theme.on-surface-variant;
                         vertical-alignment: center;
                     }
 
-                    Text {
-                        text: "Search apps...";
-                        font-size: Theme.font-label;
-                        color: Theme.on-surface-variant;
-                        vertical-alignment: center;
+                    // Input Container with overlay placeholder
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        height: 40px;
+                        clip: true;
+
+                        if search-input.text == "": Text {
+                            x: 0px;
+                            y: 0px;
+                            width: 100%;
+                            height: 100%;
+                            text: "Search apps...";
+                            font-size: Theme.font-label;
+                            color: Theme.on-surface-variant;
+                            vertical-alignment: center;
+                        }
+
+                        search-input := TextInput {
+                            x: 0px;
+                            y: 0px;
+                            width: 100%;
+                            height: 100%;
+                            text <=> root.search-query;
+                            font-size: Theme.font-label;
+                            color: Theme.on-surface;
+                            vertical-alignment: center;
+                            single-line: true;
+
+                            edited => {
+                                root.search-query-changed(self.text);
+                            }
+                            accepted => {
+                                root.search-accepted(self.text);
+                            }
+                        }
                     }
                 }
 
-                Text {
+                // Right Action: Clear "✕" button when typing, or "🎙" microphone when empty
+                if search-input.text != "": Rectangle {
+                    width: 28px;
+                    height: 28px;
+                    border-radius: 14px;
+                    background: #ffffff18;
+
+                    Text {
+                        text: "✕";
+                        font-size: 13px;
+                        font-weight: 700;
+                        color: Theme.on-surface-variant;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    TouchArea {
+                        clicked => {
+                            search-input.text = "";
+                            root.search-query = "";
+                            root.search-query-changed("");
+                        }
+                    }
+                }
+
+                if search-input.text == "": Text {
                     text: "🎙";
                     font-size: 16px;
                     color: Theme.primary;
@@ -218,7 +288,35 @@ export component AppDrawer inherits Rectangle {
         }
 
         // Section: Real Installed Applications Grid (Dynamic FreeDesktop XDG Apps)
-        flick := Flickable {
+        if root.installed-apps.length == 0: Rectangle {
+            height: 320px;
+
+            VerticalLayout {
+                alignment: center;
+                spacing: 12px;
+
+                Text {
+                    text: "🔍";
+                    font-size: 40px;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: "No apps found";
+                    font-size: 16px;
+                    font-weight: 700;
+                    color: Theme.on-surface;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: root.search-query != "" ? "No applications match \"" + root.search-query + "\"" : "No applications installed";
+                    font-size: 12px;
+                    color: Theme.on-surface-variant;
+                    horizontal-alignment: center;
+                }
+            }
+        }
+
+        if root.installed-apps.length > 0: flick := Flickable {
             height: 640px;
             content-height: (root.installed-apps.length / 4 + 1) * 105px;
 
