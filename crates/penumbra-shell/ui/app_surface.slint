@@ -31,6 +31,10 @@ export component AppSurface inherits Rectangle {
     in-out property <string> open-folder-name: "Folder";
     in-out property <[AppItem]> open-folder-apps: [];
 
+    // Edge Dwell Timer state for creating/turning pages while dragging
+    property <int> dwell-direction: 0; // 1: right, -1: left, 0: none
+    property <int> dwell-ticks: 0;
+
     // Overview running tasks and carousel index
     in property <[TaskItem]> running-tasks: [];
     in-out property <int> overview-index: 0;
@@ -69,19 +73,48 @@ export component AppSurface inherits Rectangle {
     }
 
     // Edge Dwell Timer for dragging apps across homescreen pages (Android Workspace behavior)
+    // Requires sustained 750ms dwell (5 ticks * 150ms) before flipping or creating a page
     edge-dwell-timer := Timer {
-        interval: 380ms;
+        interval: 150ms;
         running: root.is-dragging-app;
         triggered => {
-            if (root.is-dragging-app) {
-                if (root.drag-x > parent.width - 45px) {
-                    root.current-page += 1;
-                    if (root.current-page >= root.num-pages) {
-                        root.num-pages = root.current-page + 1;
+            if (!root.is-dragging-app) {
+                root.dwell-direction = 0;
+                root.dwell-ticks = 0;
+                return;
+            }
+
+            if (root.drag-x > parent.width - 45px) {
+                if (root.dwell-direction == 1) {
+                    root.dwell-ticks += 1;
+                    // 5 ticks * 150ms = 750ms dwell time before flipping or creating new page
+                    if (root.dwell-ticks >= 5) {
+                        root.dwell-ticks = 0;
+                        if (root.current-page < 4) { // Max 5 pages (0..4)
+                            root.current-page += 1;
+                            if (root.current-page >= root.num-pages) {
+                                root.num-pages = root.current-page + 1;
+                            }
+                        }
                     }
-                } else if (root.drag-x < 45px && root.current-page > 0) {
-                    root.current-page -= 1;
+                } else {
+                    root.dwell-direction = 1;
+                    root.dwell-ticks = 1;
                 }
+            } else if (root.drag-x < 45px && root.current-page > 0) {
+                if (root.dwell-direction == -1) {
+                    root.dwell-ticks += 1;
+                    if (root.dwell-ticks >= 5) {
+                        root.dwell-ticks = 0;
+                        root.current-page -= 1;
+                    }
+                } else {
+                    root.dwell-direction = -1;
+                    root.dwell-ticks = 1;
+                }
+            } else {
+                root.dwell-direction = 0;
+                root.dwell-ticks = 0;
             }
         }
     }
@@ -140,12 +173,14 @@ export component AppSurface inherits Rectangle {
             }
         }
 
-        // Top At-a-Glance Clock Widget (Displayed on Page 0)
+        // Top At-a-Glance Clock & Weather Widget (Displayed on Page 0)
         if root.current-page == 0: VerticalLayout {
             x: 20px;
             y: 56px;
             width: parent.width - 40px;
-            spacing: 8px;
+            height: 84px;
+            spacing: 2px;
+            alignment: start;
 
             Text {
                 text: root.time-text;
@@ -221,6 +256,8 @@ export component AppSurface inherits Rectangle {
                 }
                 drag-started(id, sx, sy) => {
                     root.is-dragging-app = true;
+                    root.dwell-direction = 0;
+                    root.dwell-ticks = 0;
                     root.dragging-app-item = {
                         id: item.id,
                         name: item.name,
@@ -236,10 +273,12 @@ export component AppSurface inherits Rectangle {
                 }
                 drag-ended(id, sx, sy) => {
                     root.is-dragging-app = false;
+                    root.dwell-direction = 0;
+                    root.dwell-ticks = 0;
                     let drop-y = sy / 1px;
-                    if (drop-y >= 740.0) {
+                    if (drop-y >= 760.0) {
                         root.app-pinned-to-dock(id);
-                    } else if (drop-y < 740.0) {
+                    } else if (drop-y < 760.0) {
                         root.app-dropped-on-homescreen(id, root.current-page, sx, sy);
                     }
                 }
@@ -270,7 +309,7 @@ export component AppSurface inherits Rectangle {
         // Bottom Page Indicator Dots (Pills)
         if root.num-pages > 1: HorizontalLayout {
             x: 0px;
-            y: 692px;
+            y: 698px;
             width: parent.width;
             height: 12px;
             alignment: center;
@@ -293,94 +332,94 @@ export component AppSurface inherits Rectangle {
             }
         }
 
-        // Bottom Fixed Area: Search Pill & Persistent Dock
-        VerticalLayout {
+        // Bottom Search Pill
+        Rectangle {
             x: 20px;
-            y: 712px;
+            y: 722px;
             width: parent.width - 40px;
-            spacing: 12px;
-            alignment: end;
+            height: 48px;
+            border-radius: Theme.radius-pill;
+            background: Theme.surface-high;
+            border-width: 1px;
+            border-color: Theme.specular-rim;
 
-            // Search Pill
-            Rectangle {
-                height: 48px;
-                border-radius: Theme.radius-pill;
-                background: Theme.surface-high;
-                border-width: 1px;
-                border-color: Theme.specular-rim;
+            search-ta := TouchArea {
+                property <float> start-y: 0.0;
+                property <bool> is-active: false;
 
-                search-ta := TouchArea {
-                    property <float> start-y: 0.0;
-                    property <bool> is-active: false;
-
-                    pointer-event(event) => {
-                        if (event.kind == PointerEventKind.down) {
-                            self.start-y = search-ta.mouse-y / 1px;
-                            self.is-active = true;
-                        } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
-                            if (self.is-active) {
-                                self.is-active = false;
-                                let dy = self.start-y - (search-ta.mouse-y / 1px);
-                                if (dy > 25.0) {
-                                    root.active-mode = 2; // Open App Drawer
-                                } else if (Math.abs(dy) < 15.0) {
-                                    root.app-clicked("browser");
-                                }
+                pointer-event(event) => {
+                    if (event.kind == PointerEventKind.down) {
+                        self.start-y = search-ta.mouse-y / 1px;
+                        self.is-active = true;
+                    } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
+                        if (self.is-active) {
+                            self.is-active = false;
+                            let dy = self.start-y - (search-ta.mouse-y / 1px);
+                            if (dy > 25.0) {
+                                root.active-mode = 2; // Open App Drawer
+                            } else if (Math.abs(dy) < 15.0) {
+                                root.app-clicked("browser");
                             }
                         }
                     }
                 }
+            }
+
+            HorizontalLayout {
+                padding-left: 18px;
+                padding-right: 18px;
+                alignment: space-between;
 
                 HorizontalLayout {
-                    padding-left: 18px;
-                    padding-right: 18px;
-                    alignment: space-between;
-
-                    HorizontalLayout {
-                        spacing: 10px;
-                        alignment: center;
-
-                        Text {
-                            text: "G";
-                            font-size: 18px;
-                            font-weight: 800;
-                            color: Theme.primary;
-                            vertical-alignment: center;
-                        }
-
-                        Text {
-                            text: "Search apps, web, & devices...";
-                            font-size: Theme.font-label;
-                            color: Theme.on-surface-variant;
-                            vertical-alignment: center;
-                        }
-                    }
+                    spacing: 10px;
+                    alignment: center;
 
                     Text {
-                        text: "🎙";
-                        font-size: 16px;
+                        text: "G";
+                        font-size: 18px;
+                        font-weight: 800;
                         color: Theme.primary;
                         vertical-alignment: center;
                     }
+
+                    Text {
+                        text: "Search apps, web, & devices...";
+                        font-size: Theme.font-label;
+                        color: Theme.on-surface-variant;
+                        vertical-alignment: center;
+                    }
+                }
+
+                Text {
+                    text: "🎙";
+                    font-size: 16px;
+                    color: Theme.primary;
+                    vertical-alignment: center;
                 }
             }
+        }
 
-            // Pinned Mobile Bottom Dock (Max 4 slots)
-            HorizontalLayout {
-                alignment: center;
-                BottomDock {
-                    dock-apps: root.dock-apps;
-                    is-editing: root.is-editing;
-                    reject-drop: root.reject-dock-drop;
-                    app-clicked(id) => {
-                        root.app-clicked(id);
-                    }
-                    app-removed(id) => {
-                        root.app-removed-from-dock(id);
-                    }
-                    request-edit-mode => {
-                        root.is-editing = true;
-                    }
+        // Persistent Mobile Bottom Dock (Fixed at bottom above nav bar)
+        Rectangle {
+            x: (parent.width - 380px) / 2;
+            y: 780px;
+            width: 380px;
+            height: 76px;
+
+            BottomDock {
+                width: 100%;
+                height: 100%;
+                dock-apps: root.dock-apps;
+                is-editing: root.is-editing;
+                reject-drop: root.reject-dock-drop;
+                app-clicked(id) => {
+                    root.app-clicked(id);
+                }
+                app-removed(id) => {
+                    root.app-removed-from-dock(id);
+                }
+                request-edit-mode => {
+                    root.is-editing = true;
                 }
             }
         }
@@ -544,6 +583,8 @@ export component AppSurface inherits Rectangle {
             }
             start-drag(id, item, sx, sy) => {
                 root.is-dragging-app = true;
+                root.dwell-direction = 0;
+                root.dwell-ticks = 0;
                 root.dragging-app-item = item;
                 root.drag-x = sx;
                 root.drag-y = sy;
@@ -554,11 +595,13 @@ export component AppSurface inherits Rectangle {
             }
             drag-ended(id, sx, sy) => {
                 root.is-dragging-app = false;
+                root.dwell-direction = 0;
+                root.dwell-ticks = 0;
                 root.active-mode = 0; // Return to homescreen
                 let drop-y = sy / 1px;
-                if (drop-y >= 740.0) {
+                if (drop-y >= 760.0) {
                     root.app-pinned-to-dock(id);
-                } else if (drop-y < 740.0) {
+                } else if (drop-y < 760.0) {
                     root.app-dropped-on-homescreen(id, root.current-page, sx, sy);
                 }
             }
