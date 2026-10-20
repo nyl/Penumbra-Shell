@@ -14,7 +14,7 @@ pub struct CliArgs {
     pub nested: bool,
 
     /// Enable convergence mode with simulated secondary external HDMI monitor (1280x720).
-    #[arg(short, long, default_value_t = true)]
+    #[arg(short, long, default_value_t = false)]
     pub convergence: bool,
 
     /// Wayland socket name for clients to connect.

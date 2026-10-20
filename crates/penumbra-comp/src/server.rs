@@ -416,9 +416,19 @@ impl WlrLayerShellHandler for PenumbraServerState {
             });
         } else {
             let output_size = target_output.current_mode().map(|m| m.size).unwrap_or((412, 915).into());
-            debug!("Layer surface initial fallback size: {:?}", output_size);
+            let fallback_h = match layer {
+                Layer::Background | Layer::Bottom | Layer::Overlay => output_size.h,
+                Layer::Top => {
+                    if ns.contains("nav") {
+                        24
+                    } else {
+                        38
+                    }
+                }
+            };
+            debug!("Layer surface initial fallback size: ({}x{}) for layer {:?}", output_size.w, fallback_h, layer);
             layer_surface.layer_surface().with_pending_state(|state| {
-                state.size = Some((output_size.w, 38).into());
+                state.size = Some((output_size.w, fallback_h).into());
             });
         }
         layer_surface.layer_surface().send_configure();

@@ -1,0 +1,140 @@
+import { Theme } from "theme.slint";
+import { AppSurface, AppItem, TaskItem, HomescreenItem, WallpaperItem, FileEntry, FolderItem } from "app_surface.slint";
+
+export { AppItem, TaskItem, HomescreenItem, WallpaperItem, FileEntry, FolderItem }
+
+export component HomescreenWindow inherits Window {
+    title: "Penumbra Homescreen";
+    width: 412px;
+    height: 915px;
+    background: #08060B;
+    default-font-family: "Roboto, Inter, sans-serif";
+
+    // Dynamic XDG Applications Model
+    in property <[AppItem]> installed-apps: [];
+    in-out property <string> app-search-query: "";
+    callback app-search-query-changed(string);
+    callback app-search-accepted(string);
+    in property <[AppItem]> dock-apps: [];
+    in property <[HomescreenItem]> homescreen-items: [];
+    in-out property <int> current-page: 0;
+    in-out property <int> num-pages: 1;
+
+    // Folder view modal state
+    in-out property <bool> is-folder-open: false;
+    in-out property <string> open-folder-id: "";
+    in-out property <string> open-folder-name: "Folder";
+    in-out property <[AppItem]> open-folder-apps: [];
+
+    in-out property <bool> is-editing: false;
+    in property <bool> reject-dock-drop: false;
+
+    // Running Tasks & Overview Carousel
+    in property <[TaskItem]> running-tasks: [];
+    in-out property <int> overview-index: 0;
+
+    // Active mode
+    in-out property <int> active-mode: 0;     // 0: Home, 1: Recents Overview, 2: App Drawer, 3: Active App
+    in-out property <string> active-app: "terminal";
+
+    // Telemetry Clock
+    in-out property <string> time-str: "17:30";
+    in-out property <string> date-str: "Sunday, Oct 19";
+
+    // Wallpaper properties
+    in property <bool> has-wallpaper: false;
+    in property <image> wallpaper-image;
+    in property <string> current-wallpaper-path: "";
+    in property <[WallpaperItem]> wallpapers: [];
+    in property <[FolderItem]> wallpaper-folders: [];
+    in property <[FileEntry]> file-entries: [];
+    in property <string> current-browse-path: "/home/nyl";
+
+    in-out property <bool> show-context-menu: false;
+    in-out property <bool> show-wallpaper-picker: false;
+
+    callback app-clicked(string);
+    callback app-removed-from-dock(string);
+    callback app-removed-from-homescreen(string);
+    callback app-pinned-to-dock(string);
+    callback app-pinned-to-homescreen(string);
+    callback app-dropped-on-homescreen(string, int, length, length);
+    callback folder-renamed(string, string);
+    callback folder-item-removed(string, string);
+    callback open-folder-requested(string);
+    callback clear-all-recents();
+    callback resume-active-task();
+    callback select-task(int);
+    callback close-task(int);
+    callback overview-index-changed(int);
+    callback execute-command(string) -> string;
+    callback list-directory(string) -> string;
+    callback eval-calc(string, string, string) -> string;
+    callback save-file(string, string) -> bool;
+
+    callback select-wallpaper(string);
+    callback clear-wallpaper();
+    callback browse-to(string);
+    callback add-scan-folder(string);
+    callback remove-scan-folder(string);
+    callback rescan-wallpapers();
+
+    app_surface := AppSurface {
+        width: parent.width;
+        height: parent.height;
+        active-mode <=> root.active-mode;
+        active-app <=> root.active-app;
+        time-text: root.time-str;
+        date-text: root.date-str;
+        installed-apps: root.installed-apps;
+        dock-apps: root.dock-apps;
+        homescreen-items: root.homescreen-items;
+        current-page <=> root.current-page;
+        num-pages <=> root.num-pages;
+        is-editing <=> root.is-editing;
+        reject-dock-drop: root.reject-dock-drop;
+        is-folder-open <=> root.is-folder-open;
+        open-folder-id <=> root.open-folder-id;
+        open-folder-name <=> root.open-folder-name;
+        open-folder-apps <=> root.open-folder-apps;
+        running-tasks: root.running-tasks;
+        overview-index <=> root.overview-index;
+        app-search-query <=> root.app-search-query;
+        has-wallpaper: root.has-wallpaper;
+        wallpaper-image: root.wallpaper-image;
+        current-wallpaper-path: root.current-wallpaper-path;
+        wallpapers: root.wallpapers;
+        wallpaper-folders: root.wallpaper-folders;
+        file-entries: root.file-entries;
+        current-browse-path: root.current-browse-path;
+        show-context-menu <=> root.show-context-menu;
+        show-wallpaper-picker <=> root.show-wallpaper-picker;
+
+        app-clicked(id) => { root.app-clicked(id); }
+        app-removed-from-dock(id) => { root.app-removed-from-dock(id); }
+        app-removed-from-homescreen(id) => { root.app-removed-from-homescreen(id); }
+        app-pinned-to-dock(id) => { root.app-pinned-to-dock(id); }
+        app-pinned-to-homescreen(id) => { root.app-pinned-to-homescreen(id); }
+        app-dropped-on-homescreen(id, page, sx, sy) => { root.app-dropped-on-homescreen(id, page, sx, sy); }
+        folder-renamed(fid, name) => { root.folder-renamed(fid, name); }
+        folder-item-removed(fid, aid) => { root.folder-item-removed(fid, aid); }
+        open-folder-requested(fid) => { root.open-folder-requested(fid); }
+        clear-all-recents() => { root.clear-all-recents(); }
+        resume-active-task() => { root.resume-active-task(); }
+        select-task(idx) => { root.select-task(idx); }
+        close-task(idx) => { root.close-task(idx); }
+        overview-index-changed(idx) => { root.overview-index-changed(idx); }
+        execute-command(cmd) => { return root.execute-command(cmd); }
+        list-directory(path) => { return root.list-directory(path); }
+        eval-calc(a, op, b) => { return root.eval-calc(a, op, b); }
+        save-file(path, content) => { return root.save-file(path, content); }
+        app-search-query-changed(q) => { root.app-search-query-changed(q); }
+        app-search-accepted(q) => { root.app-search-accepted(q); }
+        select-wallpaper(path) => { root.select-wallpaper(path); }
+        clear-wallpaper() => { root.clear-wallpaper(); }
+        browse-to(path) => { root.browse-to(path); }
+        add-scan-folder(path) => { root.add-scan-folder(path); }
+        remove-scan-folder(path) => { root.remove-scan-folder(path); }
+        rescan-wallpapers() => { root.rescan-wallpapers(); }
+    }
+}
