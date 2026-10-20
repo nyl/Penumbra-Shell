@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use chrono::Local;
 use slint::{ComponentHandle, ModelRc, Timer, TimerMode, VecModel};
-use tracing::{info, Level};
+use tracing::{info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
 use clap::Parser;
@@ -67,17 +67,42 @@ fn scan_wallpapers_from_folders(folders: &[String]) -> Vec<WallpaperItem> {
             continue;
         }
 
+        // Never scan a screenshots folder directly
+        let folder_name_lower = root_dir
+            .file_name()
+            .map(|s| s.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        if folder_name_lower == "screenshots" || folder_name_lower == "screenshot" {
+            continue;
+        }
+
         // Recursively inspect directory up to depth 2 (e.g. /usr/share/backgrounds/gnome)
         let mut dirs_to_visit = vec![(root_dir.to_path_buf(), 0)];
         while let Some((dir, depth)) = dirs_to_visit.pop() {
             if let Ok(entries) = std::fs::read_dir(&dir) {
                 for entry in entries.flatten() {
                     let path = entry.path();
+                    let file_name = entry.file_name().to_string_lossy().to_string();
+                    let file_name_lower = file_name.to_lowercase();
+
                     if path.is_dir() {
+                        // Skip hidden dirs and screenshots dirs
+                        if file_name.starts_with('.')
+                            || file_name_lower == "screenshots"
+                            || file_name_lower == "screenshot"
+                            || file_name_lower.starts_with("screenshot")
+                        {
+                            continue;
+                        }
                         if depth < 2 {
                             dirs_to_visit.push((path, depth + 1));
                         }
                     } else if path.is_file() {
+                        // Skip screenshot files (e.g. Screenshot from..., Screenshot_...)
+                        if file_name.starts_with('.') || file_name_lower.starts_with("screenshot") {
+                            continue;
+                        }
+
                         if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
                             if supported_exts.iter().any(|&s| s.eq_ignore_ascii_case(ext)) {
                                 let canonical_or_lossy = path.to_string_lossy().to_string();
@@ -1407,6 +1432,14 @@ fn spawn_real_app(app: &str, target: &str) {
             let folder_str = folder_slint.as_str().to_string();
             let path = std::path::Path::new(&folder_str);
             if path.is_dir() {
+                let folder_name_lower = path
+                    .file_name()
+                    .map(|s| s.to_string_lossy().to_lowercase())
+                    .unwrap_or_default();
+                if folder_name_lower == "screenshots" || folder_name_lower == "screenshot" {
+                    warn!("Refusing to add screenshots folder to wallpaper scanner: {}", folder_str);
+                    return;
+                }
                 let mut cfg = layout_config.borrow_mut();
                 cfg.add_wallpaper_folder(&folder_str);
                 save_layout_config(&cfg);
@@ -1586,5 +1619,35 @@ mod tests {
         assert!(!ui.get_hdmi_connected());
         ui.set_convergence_mode(false);
         assert!(!ui.get_convergence_mode());
+    }
+
+    #[test]
+    fn test_scan_wallpapers_excludes_screenshots() {
+        let temp_dir = std::env::temp_dir().join(format!("penumbra_wp_test_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()));
+        let screenshots_dir = temp_dir.join("Screenshots");
+        std::fs::create_dir_all(&screenshots_dir).unwrap();
+
+        // Create a fake wallpaper file and a screenshot file
+        let wp_path = temp_dir.join("lake.png");
+        let ss_path = screenshots_dir.join("screenshot_app.png");
+        let loose_ss_path = temp_dir.join("Screenshot from 2026-10-20.png");
+
+        std::fs::write(&wp_path, b"not a real image but file exists").unwrap();
+        std::fs::write(&ss_path, b"not a real image").unwrap();
+        std::fs::write(&loose_ss_path, b"not a real image").unwrap();
+
+        // Pass both root temp_dir and direct screenshots_dir
+        let scanned = scan_wallpapers_from_folders(&[
+            temp_dir.to_string_lossy().to_string(),
+            screenshots_dir.to_string_lossy().to_string(),
+        ]);
+
+        for item in &scanned {
+            let path_str = item.path.as_str().to_lowercase();
+            assert!(!path_str.contains("screenshots"), "Should not contain screenshots folder: {}", path_str);
+            assert!(!path_str.contains("screenshot"), "Should not contain screenshot file: {}", path_str);
+        }
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

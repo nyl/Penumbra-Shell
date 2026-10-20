@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -40,10 +40,11 @@ pub fn default_wallpaper_folders() -> Vec<String> {
         let p_wall = PathBuf::from(&home).join("Pictures").join("Wallpapers");
         if p_wall.exists() {
             folders.push(p_wall.to_string_lossy().to_string());
-        }
-        let p_pic = PathBuf::from(&home).join("Pictures");
-        if p_pic.exists() && !folders.contains(&p_pic.to_string_lossy().to_string()) {
-            folders.push(p_pic.to_string_lossy().to_string());
+        } else {
+            let p_pic = PathBuf::from(&home).join("Pictures");
+            if p_pic.exists() && !folders.contains(&p_pic.to_string_lossy().to_string()) {
+                folders.push(p_pic.to_string_lossy().to_string());
+            }
         }
         let p_bg = PathBuf::from(&home).join(".local").join("share").join("backgrounds");
         if p_bg.exists() && !folders.contains(&p_bg.to_string_lossy().to_string()) {
@@ -53,6 +54,13 @@ pub fn default_wallpaper_folders() -> Vec<String> {
     if folders.is_empty() {
         folders.push("/usr/share/backgrounds".to_string());
     }
+    folders.retain(|f| {
+        let name_lower = Path::new(f)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        name_lower != "screenshots" && name_lower != "screenshot"
+    });
     folders
 }
 
@@ -223,6 +231,13 @@ pub fn load_layout_config(available_app_ids: &[String]) -> ShellLayoutConfig {
                 if config.num_pages < 1 {
                     config.num_pages = 1;
                 }
+                config.wallpaper_folders.retain(|f| {
+                    let name_lower = Path::new(f)
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_lowercase())
+                        .unwrap_or_default();
+                    name_lower != "screenshots" && name_lower != "screenshot"
+                });
                 return config;
             } else {
                 warn!("Failed to parse layout config at {:?}, falling back to default", path);
@@ -389,5 +404,15 @@ mod tests {
         assert_eq!(cfg.num_pages, 2);
         assert_eq!(cfg.homescreen_apps.len(), 1);
         assert_eq!(cfg.homescreen_apps[0].page, 1);
+    }
+
+    #[test]
+    fn test_default_wallpaper_folders_excludes_screenshots() {
+        let folders = default_wallpaper_folders();
+        for f in &folders {
+            let lower = f.to_lowercase();
+            assert!(!lower.ends_with("/screenshots"), "Folder should not be screenshots: {}", f);
+            assert!(!lower.ends_with("/screenshot"), "Folder should not be screenshot: {}", f);
+        }
     }
 }
