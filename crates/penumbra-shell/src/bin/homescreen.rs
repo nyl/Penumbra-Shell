@@ -14,6 +14,7 @@ use tracing::{info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
 use layer_shell_slint::{Anchor, KeyboardInteractivity, Layer, LayerConfig};
+use penumbra_gestures::Spring;
 use penumbra_shell::apps::{discover_installed_apps, find_single_app, launch_app, InstalledApp};
 use penumbra_shell::config::{
     load_layout_config, save_layout_config, FolderEntry, HomescreenAppEntry,
@@ -713,10 +714,114 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    // 11. Spring physics engine for overview carousel flick momentum & magnetic snap
+    // Underdamped spring-damper system: stiffness 280.0, damping: 26.0 (c = 26.0 -> zeta = 26 / (2*sqrt(280)) = 0.776887)
+    let spring_state = Rc::new(RefCell::new(Spring::new(
+        280.0,
+        26.0 / (2.0 * (280.0_f64).sqrt()),
+        1.0,
+    )));
+    let spring_timer = Rc::new(RefCell::new(Timer::default()));
+    let last_spring_time = Rc::new(RefCell::new(Instant::now()));
+
+    {
+        let spring_timer = Rc::clone(&spring_timer);
+        ui.on_overview_scroll_changed(move |scroll, is_dragging| {
+            if is_dragging {
+                spring_timer.borrow().stop();
+            }
+            let mut state = ShellState::load();
+            state.overview_scroll = scroll as f64;
+            state.overview_index = (scroll.round().max(0.0)) as usize;
+            state.is_dragging = is_dragging;
+            let _ = state.save();
+        });
+    }
+
+    {
+        let ui_weak = ui_weak.clone();
+        let spring_state = Rc::clone(&spring_state);
+        let spring_timer = Rc::clone(&spring_timer);
+        let last_spring_time = Rc::clone(&last_spring_time);
+
+        ui.on_overview_drag_released(move |current_scroll, velocity_px_s| {
+            let release_scroll = current_scroll as f64;
+            // 308px per card step:
+            let step = 308.0;
+            // velocity_px_s is positive when dragging right (scroll increases towards older tasks),
+            // negative when dragging left (scroll decreases towards newer tasks).
+            let v_scroll = velocity_px_s as f64 / step;
+
+            let windows = read_windows();
+            let max_idx = (windows.len().saturating_sub(1)) as f64;
+
+            // Evaluate velocity and distance to automatically snap the nearest card:
+            let target = if v_scroll.abs() > 0.8 {
+                let projected = release_scroll + (v_scroll * 0.22);
+                projected.round().clamp(0.0, max_idx)
+            } else {
+                release_scroll.round().clamp(0.0, max_idx)
+            };
+
+            {
+                let mut sp = spring_state.borrow_mut();
+                sp.position = release_scroll;
+                sp.velocity = v_scroll;
+                sp.target = target;
+            }
+            *last_spring_time.borrow_mut() = Instant::now();
+
+            let ui_weak = ui_weak.clone();
+            let spring_state = Rc::clone(&spring_state);
+            let spring_timer_inner = Rc::clone(&spring_timer);
+            let last_spring_time = Rc::clone(&last_spring_time);
+
+            spring_timer.borrow().start(
+                TimerMode::Repeated,
+                Duration::from_millis(16),
+                move || {
+                    let dt = {
+                        let mut t = last_spring_time.borrow_mut();
+                        let elapsed = t.elapsed().as_secs_f64().clamp(0.001, 0.05);
+                        *t = Instant::now();
+                        elapsed
+                    };
+
+                    let mut sp = spring_state.borrow_mut();
+                    let new_pos = sp.step(dt);
+
+                    if let Some(ui) = ui_weak.upgrade() {
+                        ui.set_overview_scroll(new_pos as f32);
+                    }
+
+                    let mut state = ShellState::load();
+                    state.overview_scroll = new_pos;
+                    state.is_dragging = false;
+
+                    if sp.snap_if_settled(0.002, 0.02) {
+                        spring_timer_inner.borrow().stop();
+                        let final_idx = sp.target as usize;
+                        state.overview_scroll = sp.target;
+                        state.overview_index = final_idx;
+                        let _ = state.save();
+                        if let Some(ui) = ui_weak.upgrade() {
+                            ui.set_overview_scroll(sp.target as f32);
+                            ui.set_overview_index(final_idx as i32);
+                        }
+                    } else {
+                        let _ = state.save();
+                    }
+                },
+            );
+        });
+    }
+
     {
         ui.on_overview_index_changed(move |idx| {
             let mut state = ShellState::load();
             state.overview_index = idx as usize;
+            state.overview_scroll = idx as f64;
+            state.is_dragging = false;
             let _ = state.save();
         });
     }
@@ -735,6 +840,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let ui_weak = ui_weak.clone();
         let apps_list = Arc::clone(&apps_list);
+        let spring_state = Rc::clone(&spring_state);
         task_timer.start(
             TimerMode::Repeated,
             Duration::from_millis(50),
@@ -760,8 +866,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
 
                     if state.mode == PhoneMode::Overview {
-                        if ui.get_overview_index() != state.overview_index as i32 {
-                            ui.set_overview_index(state.overview_index as i32);
+                        if !ui.get_is_dragging_carousel() {
+                            let cur_scroll = ui.get_overview_scroll() as f64;
+                            let target_scroll = state.overview_index as f64;
+                            if (cur_scroll - target_scroll).abs() > 0.05 && spring_state.borrow().is_settled(0.01, 0.05) {
+                                ui.set_overview_index(state.overview_index as i32);
+                                ui.set_overview_scroll(state.overview_index as f32);
+                            }
                         }
                     }
 

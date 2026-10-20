@@ -35,8 +35,8 @@ pub const CARD_W: i32 = 255;
 pub const CARD_H: i32 = 521;
 /// Overview card top edge.
 pub const CARD_Y: i32 = APP_Y + 70;
-/// Horizontal distance between adjacent cards.
-pub const CARD_STEP: i32 = CARD_W + 18;
+/// Horizontal distance between adjacent cards (290px card container + 18px gap).
+pub const CARD_STEP: i32 = 308;
 
 pub const SHELL_STATE_FILE: &str = "penumbra-shell-state";
 pub const SHELL_CMD_FILE: &str = "penumbra-shell-cmd";
@@ -61,17 +61,20 @@ pub enum PhoneMode {
 }
 
 /// Snapshot of shell UI state relevant to compositing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct ShellState {
     pub mode: PhoneMode,
     pub drawer_open: bool,
     pub overview_index: usize,
+    pub overview_scroll: f64,
+    pub is_dragging: bool,
 }
 
 impl ShellState {
     /// Parses `key=value` lines. Unknown keys are ignored.
     pub fn parse(text: &str) -> Self {
         let mut s = ShellState::default();
+        let mut has_scroll = false;
         for line in text.lines() {
             let Some((k, v)) = line.split_once('=') else {
                 continue;
@@ -82,8 +85,16 @@ impl ShellState {
                 ("mode", _) => s.mode = PhoneMode::Home,
                 ("drawer", v) => s.drawer_open = v == "1" || v == "true",
                 ("overview_index", v) => s.overview_index = v.parse().unwrap_or(0),
+                ("overview_scroll", v) => {
+                    s.overview_scroll = v.parse().unwrap_or(0.0);
+                    has_scroll = true;
+                }
+                ("is_dragging", v) => s.is_dragging = v == "1" || v == "true",
                 _ => {}
             }
+        }
+        if !has_scroll {
+            s.overview_scroll = s.overview_index as f64;
         }
         s
     }
@@ -95,10 +106,12 @@ impl ShellState {
             PhoneMode::Overview => "overview",
         };
         format!(
-            "mode={}\ndrawer={}\noverview_index={}\n",
+            "mode={}\ndrawer={}\noverview_index={}\noverview_scroll={:.3}\nis_dragging={}\n",
             mode,
             if self.drawer_open { 1 } else { 0 },
-            self.overview_index
+            self.overview_index,
+            self.overview_scroll,
+            if self.is_dragging { 1 } else { 0 }
         )
     }
 }
@@ -163,6 +176,8 @@ mod tests {
             mode: PhoneMode::Overview,
             drawer_open: true,
             overview_index: 2,
+            overview_scroll: 2.0,
+            is_dragging: false,
         };
         assert_eq!(ShellState::parse(&s.serialize()), s);
         assert_eq!(ShellState::parse("garbage"), ShellState::default());

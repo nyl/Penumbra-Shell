@@ -25,16 +25,19 @@ pub enum PhoneMode {
 }
 
 /// Snapshot of shell UI state relevant to compositing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct ShellState {
     pub mode: PhoneMode,
     pub drawer_open: bool,
     pub overview_index: usize,
+    pub overview_scroll: f64,
+    pub is_dragging: bool,
 }
 
 impl ShellState {
     pub fn parse(text: &str) -> Self {
         let mut s = ShellState::default();
+        let mut has_scroll = false;
         for line in text.lines() {
             let Some((k, v)) = line.split_once('=') else {
                 continue;
@@ -45,8 +48,16 @@ impl ShellState {
                 ("mode", _) => s.mode = PhoneMode::Home,
                 ("drawer", v) => s.drawer_open = v == "1" || v == "true",
                 ("overview_index", v) => s.overview_index = v.parse().unwrap_or(0),
+                ("overview_scroll", v) => {
+                    s.overview_scroll = v.parse().unwrap_or(0.0);
+                    has_scroll = true;
+                }
+                ("is_dragging", v) => s.is_dragging = v == "1" || v == "true",
                 _ => {}
             }
+        }
+        if !has_scroll {
+            s.overview_scroll = s.overview_index as f64;
         }
         s
     }
@@ -58,10 +69,12 @@ impl ShellState {
             PhoneMode::Overview => "overview",
         };
         format!(
-            "mode={}\ndrawer={}\noverview_index={}\n",
+            "mode={}\ndrawer={}\noverview_index={}\noverview_scroll={:.3}\nis_dragging={}\n",
             mode,
             if self.drawer_open { 1 } else { 0 },
-            self.overview_index
+            self.overview_index,
+            self.overview_scroll,
+            if self.is_dragging { 1 } else { 0 }
         )
     }
 

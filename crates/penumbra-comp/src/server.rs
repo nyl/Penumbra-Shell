@@ -1052,18 +1052,24 @@ impl PenumbraCompositor {
             // 3. Dispatch & flush clients
             display.dispatch_clients(&mut state)?;
             state.space.refresh();
-            if last_ipc_poll.elapsed() >= Duration::from_millis(30) {
+            let is_overview = state.shell_state.mode == PhoneMode::Overview;
+            if is_overview || last_ipc_poll.elapsed() >= Duration::from_millis(30) {
                 state.poll_shell_ipc();
                 last_ipc_poll = Instant::now();
             }
             display.flush_clients()?;
 
-            // Animate overview carousel towards the selected card (fluid deceleration into magnetic lock).
-            let scroll_target = state.shell_state.overview_index as f64;
-            let scroll_diff = scroll_target - state.overview_scroll;
-            state.overview_scroll += scroll_diff * 0.18;
-            if scroll_diff.abs() < 0.001 {
+            // Track overview carousel scroll: direct 1:1 finger tracking while dragging,
+            // or fluid deceleration into magnetic lock upon release.
+            let scroll_target = state.shell_state.overview_scroll;
+            if state.shell_state.is_dragging {
                 state.overview_scroll = scroll_target;
+            } else {
+                let scroll_diff = scroll_target - state.overview_scroll;
+                state.overview_scroll += scroll_diff * 0.35;
+                if scroll_diff.abs() < 0.002 {
+                    state.overview_scroll = scroll_target;
+                }
             }
 
             // 4. Render.

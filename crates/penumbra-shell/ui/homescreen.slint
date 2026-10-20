@@ -32,6 +32,8 @@ export component HomescreenWindow inherits Window {
     // Running Tasks & Overview Carousel
     in property <[TaskItem]> running-tasks: [];
     in-out property <int> overview-index: 0;
+    in-out property <float> overview-scroll: 0.0;
+    in-out property <bool> is-dragging-carousel: false;
 
     // Active mode
     in-out property <int> active-mode: 0;     // 0: Home, 1: Recents Overview, 2: App Drawer, 3: Active App
@@ -67,6 +69,8 @@ export component HomescreenWindow inherits Window {
     callback select-task(int);
     callback close-task(int);
     callback overview-index-changed(int);
+    callback overview-scroll-changed(float, bool);
+    callback overview-drag-released(float, float);
     callback exit-overview();
     callback execute-command(string) -> string;
     callback list-directory(string) -> string;
@@ -100,6 +104,8 @@ export component HomescreenWindow inherits Window {
         open-folder-apps <=> root.open-folder-apps;
         running-tasks: root.running-tasks;
         overview-index <=> root.overview-index;
+        overview-scroll <=> root.overview-scroll;
+        is-dragging-carousel <=> root.is-dragging-carousel;
         app-search-query <=> root.app-search-query;
         has-wallpaper: root.has-wallpaper;
         wallpaper-image: root.wallpaper-image;
@@ -125,6 +131,8 @@ export component HomescreenWindow inherits Window {
         select-task(idx) => { root.select-task(idx); }
         close-task(idx) => { root.close-task(idx); }
         overview-index-changed(idx) => { root.overview-index-changed(idx); }
+        overview-scroll-changed(sc, dragging) => { root.overview-scroll-changed(sc, dragging); }
+        overview-drag-released(sc, vel) => { root.overview-drag-released(sc, vel); }
         exit-overview => { root.exit-overview(); }
         execute-command(cmd) => { return root.execute-command(cmd); }
         list-directory(path) => { return root.list-directory(path); }

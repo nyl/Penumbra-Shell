@@ -39,7 +39,14 @@ export component AppSurface inherits Rectangle {
     // Overview running tasks and carousel index
     in property <[TaskItem]> running-tasks: [];
     in-out property <int> overview-index: 0;
-    property <int> safe-overview-index: Math.max(0, Math.min(root.overview-index, Math.max(0, root.running-tasks.length - 1)));
+    in-out property <float> overview-scroll: 0.0;
+    in-out property <bool> is-dragging-carousel: false;
+    property <int> safe-overview-index: Math.max(0, Math.min(Math.round(root.overview-scroll), Math.max(0, root.running-tasks.length - 1)));
+
+    animate overview-scroll {
+        duration: is-dragging-carousel ? 0ms : 260ms;
+        easing: cubic-bezier(0.2, 0.9, 0.3, 1.0);
+    }
 
     callback app-clicked(string);
     callback app-removed-from-dock(string);
@@ -55,6 +62,8 @@ export component AppSurface inherits Rectangle {
     callback select-task(int);
     callback close-task(int);
     callback overview-index-changed(int);
+    callback overview-scroll-changed(float, bool);
+    callback overview-drag-released(float, float);
     callback exit-overview();
     callback execute-command(string) -> string;
     callback list-directory(string) -> string;
@@ -829,10 +838,10 @@ export component AppSurface inherits Rectangle {
             width: 100%;
             height: 100%;
 
-            // Interactive live carousel offset while user is dragging
-            property <length> live-drag-offset: 0px;
-            property <bool> is-dragging-carousel: false;
+            // Interactive drag tracking timer for flick velocity
             property <int> drag-tick-count: 0;
+            property <int> dismissing-id: -1;
+            property <length> active-card-dy: 0px;
 
             overview-drag-timer := Timer {
                 interval: 16ms;
@@ -842,94 +851,156 @@ export component AppSurface inherits Rectangle {
                 }
             }
 
-            // Cards Carousel: Card headers and frame borders positioned in exact sync with compositor live surfaces
-            for task[idx] in root.running-tasks: Rectangle {
-                x: 78.5px - ((idx - root.overview-index) * 273px) + live-drag-offset;
-                y: 64px;
-                width: 255px;
-                height: 575px;
-
-                // 0ms instant tracking while dragging; smooth 360ms Android emphasized deceleration on release
-                animate x {
-                    duration: is-dragging-carousel ? 0ms : 360ms;
-                    easing: cubic-bezier(0.16, 1.0, 0.3, 1.0);
-                }
-
-                // Ambient drop shadow for the card
-                Rectangle {
-                    x: 0px;
-                    y: 52px;
-                    width: 255px;
-                    height: 521px;
-                    border-radius: 22px;
-                    background: #00000077;
-                }
-
-                // Card Header: Sleek rounded chip with App Icon + Title
-                Rectangle {
-                    x: 0px;
-                    y: 0px;
-                    width: 255px;
-                    height: 38px;
-                    border-radius: 19px;
-                    background: #1C1926DD;
-                    border-width: 1px;
-                    border-color: idx == root.safe-overview-index ? #ffffff2e : #ffffff14;
-
-                    HorizontalLayout {
-                        padding-left: 10px;
-                        padding-right: 14px;
-                        spacing: 8px;
-                        alignment: center;
-
-                        Rectangle {
-                            width: 24px;
-                            height: 24px;
-                            border-radius: 7px;
-                            background: #252332;
-                            clip: true;
-
-                            if task.has-icon: Image {
-                                source: task.icon;
-                                width: 18px;
-                                height: 18px;
-                                x: 3px;
-                                y: 3px;
-                            }
-                            if !task.has-icon: Text {
-                                text: "📱";
-                                font-size: 13px;
-                                vertical-alignment: center;
-                                horizontal-alignment: center;
-                            }
-                        }
-
-                        Text {
-                            text: task.name;
-                            font-size: 15px;
-                            font-weight: 600;
-                            color: #FFFFFF;
-                            vertical-alignment: center;
-                            overflow: elide;
-                        }
+            dismiss-timer := Timer {
+                interval: 220ms;
+                running: false;
+                triggered => {
+                    self.running = false;
+                    if (dismissing-id >= 0) {
+                        root.close-task(dismissing-id);
+                        dismissing-id = -1;
+                        active-card-dy = 0px;
                     }
-                }
-
-                // Card Live Surface Frame (y: 48px, 255x521)
-                // Exactly frames the live Wayland surface rendered by the compositor at (CARD_X, 112px, 255, 521)
-                Rectangle {
-                    x: 0px;
-                    y: 48px;
-                    width: 255px;
-                    height: 521px;
-                    border-radius: 20px;
-                    border-width: idx == root.safe-overview-index ? 2.5px : 1px;
-                    border-color: idx == root.safe-overview-index ? Theme.primary : #ffffff33;
-                    background: #18162233;
                 }
             }
 
-            // Overview Gesture Area (fluid 1:1 drag, speed swipe with momentum, and magnetic snap)
+            // Cards Carousel: Progressive scaling & parallax centered at x = (412 - 290) / 2 = 61px
+            for task[idx] in root.running-tasks: Rectangle {
+                // Distance from viewport center in cards:
+                property <float> dist: (idx * 1.0) - root.overview-scroll;
+                property <float> abs-dist: Math.abs(self.dist);
+
+                // Progressive scaling: Center 1.0, Left/Right neighbors 0.90, Outer cards 0.82
+                property <float> card-scale: self.abs-dist <= 1.0
+                    ? (1.0 - (self.abs-dist * 0.10))
+                    : Math.max(0.82, 0.90 - ((self.abs-dist - 1.0) * 0.08));
+
+                // Ambient opacity: Diminishes as cards move off-center (1.0 -> 0.75)
+                property <float> card-opacity: Math.max(0.75, 1.0 - (self.abs-dist * 0.125));
+
+                width: 290px * self.card-scale;
+                height: 580px * self.card-scale;
+
+                // Center x = 61px + (290px / 2) = 206px; track moves by 308px per card
+                x: 206px - (self.dist * 308px) - (self.width / 2);
+                y: 62px + 290px - (self.height / 2)
+                    + (task.id == dismissing-id ? -750px : (idx == root.safe-overview-index ? active-card-dy : 0px));
+
+                opacity: task.id == dismissing-id ? 0.0 : self.card-opacity;
+
+                animate y {
+                    duration: task.id == dismissing-id ? 220ms : 0ms;
+                    easing: ease-in;
+                }
+                animate opacity {
+                    duration: task.id == dismissing-id ? 200ms : 0ms;
+                }
+
+                // Ambient drop shadow for the card container
+                Rectangle {
+                    x: 0px;
+                    y: 6px;
+                    width: parent.width;
+                    height: parent.height;
+                    border-radius: 26px;
+                    background: #00000080;
+                }
+
+                // Main Card Container: Encloses the header AND app window inside rounded borders
+                Rectangle {
+                    x: 0px;
+                    y: 0px;
+                    width: parent.width;
+                    height: parent.height;
+                    border-radius: 24px;
+                    background: #171420FA;
+                    border-width: 2px;
+                    border-color: idx == root.safe-overview-index ? Theme.primary : #ffffff24;
+
+                    // Card Header Bar (App Icon + Title + Close Button)
+                    Rectangle {
+                        x: 12px;
+                        y: 8px;
+                        width: parent.width - 24px;
+                        height: 36px;
+
+                        HorizontalLayout {
+                            spacing: 8px;
+                            alignment: start;
+
+                            Rectangle {
+                                width: 26px;
+                                height: 26px;
+                                border-radius: 8px;
+                                background: #252332;
+                                clip: true;
+
+                                if task.has-icon: Image {
+                                    source: task.icon;
+                                    width: 20px;
+                                    height: 20px;
+                                    x: 3px;
+                                    y: 3px;
+                                }
+                                if !task.has-icon: Text {
+                                    text: "📱";
+                                    font-size: 14px;
+                                    vertical-alignment: center;
+                                    horizontal-alignment: center;
+                                }
+                            }
+
+                            Text {
+                                text: task.name;
+                                font-size: 14px;
+                                font-weight: 600;
+                                color: #FFFFFF;
+                                vertical-alignment: center;
+                                overflow: elide;
+                                horizontal-stretch: 1;
+                            }
+
+                            // Close button for the card
+                            Rectangle {
+                                width: 26px;
+                                height: 26px;
+                                border-radius: 13px;
+                                background: #ffffff15;
+
+                                Text {
+                                    text: "✕";
+                                    font-size: 11px;
+                                    font-weight: 700;
+                                    color: #FFFFFFB0;
+                                    vertical-alignment: center;
+                                    horizontal-alignment: center;
+                                }
+
+                                TouchArea {
+                                    clicked => {
+                                        dismissing-id = task.id;
+                                        dismiss-timer.running = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Recessed aperture framing the live Wayland surface (255x521 at global x = card_x, y = 112px)
+                    Rectangle {
+                        x: (parent.width - 255px) / 2;
+                        y: 50px;
+                        width: 255px;
+                        height: 521px;
+                        border-radius: 16px;
+                        background: #0c0a12;
+                        border-width: 1px;
+                        border-color: #ffffff14;
+                    }
+                }
+            }
+
+            // Overview Gesture Area (fluid 1:1 finger tracking drag, vertical dismissal, and magnetic snap)
             overview-gesture-ta := TouchArea {
                 x: 0px;
                 y: 50px;
@@ -939,15 +1010,21 @@ export component AppSurface inherits Rectangle {
 
                 property <float> start-x: 0.0;
                 property <float> start-y: 0.0;
+                property <float> start-scroll: 0.0;
                 property <bool> is-active: false;
+                property <bool> is-horizontal-drag: false;
+                property <bool> is-vertical-drag: false;
 
                 pointer-event(event) => {
                     if (event.kind == PointerEventKind.down) {
                         self.start-x = overview-gesture-ta.mouse-x / 1px;
                         self.start-y = overview-gesture-ta.mouse-y / 1px;
+                        self.start-scroll = root.overview-scroll;
                         self.is-active = true;
-                        is-dragging-carousel = false;
-                        live-drag-offset = 0px;
+                        self.is-horizontal-drag = false;
+                        self.is-vertical-drag = false;
+                        active-card-dy = 0px;
+                        root.is-dragging-carousel = false;
                         drag-tick-count = 0;
                         overview-drag-timer.running = true;
                     } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
@@ -956,47 +1033,41 @@ export component AppSurface inherits Rectangle {
                             self.is-active = false;
                             let total-dx = (overview-gesture-ta.mouse-x / 1px) - self.start-x;
                             let total-dy = (overview-gesture-ta.mouse-y / 1px) - self.start-y;
+                            let dt-s = Math.max(0.016, (drag-tick-count * 16) / 1000.0);
 
-                            if (is-dragging-carousel) {
-                                is-dragging-carousel = false;
-                                live-drag-offset = 0px;
-
-                                // Estimate release velocity in px/s:
-                                let dt-s = Math.max(0.032, (drag-tick-count * 16) / 1000.0);
-                                let velocity = total-dx / dt-s;
-                                let abs-vel = Math.abs(velocity);
-
-                                // Multi-tier velocity momentum and magnetic snap:
-                                let delta = (abs-vel > 1600.0)
-                                    ? (velocity > 0.0 ? 2 : -2)
-                                    : (abs-vel > 400.0
-                                        ? (velocity > 0.0 ? 1 : -1)
-                                        : (total-dx > 75.0 ? 1 : (total-dx < -75.0 ? -1 : 0)));
-
-                                let new-idx = Math.max(0, Math.min(root.running-tasks.length - 1, root.overview-index + delta));
-                                root.overview-index = new-idx;
-                                root.overview-index-changed(new-idx);
+                            if (self.is-vertical-drag) {
+                                self.is-vertical-drag = false;
+                                let up-velocity = -total-dy / dt-s; // px/s upward
+                                if (total-dy < -140.0 || up-velocity > 650.0) {
+                                    // Kill animation: accelerate upward while fading to 0.0
+                                    dismissing-id = root.running-tasks[root.safe-overview-index].id;
+                                    dismiss-timer.running = true;
+                                } else {
+                                    // Snap back to resting position
+                                    active-card-dy = 0px;
+                                }
+                            } else if (self.is-horizontal-drag) {
+                                self.is-horizontal-drag = false;
+                                root.is-dragging-carousel = false;
+                                let velocity-px-s = total-dx / dt-s;
+                                root.overview-drag-released(root.overview-scroll, velocity-px-s);
                             } else {
-                                if (total-dy < -50.0 && Math.abs(total-dy) > Math.abs(total-dx)) {
-                                    // Swipe UP -> dismiss active card
-                                    root.close-task(root.running-tasks[root.safe-overview-index].id);
-                                } else if (Math.abs(total-dx) < 15.0 && Math.abs(total-dy) < 15.0) {
-                                    // Tap detection
+                                // Tap / Click detection
+                                if (Math.abs(total-dx) < 15.0 && Math.abs(total-dy) < 15.0) {
                                     let tap-x = overview-gesture-ta.mouse-x / 1px;
-                                    if (tap-x >= 78.0 && tap-x <= 334.0) {
-                                        // Tap on centered card -> select task
+                                    if (tap-x >= 61.0 && tap-x <= 351.0) {
+                                        // Tap centered card -> restore fullscreen control to xdg_toplevel
                                         root.select-task(root.running-tasks[root.safe-overview-index].id);
-                                    } else if (tap-x < 78.0 && root.overview-index < root.running-tasks.length - 1) {
-                                        // Tap on card peeking from the left -> switch to older task
-                                        root.overview-index += 1;
-                                        root.overview-index-changed(root.overview-index);
-                                    } else if (tap-x > 334.0 && root.overview-index > 0) {
-                                        // Tap on card peeking from the right -> switch to newer task
-                                        root.overview-index -= 1;
-                                        root.overview-index-changed(root.overview-index);
+                                    } else if (tap-x < 61.0 && root.safe-overview-index < root.running-tasks.length - 1) {
+                                        root.overview-drag-released(root.overview-scroll, 850.0);
+                                    } else if (tap-x > 351.0 && root.safe-overview-index > 0) {
+                                        root.overview-drag-released(root.overview-scroll, -850.0);
                                     } else {
                                         root.exit-overview();
                                     }
+                                } else if (total-dy > 60.0 && Math.abs(total-dy) > Math.abs(total-dx)) {
+                                    // Flick downward -> also re-enter centered app
+                                    root.select-task(root.running-tasks[root.safe-overview-index].id);
                                 }
                             }
                         }
@@ -1008,18 +1079,34 @@ export component AppSurface inherits Rectangle {
                         let cur-dx = (overview-gesture-ta.mouse-x / 1px) - self.start-x;
                         let cur-dy = (overview-gesture-ta.mouse-y / 1px) - self.start-y;
 
-                        if (!is-dragging-carousel) {
-                            if (Math.abs(cur-dx) > 10.0 && Math.abs(cur-dx) > Math.abs(cur-dy)) {
-                                is-dragging-carousel = true;
+                        if (!self.is-horizontal-drag && !self.is-vertical-drag) {
+                            if (cur-dy < -10.0 && Math.abs(cur-dy) > Math.abs(cur-dx) * 1.4) {
+                                self.is-vertical-drag = true;
+                            } else if (Math.abs(cur-dx) > 6.0) {
+                                self.is-horizontal-drag = true;
+                                root.is-dragging-carousel = true;
                             }
                         }
 
-                        if (is-dragging-carousel) {
-                            // Rubber-band resistance at boundary edges
-                            let effective-dx = (root.overview-index >= root.running-tasks.length - 1 && cur-dx > 0.0) || (root.overview-index <= 0 && cur-dx < 0.0)
-                                ? cur-dx * 0.35
-                                : cur-dx;
-                            live-drag-offset = effective-dx * 1px;
+                        if (self.is-horizontal-drag) {
+                            let delta-scroll = cur-dx / 308.0;
+                            let raw-candidate = self.start-scroll + delta-scroll;
+                            let max-scroll = (root.running-tasks.length - 1) * 1.0;
+
+                            // Rubber-band resistance at carousel edges
+                            let candidate = raw-candidate < 0.0
+                                ? (raw-candidate * 0.35)
+                                : (raw-candidate > max-scroll
+                                    ? (max-scroll + (raw-candidate - max-scroll) * 0.35)
+                                    : raw-candidate);
+
+                            root.overview-scroll = candidate;
+                            root.overview-scroll-changed(candidate, true);
+                        }
+
+                        if (self.is-vertical-drag) {
+                            // Drag upward on the active card
+                            active-card-dy = Math.min(0.0, cur-dy) * 1px;
                         }
                     }
                 }
@@ -1048,8 +1135,8 @@ export component AppSurface inherits Rectangle {
 
                 TouchArea {
                     clicked => {
-                        root.overview-index = Math.min(root.running-tasks.length - 1, root.overview-index + 1);
-                        root.overview-index-changed(root.overview-index);
+                        root.is-dragging-carousel = false;
+                        root.overview-drag-released(root.overview-scroll, 850.0);
                     }
                 }
             }
@@ -1077,8 +1164,8 @@ export component AppSurface inherits Rectangle {
 
                 TouchArea {
                     clicked => {
-                        root.overview-index = Math.max(0, root.overview-index - 1);
-                        root.overview-index-changed(root.overview-index);
+                        root.is-dragging-carousel = false;
+                        root.overview-drag-released(root.overview-scroll, -850.0);
                     }
                 }
             }
@@ -1104,8 +1191,9 @@ export component AppSurface inherits Rectangle {
 
                     TouchArea {
                         clicked => {
-                            root.overview-index = idx;
-                            root.overview-index-changed(idx);
+                            root.is-dragging-carousel = false;
+                            let vel = idx > root.safe-overview-index ? 850.0 : -850.0;
+                            root.overview-drag-released(idx * 1.0, 0.0);
                         }
                     }
                 }
