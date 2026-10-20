@@ -204,10 +204,9 @@ impl PenumbraServerState {
 
         // 5. Background layer (e.g. penumbra-homescreen)
         if let Some(l) = map_a.layer_under(Layer::Background, pos) {
-            let geo = map_a.layer_geometry(l).unwrap_or_default();
             return Some((
                 l.wl_surface().clone(),
-                (geo.loc.x as f64, geo.loc.y as f64).into(),
+                (0.0, 0.0).into(),
             ));
         }
 
@@ -237,6 +236,12 @@ impl PenumbraServerState {
         }
 
         self.phone_tasks.retain(|t| t.window.alive());
+
+        if self.phone_tasks.is_empty() && self.shell_state.mode == PhoneMode::App {
+            info!("All phone tasks closed -> returning to Home mode");
+            self.shell_state.mode = PhoneMode::Home;
+            let _ = write_atomic(&runtime_path(phone::SHELL_STATE_FILE), &self.shell_state.serialize());
+        }
 
         let mut listing = String::new();
         for task in &self.phone_tasks {
@@ -308,8 +313,17 @@ impl XdgShellHandler for PenumbraServerState {
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
         let window_count = self.space.elements().count();
 
-        // 1. Root Shell Window (penumbra-shell) - always the first toplevel
-        if self.root_shell.is_none() {
+        // 1. Root Shell Window (penumbra-shell legacy monolithic) - only if app_id matches
+        let is_legacy_shell = with_states(surface.wl_surface(), |states| {
+            states
+                .data_map
+                .get::<XdgToplevelSurfaceData>()
+                .and_then(|d| d.lock().ok())
+                .map(|d| d.app_id.as_deref() == Some("penumbra-shell"))
+                .unwrap_or(false)
+        });
+
+        if is_legacy_shell && self.root_shell.is_none() {
             let shell_width = if self.is_convergence_active {
                 1692
             } else {
@@ -363,6 +377,11 @@ impl XdgShellHandler for PenumbraServerState {
             let id = self.next_task_id;
             self.next_task_id += 1;
             self.phone_tasks.insert(0, PhoneTask { id, window });
+
+            // Automatically switch to App mode and save state
+            self.shell_state.mode = PhoneMode::App;
+            self.shell_state.drawer_open = false;
+            let _ = write_atomic(&runtime_path(phone::SHELL_STATE_FILE), &self.shell_state.serialize());
             return;
         } else {
             info!("Routing application to Output B [External Desktop]: floating inside usable zone");
@@ -451,18 +470,22 @@ impl WlrLayerShellHandler for PenumbraServerState {
         let layer_surface = LayerSurface::new(surface, namespace.clone());
         let _ = map.map_layer(&layer_surface);
         map.arrange();
-        if let Some(geo) = map.layer_geometry(&layer_surface) {
+        let output_size = target_output.current_mode().map(|m| m.size).unwrap_or((412, 915).into());
+        if layer == Layer::Background {
+            layer_surface.layer_surface().with_pending_state(|state| {
+                state.size = Some((output_size.w, output_size.h).into());
+            });
+        } else if let Some(geo) = map.layer_geometry(&layer_surface) {
             debug!("Layer surface mapped geometry: {:?}", geo);
             layer_surface.layer_surface().with_pending_state(|state| {
                 state.size = Some(geo.size);
             });
         } else {
-            let output_size = target_output.current_mode().map(|m| m.size).unwrap_or((412, 915).into());
             let fallback_h = match layer {
                 Layer::Background | Layer::Bottom | Layer::Overlay => output_size.h,
                 Layer::Top => {
                     if ns.contains("nav") {
-                        24
+                        32
                     } else {
                         38
                     }
@@ -1070,10 +1093,15 @@ impl PenumbraCompositor {
                         .filter(|l| l.layer() == layer_kind)
                         .flat_map(|l| {
                             if let Some(geo) = map.layer_geometry(l) {
+                                let (loc_x, loc_y) = if layer_kind == Layer::Background {
+                                    (0, 0)
+                                } else {
+                                    (geo.loc.x, geo.loc.y)
+                                };
                                 render_elements_from_surface_tree(
                                     renderer,
                                     l.wl_surface(),
-                                    (origin_x + geo.loc.x, geo.loc.y),
+                                    (origin_x + loc_x, loc_y),
                                     1.0,
                                     1.0,
                                     Kind::Unspecified,

@@ -24,14 +24,35 @@ export component BottomDock inherits Rectangle {
         easing: ease-in-out;
     }
 
+    // Ambient drop shadow beneath the dock
+    dock-shadow := Rectangle {
+        x: root.shake-offset;
+        y: 4px;
+        width: 100%;
+        height: 100%;
+        border-radius: 34px;
+        background: #00000038;
+    }
+
+    // Frosted dark acrylic backing layer to enhance contrast and readability over wallpapers
+    dock-backdrop := Rectangle {
+        x: root.shake-offset;
+        width: 100%;
+        height: 100%;
+        border-radius: 34px;
+        background: #18162238;
+    }
+
+    // Main Frosted Glass Dock Pill
     pill := Rectangle {
         x: root.shake-offset;
         width: 100%;
         height: 100%;
-        border-radius: 28px;
-        background: root.reject-drop ? #E5393533 : Theme.surface-container-high;
-        border-width: 1.5px;
-        border-color: root.reject-drop ? #E53935AA : Theme.specular-rim;
+        border-radius: 34px;
+        // iOS frosted translucent acrylic gradient
+        background: root.reject-drop ? #E5393548 : @linear-gradient(180deg, #FFFFFF3D 0%, #FFFFFF1A 50%, #FFFFFF28 100%);
+        border-width: 1.2px;
+        border-color: root.reject-drop ? #E53935BB : #FFFFFF50;
         clip: false;
 
         animate background {
