@@ -67,6 +67,7 @@ export component HomescreenWindow inherits Window {
     callback select-task(int);
     callback close-task(int);
     callback overview-index-changed(int);
+    callback exit-overview();
     callback execute-command(string) -> string;
     callback list-directory(string) -> string;
     callback eval-calc(string, string, string) -> string;
@@ -124,6 +125,7 @@ export component HomescreenWindow inherits Window {
         select-task(idx) => { root.select-task(idx); }
         close-task(idx) => { root.close-task(idx); }
         overview-index-changed(idx) => { root.overview-index-changed(idx); }
+        exit-overview => { root.exit-overview(); }
         execute-command(cmd) => { return root.execute-command(cmd); }
         list-directory(path) => { return root.list-directory(path); }
         eval-calc(a, op, b) => { return root.eval-calc(a, op, b); }

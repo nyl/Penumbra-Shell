@@ -14,22 +14,25 @@ export component NavBarWindow inherits Window {
     callback nav-next-app();
     callback nav-prev-app();
 
+    callback touch-down(float, float);
+    callback touch-move(float, float);
+    callback touch-up(float, float);
+
     nav-bar := NavBar {
         width: 100%;
         height: 100%;
         solid: root.solid;
 
+        touch-down(x, y) => {
+            root.touch-down(x, y);
+        }
+
+        touch-move(x, y) => {
+            root.touch-move(x, y);
+        }
+
         touch-up(x, y) => {
-            // A tap on the gesture bar navigates Home
-            if (Math.abs(nav-bar.drag-offset-y) < 20px && Math.abs(nav-bar.drag-offset-x) < 30px) {
-                root.nav-home();
-            } else if (nav-bar.drag-offset-y < -20px) {
-                root.nav-recents();
-            } else if (nav-bar.drag-offset-x > 30px) {
-                root.nav-next-app();
-            } else if (nav-bar.drag-offset-x < -30px) {
-                root.nav-prev-app();
-            }
+            root.touch-up(x, y);
         }
 
         gesture-triggered(kind) => {

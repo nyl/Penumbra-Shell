@@ -721,17 +721,51 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
-    // 12. Periodic Task List synchronization
+    {
+        ui.on_exit_overview(move || {
+            info!("Overview: Exiting to Home");
+            let mut state = ShellState::load();
+            state.mode = PhoneMode::Home;
+            let _ = state.save();
+        });
+    }
+
+    // 12. Periodic Task List & ShellState synchronization
     let task_timer = Timer::default();
     {
         let ui_weak = ui_weak.clone();
         let apps_list = Arc::clone(&apps_list);
         task_timer.start(
             TimerMode::Repeated,
-            Duration::from_millis(200),
+            Duration::from_millis(50),
             move || {
-                let windows = read_windows();
+                let state = ShellState::load();
                 if let Some(ui) = ui_weak.upgrade() {
+                    let current_mode = ui.get_active_mode();
+                    let target_mode = match state.mode {
+                        PhoneMode::Home => {
+                            if current_mode == 2 {
+                                2 // preserve local app drawer open
+                            } else {
+                                0
+                            }
+                        }
+                        PhoneMode::Overview => 1,
+                        PhoneMode::App => 3,
+                    };
+
+                    if current_mode != target_mode {
+                        info!("Homescreen sync active_mode: {} -> {}", current_mode, target_mode);
+                        ui.set_active_mode(target_mode);
+                    }
+
+                    if state.mode == PhoneMode::Overview {
+                        if ui.get_overview_index() != state.overview_index as i32 {
+                            ui.set_overview_index(state.overview_index as i32);
+                        }
+                    }
+
+                    let windows = read_windows();
                     let apps = apps_list.read().unwrap();
                     let tasks_model = Rc::new(VecModel::default());
                     for win in windows {
