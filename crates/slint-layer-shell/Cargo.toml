@@ -1,0 +1,29 @@
+[package]
+name = "slint-layer-shell"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+description = "Native wlr-layer-shell platform backend for the Slint UI toolkit"
+repository = "https://github.com/nyl/Penumbra-Shell"
+keywords = ["wayland", "slint", "layer-shell", "desktop", "ui"]
+categories = ["gui", "os::unix-apis"]
+
+[dependencies]
+# Slint core without default winit backend
+slint = { version = "1.8", default-features = false, features = ["compat-1-2", "renderer-software", "std"] }
+
+# Wayland protocol infrastructure
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client"] }
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop"] }
+
+# Event loop & utilities
+calloop = "0.13"
+calloop-wayland-source = "0.3"
+log = "0.4"
+thiserror = "1.0"
+raw-window-handle = "0.6"
+
+[dev-dependencies]
+env_logger = "0.11"
