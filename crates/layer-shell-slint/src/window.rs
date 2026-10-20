@@ -95,8 +95,20 @@ impl LayerWindow {
     /// Handles a Wayland configure event from the compositor.
     pub fn on_configure(&self, width: u32, height: u32) {
         let (current_w, current_h) = (self.size.get().width, self.size.get().height);
-        let new_w = if width > 0 { width } else { current_w };
-        let new_h = if height > 0 { height } else { current_h };
+        let new_w = if width > 0 {
+            width
+        } else if current_w > 0 {
+            current_w
+        } else {
+            412
+        };
+        let new_h = if height > 0 {
+            height
+        } else if current_h > 0 {
+            current_h
+        } else {
+            38
+        };
 
         let new_size = PhysicalSize::new(new_w, new_h);
         if self.size.get() != new_size || !self.configured.get() {

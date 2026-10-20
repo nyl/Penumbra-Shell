@@ -23,7 +23,7 @@ done
 
 # 2. Start Penumbra Shell (dual-screen mode by default, or pass custom args)
 SHELL_ARGS="${*:-"--dual-screen"}"
-WAYLAND_DISPLAY="$PENUMBRA_SOCKET" GDK_BACKEND=wayland QT_QPA_PLATFORM=wayland ./target/debug/penumbra-shell $SHELL_ARGS &
+WAYLAND_DISPLAY="$PENUMBRA_SOCKET" SLINT_BACKEND="${SLINT_BACKEND:-software}" GDK_BACKEND=wayland QT_QPA_PLATFORM=wayland ./target/debug/penumbra-shell $SHELL_ARGS &
 SHELL_PID=$!
 
 trap "kill $COMP_PID $SHELL_PID 2>/dev/null || true" EXIT

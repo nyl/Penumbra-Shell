@@ -1,0 +1,210 @@
+import { Theme } from "theme.slint";
+
+export component TopBarWindow inherits Window {
+    title: "Penumbra Top Bar";
+    height: 38px;
+    background: #000000;
+    default-font-family: "Roboto, Inter, sans-serif";
+
+    // Telemetry properties bound to penumbra-services
+    in-out property <string> time-text: "12:00";
+    in-out property <float> battery-pct: 100.0;
+    in-out property <bool> is-charging: false;
+    in-out property <bool> wifi-connected: true;
+    in-out property <int> wifi-signal: 100;
+    in-out property <string> carrier-text: "Penumbra";
+    in-out property <bool> privacy-active: false;
+
+    callback top-bar-clicked();
+
+    touch-area := TouchArea {
+        clicked => { root.top-bar-clicked(); }
+    }
+
+    // Specular subtle bottom border separating the top bar from underlying windows
+    Rectangle {
+        x: 0px;
+        y: parent.height - 1px;
+        width: parent.width;
+        height: 1px;
+        background: #ffffff14;
+    }
+
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        alignment: space-between;
+
+        // Left Container: Time and Privacy Indicator
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+
+            VerticalLayout {
+                alignment: center;
+                Text {
+                    text: root.time-text;
+                    color: Theme.on-surface;
+                    font-size: Theme.font-body;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                }
+            }
+
+            if root.privacy-active: VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 18px;
+                    height: 14px;
+                    border-radius: 7px;
+                    background: Theme.privacy-green;
+
+                    HorizontalLayout {
+                        alignment: center;
+                        spacing: 2px;
+                        padding: 2px;
+
+                        // Microphone dot
+                        Rectangle {
+                            width: 3px;
+                            height: 3px;
+                            border-radius: 1.5px;
+                            background: #003919;
+                        }
+                        // Location dot
+                        Rectangle {
+                            width: 3px;
+                            height: 3px;
+                            border-radius: 1.5px;
+                            background: #003919;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Right Container: Connectivity & Battery Capsule
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: end;
+
+            // Cellular signal bars (4 bottom-aligned bars on common baseline)
+            VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 17px;
+                    height: 13px;
+                    background: transparent;
+
+                    Rectangle {
+                        x: 0px;
+                        y: parent.height - self.height;
+                        width: 3px;
+                        height: 3px;
+                        border-radius: 1px;
+                        background: Theme.on-surface;
+                    }
+                    Rectangle {
+                        x: 4.5px;
+                        y: parent.height - self.height;
+                        width: 3px;
+                        height: 6px;
+                        border-radius: 1px;
+                        background: Theme.on-surface;
+                    }
+                    Rectangle {
+                        x: 9px;
+                        y: parent.height - self.height;
+                        width: 3px;
+                        height: 9px;
+                        border-radius: 1px;
+                        background: Theme.on-surface;
+                    }
+                    Rectangle {
+                        x: 13.5px;
+                        y: parent.height - self.height;
+                        width: 3px;
+                        height: 13px;
+                        border-radius: 1px;
+                        background: Theme.on-surface;
+                    }
+                }
+            }
+
+            // Native Vector Wi-Fi Icon (Clean Material 3 filled fan)
+            VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 16px;
+                    height: 13px;
+                    background: transparent;
+
+                    Path {
+                        width: parent.width;
+                        height: parent.height;
+                        viewbox-x: 0;
+                        viewbox-y: 0;
+                        viewbox-width: 24;
+                        viewbox-height: 24;
+                        commands: "M 12 4 C 7.31 4 3.07 5.9 0 8.98 L 12 21 L 24 8.98 C 20.93 5.9 16.69 4 12 4 Z";
+                        fill: root.wifi-connected ? Theme.on-surface : Theme.on-surface-variant;
+                    }
+                }
+            }
+
+            // Battery Percentage Text
+            VerticalLayout {
+                alignment: center;
+                Text {
+                    text: "\{Math.round(root.battery-pct)}%";
+                    color: Theme.on-surface;
+                    font-size: Theme.font-label;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+            }
+
+            // Battery Capsule
+            VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 22px;
+                    height: 12px;
+                    background: transparent;
+
+                    // Battery Fill Box
+                    Rectangle {
+                        x: 0px;
+                        y: 0px;
+                        width: 20px;
+                        height: 12px;
+                        border-radius: 3.5px;
+                        border-width: 1.2px;
+                        border-color: Theme.on-surface;
+                        background: transparent;
+
+                        // Fill
+                        Rectangle {
+                            x: 1.5px;
+                            y: 1.5px;
+                            width: Math.clamp((parent.width - 3px) * (root.battery-pct / 100.0), 2px, parent.width - 3px);
+                            height: parent.height - 3px;
+                            border-radius: 1.5px;
+                            background: root.battery-pct < 20.0 ? #FFB4AB : (root.is-charging ? Theme.privacy-green : Theme.primary);
+                        }
+                    }
+
+                    // Positive Terminal Nodule
+                    Rectangle {
+                        x: 20px;
+                        y: (parent.height - 4px) / 2;
+                        width: 2px;
+                        height: 4px;
+                        border-radius: 1px;
+                        background: Theme.on-surface;
+                    }
+                }
+            }
+        }
+    }
+}

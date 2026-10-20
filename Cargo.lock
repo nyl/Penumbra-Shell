@@ -4055,6 +4055,7 @@ dependencies = [
  "freedesktop-desktop-entry",
  "freedesktop-icons",
  "image",
+ "layer-shell-slint",
  "penumbra-gestures",
  "penumbra-services",
  "serde",

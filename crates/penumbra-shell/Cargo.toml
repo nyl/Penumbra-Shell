@@ -6,7 +6,16 @@ authors.workspace = true
 license.workspace = true
 description = "Material 3 Expressive Shell UI using Slint for Penumbra Mobile DE"
 
+[[bin]]
+name = "penumbra-shell"
+path = "src/main.rs"
+
+[[bin]]
+name = "penumbra-top-bar"
+path = "src/bin/top_bar.rs"
+
 [dependencies]
+layer-shell-slint = { path = "../layer-shell-slint" }
 penumbra-gestures = { path = "../penumbra-gestures" }
 penumbra-services = { path = "../penumbra-services" }
 slint = "1.18"

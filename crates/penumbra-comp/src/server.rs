@@ -5,7 +5,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tracing::info;
+use tracing::{debug, info};
 
 use smithay::{
     backend::{
@@ -386,14 +386,12 @@ impl WlrLayerShellHandler for PenumbraServerState {
         );
 
         // Output Routing Logic:
-        // Desktop components (panel, dock, wallpaper) map to Output B (External Monitor).
-        // Phone shell layer surfaces map to Output A.
+        // Desktop components (desktop panel, dock, external monitor applets) map to Output B.
+        // Mobile shell layer surfaces (top-bar, status-bar, nav, osk) default to Output A (Phone Screen).
         let ns = namespace.to_lowercase();
-        let target_output = if ns.contains("panel")
-            || ns.contains("applet")
+        let target_output = if ns.contains("desktop")
+            || ns.contains("panel")
             || ns.contains("dock")
-            || ns.contains("bg")
-            || ns.contains("wallpaper")
         {
             self.output_b.as_ref().unwrap_or(&self.output_a)
         } else if let Some(ref wl_out) = output {
@@ -403,16 +401,28 @@ impl WlrLayerShellHandler for PenumbraServerState {
             } else {
                 &self.output_a
             }
-        } else if self.is_convergence_active && self.output_b.is_some() {
-            self.output_b.as_ref().unwrap()
         } else {
             &self.output_a
         };
 
         let mut map = layer_map_for_output(target_output);
-        let layer_surface = LayerSurface::new(surface, namespace);
+        let layer_surface = LayerSurface::new(surface, namespace.clone());
         let _ = map.map_layer(&layer_surface);
         map.arrange();
+        if let Some(geo) = map.layer_geometry(&layer_surface) {
+            debug!("Layer surface mapped geometry: {:?}", geo);
+            layer_surface.layer_surface().with_pending_state(|state| {
+                state.size = Some(geo.size);
+            });
+        } else {
+            let output_size = target_output.current_mode().map(|m| m.size).unwrap_or((412, 915).into());
+            debug!("Layer surface initial fallback size: {:?}", output_size);
+            layer_surface.layer_surface().with_pending_state(|state| {
+                state.size = Some((output_size.w, 38).into());
+            });
+        }
+        layer_surface.layer_surface().send_configure();
+        debug!("Sent send_configure() to layer surface '{}'", namespace);
     }
 }
 
@@ -452,6 +462,7 @@ impl CompositorHandler for PenumbraServerState {
         {
             let mut map_a = layer_map_for_output(&self.output_a);
             if map_a.layers().any(|l| l.wl_surface() == surface) {
+                debug!("Layer surface committed on Output A");
                 map_a.arrange();
             }
         }
