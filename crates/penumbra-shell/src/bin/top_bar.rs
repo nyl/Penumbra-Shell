@@ -39,12 +39,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ui_weak = bar.as_weak();
 
     bar.on_top_bar_clicked({
-        let ui_weak = ui_weak.clone();
         move || {
-            info!("Top Bar clicked / touched");
-            if let Some(_ui) = ui_weak.upgrade() {
-                // In future steps, this will trigger the Quick Settings shade
-            }
+            let mut state = penumbra_shell::ipc::ShellState::load();
+            state.drawer_open = !state.drawer_open;
+            let _ = state.save();
+            info!("Top Bar clicked -> toggled Quick Settings drawer: {}", state.drawer_open);
         }
     });
 

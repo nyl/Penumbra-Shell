@@ -1,0 +1,51 @@
+import { QuickSettingsDrawer } from "quick_settings.slint";
+
+export component QuickSettingsWindow inherits Window {
+    title: "Penumbra Quick Settings";
+    width: 412px;
+    height: 915px;
+    background: transparent;
+    default-font-family: "Roboto, Inter, sans-serif";
+
+    in-out property <float> brightness: 0.75;
+    in-out property <float> volume: 0.60;
+    in-out property <string> time-text: "17:30";
+    in-out property <string> date-text: "Sunday, Oct 19";
+    in-out property <string> carrier-text: "Penumbra 5G";
+
+    in-out property <bool> tile-internet: true;
+    in-out property <bool> tile-bluetooth: true;
+    in-out property <bool> tile-flashlight: false;
+    in-out property <bool> tile-dnd: false;
+    in-out property <bool> tile-hotspot: false;
+    in-out property <bool> tile-rotate: true;
+
+    callback close-requested();
+    callback power-action();
+    callback settings-action();
+    callback brightness-changed(float);
+    callback volume-changed(float);
+
+    drawer := QuickSettingsDrawer {
+        width: 100%;
+        height: 100%;
+        brightness: root.brightness;
+        volume: root.volume;
+        time-text: root.time-text;
+        date-text: root.date-text;
+        carrier-text: root.carrier-text;
+        tile-internet: root.tile-internet;
+        tile-bluetooth: root.tile-bluetooth;
+        tile-flashlight: root.tile-flashlight;
+        tile-dnd: root.tile-dnd;
+        tile-hotspot: root.tile-hotspot;
+        tile-rotate: root.tile-rotate;
+
+        close-requested => { root.close-requested(); }
+        power-action => { root.power-action(); }
+        settings-action => { root.settings-action(); }
+        brightness-changed(v) => { root.brightness-changed(v); }
+        volume-changed(v) => { root.volume-changed(v); }
+        handle-up(x, y) => { root.close-requested(); }
+    }
+}

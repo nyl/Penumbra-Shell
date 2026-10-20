@@ -37,7 +37,7 @@ echo "   Socket: $PENUMBRA_SOCKET"
 echo "=========================================================="
 
 echo "🔨 Building Penumbra components..."
-cargo build --bin penumbra-comp --bin penumbra-top-bar --bin penumbra-homescreen
+cargo build --bin penumbra-comp --bin penumbra-top-bar --bin penumbra-homescreen --bin penumbra-nav-bar --bin penumbra-quick-settings
 
 # Clean up any stale sockets
 rm -f "$XDG_RUNTIME_DIR/$PENUMBRA_SOCKET"* "/tmp/$PENUMBRA_SOCKET"* 2>/dev/null || true
@@ -66,8 +66,16 @@ echo "📱 Launching Penumbra Top Status Bar (Layer::Top)..."
 WAYLAND_DISPLAY="$PENUMBRA_SOCKET" ./target/debug/penumbra-top-bar &
 TOP_BAR_PID=$!
 
+echo "📱 Launching Penumbra Navigation Bar (Layer::Top)..."
+WAYLAND_DISPLAY="$PENUMBRA_SOCKET" ./target/debug/penumbra-nav-bar &
+NAV_BAR_PID=$!
+
+echo "📱 Launching Penumbra Quick Settings (Layer::Overlay)..."
+WAYLAND_DISPLAY="$PENUMBRA_SOCKET" ./target/debug/penumbra-quick-settings &
+QS_PID=$!
+
 # Child processes array for graceful cleanup
-PIDS=($COMP_PID $HOME_PID $TOP_BAR_PID)
+PIDS=($COMP_PID $HOME_PID $TOP_BAR_PID $NAV_BAR_PID $QS_PID)
 
 cleanup() {
     echo ""

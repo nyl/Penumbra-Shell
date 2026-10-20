@@ -10,8 +10,8 @@ use tracing::{debug, info};
 use smithay::{
     backend::{
         input::{
-            AbsolutePositionEvent, InputEvent, KeyboardKeyEvent,
-            PointerButtonEvent,
+            AbsolutePositionEvent, Axis, InputEvent, KeyboardKeyEvent,
+            PointerAxisEvent, PointerButtonEvent,
         },
         renderer::{
             element::{
@@ -30,7 +30,7 @@ use smithay::{
     desktop::{layer_map_for_output, space::Space, LayerSurface, Window},
     input::{
         keyboard::FilterResult,
-        pointer::{ButtonEvent, MotionEvent},
+        pointer::{AxisFrame, ButtonEvent, MotionEvent},
         Seat, SeatHandler, SeatState,
     },
     output::{Mode, Output, PhysicalProperties, Scale, Subpixel},
@@ -163,13 +163,55 @@ impl PenumbraServerState {
         &self,
         pos: Point<f64, smithay::utils::Logical>,
     ) -> Option<(WlSurface, Point<f64, smithay::utils::Logical>)> {
+        let map_a = layer_map_for_output(&self.output_a);
+
+        // 1. Overlay layer (highest priority - active when drawer is open)
+        if self.shell_state.drawer_open {
+            if let Some(l) = map_a.layer_under(Layer::Overlay, pos) {
+                let geo = map_a.layer_geometry(l).unwrap_or_default();
+                return Some((
+                    l.wl_surface().clone(),
+                    (geo.loc.x as f64, geo.loc.y as f64).into(),
+                ));
+            }
+        }
+
+        // 2. Top layer (e.g. status bar: penumbra-top-bar)
+        if let Some(l) = map_a.layer_under(Layer::Top, pos) {
+            let geo = map_a.layer_geometry(l).unwrap_or_default();
+            return Some((
+                l.wl_surface().clone(),
+                (geo.loc.x as f64, geo.loc.y as f64).into(),
+            ));
+        }
+
+        // 3. Normal window (running phone app in the inset)
         let in_app_inset = pos.y >= APP_Y as f64 && pos.y < NAV_BAR_Y as f64;
         if self.phone_app_visible() && !self.shell_state.drawer_open && in_app_inset {
             if let Some(surface) = self.active_phone_surface() {
                 return Some((surface, (0.0, APP_Y as f64).into()));
             }
         }
-        // Status bar, nav bar, home screen, overview and drawer all belong to the shell.
+
+        // 4. Bottom layer
+        if let Some(l) = map_a.layer_under(Layer::Bottom, pos) {
+            let geo = map_a.layer_geometry(l).unwrap_or_default();
+            return Some((
+                l.wl_surface().clone(),
+                (geo.loc.x as f64, geo.loc.y as f64).into(),
+            ));
+        }
+
+        // 5. Background layer (e.g. penumbra-homescreen)
+        if let Some(l) = map_a.layer_under(Layer::Background, pos) {
+            let geo = map_a.layer_geometry(l).unwrap_or_default();
+            return Some((
+                l.wl_surface().clone(),
+                (geo.loc.x as f64, geo.loc.y as f64).into(),
+            ));
+        }
+
+        // 6. Legacy root_shell (if running legacy monolithic shell)
         self.root_surface().map(|s| (s, (0.0, 0.0).into()))
     }
 
@@ -800,6 +842,8 @@ impl PenumbraCompositor {
                             let focus = state.phone_focus_under(pos);
                             let kb_target = if state.phone_app_visible() && !state.shell_state.drawer_open {
                                 state.active_phone_surface()
+                            } else if let Some((ref surf, _)) = focus {
+                                Some(surf.clone())
                             } else {
                                 state.root_surface()
                             };
@@ -945,6 +989,21 @@ impl PenumbraCompositor {
                                 time: start_time.elapsed().as_millis() as u32,
                             },
                         );
+                        pointer.frame(&mut state);
+                    }
+                    InputEvent::PointerAxis { event } => {
+                        let horizontal_amount = event.amount(Axis::Horizontal).unwrap_or(0.0);
+                        let vertical_amount = event.amount(Axis::Vertical).unwrap_or(0.0);
+
+                        let mut frame = AxisFrame::new(start_time.elapsed().as_millis() as u32)
+                            .source(event.source());
+                        if horizontal_amount != 0.0 {
+                            frame = frame.value(Axis::Horizontal, horizontal_amount);
+                        }
+                        if vertical_amount != 0.0 {
+                            frame = frame.value(Axis::Vertical, vertical_amount);
+                        }
+                        pointer.axis(&mut state, frame);
                         pointer.frame(&mut state);
                     }
                     _ => {}
@@ -1127,7 +1186,11 @@ impl PenumbraCompositor {
                     top_elements.extend(render_layer_elements(renderer, out_b, 412, Layer::Top));
                 }
 
-                let mut overlay_elements = render_layer_elements(renderer, &state.output_a, 0, Layer::Overlay);
+                let mut overlay_elements = if state.shell_state.drawer_open {
+                    render_layer_elements(renderer, &state.output_a, 0, Layer::Overlay)
+                } else {
+                    Vec::new()
+                };
                 if let Some(ref out_b) = state.output_b {
                     overlay_elements.extend(render_layer_elements(renderer, out_b, 412, Layer::Overlay));
                 }

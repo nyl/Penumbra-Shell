@@ -1,0 +1,43 @@
+import { NavBar } from "nav_bar.slint";
+
+export component NavBarWindow inherits Window {
+    title: "Penumbra Navigation Bar";
+    width: 412px;
+    height: 32px;
+    background: transparent;
+    default-font-family: "Roboto, Inter, sans-serif";
+
+    in-out property <bool> solid: false;
+
+    callback nav-home();
+    callback nav-recents();
+    callback nav-next-app();
+    callback nav-prev-app();
+
+    nav-bar := NavBar {
+        width: 100%;
+        height: 100%;
+        solid: root.solid;
+
+        touch-up(x, y) => {
+            // A tap on the gesture bar navigates Home
+            if (Math.abs(nav-bar.drag-offset-y) < 20px && Math.abs(nav-bar.drag-offset-x) < 30px) {
+                root.nav-home();
+            } else if (nav-bar.drag-offset-y < -20px) {
+                root.nav-recents();
+            } else if (nav-bar.drag-offset-x > 30px) {
+                root.nav-next-app();
+            } else if (nav-bar.drag-offset-x < -30px) {
+                root.nav-prev-app();
+            }
+        }
+
+        gesture-triggered(kind) => {
+            if (kind == "home") {
+                root.nav-home();
+            } else if (kind == "recents") {
+                root.nav-recents();
+            }
+        }
+    }
+}

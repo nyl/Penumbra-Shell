@@ -21,6 +21,14 @@ path = "src/bin/top_bar.rs"
 name = "penumbra-homescreen"
 path = "src/bin/homescreen.rs"
 
+[[bin]]
+name = "penumbra-nav-bar"
+path = "src/bin/nav_bar.rs"
+
+[[bin]]
+name = "penumbra-quick-settings"
+path = "src/bin/quick_settings.rs"
+
 [dependencies]
 layer-shell-slint = { path = "../layer-shell-slint" }
 penumbra-gestures = { path = "../penumbra-gestures" }
