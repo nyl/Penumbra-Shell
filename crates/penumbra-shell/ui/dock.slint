@@ -12,9 +12,12 @@ export component BottomDock inherits Rectangle {
     callback request-edit-mode();
 
     width: 380px;
-    height: 76px;
-    background: transparent;
-    clip: false;
+    height: 68px;
+    border-radius: self.height / 2;
+    background: root.reject-drop ? #E5393566 : #1c1b1f99; // Subtle translucent dark fill
+    border-width: 1px;
+    border-color: root.reject-drop ? #E53935BB : #ffffff18;
+    clip: true;
 
     // Shake animation on drop rejection
     property <length> shake-offset: root.reject-drop ? 6px : 0px;
@@ -23,46 +26,14 @@ export component BottomDock inherits Rectangle {
         duration: 80ms;
         easing: ease-in-out;
     }
-
-    // Ambient drop shadow beneath the dock
-    dock-shadow := Rectangle {
-        x: root.shake-offset;
-        y: 4px;
-        width: 100%;
-        height: 100%;
-        border-radius: 34px;
-        background: #00000038;
+    animate background {
+        duration: 180ms;
+        easing: ease-out;
     }
-
-    // Frosted dark acrylic backing layer to enhance contrast and readability over wallpapers
-    dock-backdrop := Rectangle {
-        x: root.shake-offset;
-        width: 100%;
-        height: 100%;
-        border-radius: 34px;
-        background: #18162238;
+    animate border-color {
+        duration: 180ms;
+        easing: ease-out;
     }
-
-    // Main Frosted Glass Dock Pill
-    pill := Rectangle {
-        x: root.shake-offset;
-        width: 100%;
-        height: 100%;
-        border-radius: 34px;
-        // iOS frosted translucent acrylic gradient
-        background: root.reject-drop ? #E5393548 : @linear-gradient(180deg, #FFFFFF3D 0%, #FFFFFF1A 50%, #FFFFFF28 100%);
-        border-width: 1.2px;
-        border-color: root.reject-drop ? #E53935BB : #FFFFFF50;
-        clip: false;
-
-        animate background {
-            duration: 180ms;
-            easing: ease-out;
-        }
-        animate border-color {
-            duration: 180ms;
-            easing: ease-out;
-        }
 
     // Long press detector on dock background to trigger edit mode
     dock-ta := TouchArea {
@@ -106,11 +77,13 @@ export component BottomDock inherits Rectangle {
 
     HorizontalLayout {
         z: 1;
+        x: root.shake-offset;
         alignment: space-around;
-        padding-left: 12px;
-        padding-right: 12px;
-        padding-top: 6px;
-        padding-bottom: 6px;
+        padding-left: 16px;
+        padding-right: 16px;
+        padding-top: 2px;
+        padding-bottom: 2px;
+        spacing: 12px;
 
         for app[idx] in root.dock-apps: ShortcutTile {
             app: app;
@@ -128,4 +101,5 @@ export component BottomDock inherits Rectangle {
         }
     }
 }
-}
+
+export component DockPill inherits BottomDock {}

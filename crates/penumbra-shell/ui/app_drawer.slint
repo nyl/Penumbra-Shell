@@ -190,9 +190,9 @@ export component AppDrawer inherits Rectangle {
         Rectangle {
             height: 50px;
             border-radius: Theme.radius-pill;
-            background: Theme.surface-high;
+            background: #2b2930b3; // Subtle translucent tint (70% alpha)
             border-width: 1px;
-            border-color: search-input.has-focus ? Theme.primary : Theme.specular-rim;
+            border-color: search-input.has-focus ? Theme.primary : #ffffff18;
 
             animate border-color { duration: 150ms; }
 
@@ -211,7 +211,7 @@ export component AppDrawer inherits Rectangle {
                     Text {
                         text: "🔍";
                         font-size: 16px;
-                        color: search-input.has-focus ? Theme.primary : Theme.on-surface-variant;
+                        color: search-input.has-focus ? Theme.primary : #e6e0e9;
                         vertical-alignment: center;
                     }
 
@@ -228,7 +228,7 @@ export component AppDrawer inherits Rectangle {
                             height: 100%;
                             text: "Search apps...";
                             font-size: Theme.font-label;
-                            color: Theme.on-surface-variant;
+                            color: #cac4d0;
                             vertical-alignment: center;
                         }
 
@@ -239,7 +239,7 @@ export component AppDrawer inherits Rectangle {
                             height: 100%;
                             text <=> root.search-query;
                             font-size: Theme.font-label;
-                            color: Theme.on-surface;
+                            color: #e6e0e9;
                             vertical-alignment: center;
                             single-line: true;
 

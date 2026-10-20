@@ -420,9 +420,9 @@ export component AppSurface inherits Rectangle {
             width: parent.width - 40px;
             height: 48px;
             border-radius: Theme.radius-pill;
-            background: Theme.surface-high;
+            background: #2b2930b3; // Modern subtle translucent tint (70% opacity)
             border-width: 1px;
-            border-color: Theme.specular-rim;
+            border-color: #ffffff18;
 
             search-ta := TouchArea {
                 property <float> start-y: 0.0;
@@ -466,7 +466,7 @@ export component AppSurface inherits Rectangle {
                     Text {
                         text: "Search apps, web, & devices...";
                         font-size: Theme.font-label;
-                        color: Theme.on-surface-variant;
+                        color: #cac4d0;
                         vertical-alignment: center;
                     }
                 }
@@ -481,28 +481,22 @@ export component AppSurface inherits Rectangle {
         }
 
         // Persistent Mobile Bottom Dock (Fixed at bottom above nav bar)
-        Rectangle {
+        BottomDock {
             x: (parent.width - 380px) / 2;
-            y: 780px;
+            y: 786px;
             width: 380px;
-            height: 76px;
-            background: transparent;
-
-            BottomDock {
-                width: 100%;
-                height: 100%;
-                dock-apps: root.dock-apps;
-                is-editing: root.is-editing;
-                reject-drop: root.reject-dock-drop;
-                app-clicked(id) => {
-                    root.app-clicked(id);
-                }
-                app-removed(id) => {
-                    root.app-removed-from-dock(id);
-                }
-                request-edit-mode => {
-                    root.is-editing = true;
-                }
+            height: 68px;
+            dock-apps: root.dock-apps;
+            is-editing: root.is-editing;
+            reject-drop: root.reject-dock-drop;
+            app-clicked(id) => {
+                root.app-clicked(id);
+            }
+            app-removed(id) => {
+                root.app-removed-from-dock(id);
+            }
+            request-edit-mode => {
+                root.is-editing = true;
             }
         }
     }
