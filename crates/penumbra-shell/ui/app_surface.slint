@@ -1012,6 +1012,8 @@ export component AppSurface inherits Rectangle {
 
     // Android Homescreen Long-Press Context Menu
     HomescreenContextMenu {
+        width: 100%;
+        height: 100%;
         is-open <=> root.show-context-menu;
         wallpaper-clicked => {
             root.show-wallpaper-picker = true;
@@ -1026,6 +1028,8 @@ export component AppSurface inherits Rectangle {
 
     // Full Wallpaper & Style Picker modal
     WallpaperPicker {
+        width: 100%;
+        height: 100%;
         is-open <=> root.show-wallpaper-picker;
         current-wallpaper-path: root.current-wallpaper-path;
         has-wallpaper: root.has-wallpaper;
