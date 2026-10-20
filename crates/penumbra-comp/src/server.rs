@@ -1058,10 +1058,11 @@ impl PenumbraCompositor {
             }
             display.flush_clients()?;
 
-            // Animate overview carousel towards the selected card.
+            // Animate overview carousel towards the selected card (fluid deceleration into magnetic lock).
             let scroll_target = state.shell_state.overview_index as f64;
-            state.overview_scroll += (scroll_target - state.overview_scroll) * 0.25;
-            if (scroll_target - state.overview_scroll).abs() < 0.002 {
+            let scroll_diff = scroll_target - state.overview_scroll;
+            state.overview_scroll += scroll_diff * 0.18;
+            if scroll_diff.abs() < 0.001 {
                 state.overview_scroll = scroll_target;
             }
 
