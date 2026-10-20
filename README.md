@@ -20,7 +20,7 @@
 
 > [!NOTE]
 > **Hobby Project & AI Collaboration Notice:**
-> **Penumbra** is a personal hobby project built for my daily-driver Linux phone. This project is developed in close collaboration with advanced AI agents (Google DeepMind Antigravity / Gemini), combining human systems architecture, real Linux Wayland compositor engineering, and AI-accelerated implementation.
+> **Penumbra** is a personal hobby project built for my daily-driver Linux phone. This project is developed in close collaboration with AI agents.
 
 **Penumbra** is a modern, mobile-first Wayland desktop environment and compositor crafted entirely in **Rust**. Combining the low-level compositor engine of **Smithay** with the reactive, GPU-accelerated UI of **Slint**, Penumbra delivers a fluid, gesture-driven smartphone user experience paired with a seamless desktop convergence mode when docked to an external monitor.
 
