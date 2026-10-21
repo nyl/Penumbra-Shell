@@ -17,7 +17,7 @@ use layer_shell_slint::{Anchor, KeyboardInteractivity, Layer, LayerConfig};
 use penumbra_gestures::Spring;
 use penumbra_shell::apps::{discover_installed_apps, find_single_app, launch_app, InstalledApp};
 use penumbra_shell::config::{
-    load_layout_config, save_layout_config, FolderEntry, HomescreenAppEntry,
+    load_layout_config, save_layout_config,
 };
 use penumbra_shell::ipc::{read_windows, send_command, PhoneMode, ShellState};
 use penumbra_shell::wallpaper::{
@@ -386,37 +386,56 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let existing_folder = cfg.folders.iter().find(|f| f.page == page && f.x == col && f.y == row).cloned();
             let existing_app = cfg.homescreen_apps.iter().find(|e| e.page == page && e.x == col && e.y == row).cloned();
+            let is_folder = cfg.folders.iter().any(|f| f.id == app_id);
 
-            if let Some(folder) = existing_folder {
-                if !folder.app_ids.contains(&app_id) {
-                    if let Some(f) = cfg.folders.iter_mut().find(|f| f.id == folder.id) {
-                        f.app_ids.push(app_id.clone());
+            if is_folder {
+                info!("Moving folder '{}' to page={}, cell=({}, {})", app_id, page, col, row);
+                if let Some(target_folder) = existing_folder {
+                    if target_folder.id != app_id {
+                        // Merging into another folder: transfer app_ids and remove dragged folder
+                        let source_apps = cfg.folders.iter().find(|f| f.id == app_id).map(|f| f.app_ids.clone()).unwrap_or_default();
+                        if let Some(tf) = cfg.folders.iter_mut().find(|f| f.id == target_folder.id) {
+                            for aid in source_apps {
+                                if !tf.app_ids.contains(&aid) {
+                                    tf.app_ids.push(aid);
+                                }
+                            }
+                        }
+                        cfg.folders.retain(|f| f.id != app_id);
+                    } else {
+                        cfg.place_or_move_folder(&app_id, page, col, row);
                     }
-                    cfg.homescreen_apps.retain(|e| e.id != app_id);
-                }
-            } else if let Some(target_app) = existing_app {
-                if target_app.id != app_id {
-                    let folder_id = format!("folder_{}_{}", col, row);
-                    cfg.homescreen_apps.retain(|e| e.id != target_app.id && e.id != app_id);
-                    cfg.folders.push(FolderEntry {
-                        id: folder_id,
-                        name: "Folder".to_string(),
-                        page,
-                        x: col,
-                        y: row,
-                        app_ids: vec![target_app.id, app_id.clone()],
-                    });
+                } else if let Some(target_app) = existing_app {
+                    // Dropped folder onto an existing app: merge app into folder and place folder
+                    if let Some(f) = cfg.folders.iter_mut().find(|f| f.id == app_id) {
+                        if !f.app_ids.contains(&target_app.id) {
+                            f.app_ids.push(target_app.id.clone());
+                        }
+                    }
+                    cfg.homescreen_apps.retain(|e| e.id != target_app.id);
+                    cfg.place_or_move_folder(&app_id, page, col, row);
+                } else {
+                    // Empty space: simply move the folder!
+                    cfg.place_or_move_folder(&app_id, page, col, row);
                 }
             } else {
-                cfg.homescreen_apps.retain(|e| e.id != app_id);
-                cfg.homescreen_apps.push(HomescreenAppEntry {
-                    id: app_id,
-                    page,
-                    x: col,
-                    y: row,
-                });
+                // Dragged item is an application
+                if let Some(folder) = existing_folder {
+                    info!("Adding app '{}' to folder '{}'", app_id, folder.id);
+                    cfg.add_to_folder(&folder.id, &app_id);
+                } else if let Some(target_app) = existing_app {
+                    if target_app.id != app_id {
+                        info!("Merging apps '{}' and '{}' into new folder", target_app.id, app_id);
+                        cfg.merge_into_folder(&target_app.id, &app_id, page, col, row);
+                    } else {
+                        cfg.place_or_move_app(&app_id, page, col, row);
+                    }
+                } else {
+                    cfg.place_or_move_app(&app_id, page, col, row);
+                }
             }
 
+            cfg.sanitize();
             save_layout_config(&cfg);
             drop(cfg);
             update_ui();

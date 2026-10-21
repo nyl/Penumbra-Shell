@@ -23,6 +23,7 @@ export component AppSurface inherits Rectangle {
 
     // Drag-and-drop state
     in-out property <bool> is-dragging-app: false;
+    in-out property <bool> dragging-is-folder: false;
     in-out property <AppItem> dragging-app-item;
     in-out property <length> drag-x: 0px;
     in-out property <length> drag-y: 0px;
@@ -317,10 +318,39 @@ export component AppSurface inherits Rectangle {
             }
         }
 
+        // Drop Snap Target Preview Box on Homescreen Grid
+        if root.is-dragging-app && root.active-mode == 0 && root.drag-y < 760px: Rectangle {
+            property <float> origin-y-f: root.current-page == 0 ? 152.0 : 86.0;
+            property <int> snap-col: Math.clamp(Math.round(((root.drag-x / 1px) - 20.0) / 93.0), 0, 3);
+            property <int> snap-row: Math.clamp(Math.round(((root.drag-y / 1px) - self.origin-y-f) / 105.0), 0, 3);
+
+            x: 20px + (self.snap-col * 93px) + 6px + (72px - 58px) / 2;
+            y: (self.origin-y-f * 1px) + (self.snap-row * 105px) + 4px;
+            width: 58px;
+            height: 58px;
+            border-radius: 18px;
+            background: #ADC6FF22;
+            border-width: 2px;
+            border-color: #ADC6FFAA;
+        }
+
+        // Drop Snap Target Preview Box on Bottom Dock
+        if root.is-dragging-app && root.active-mode == 0 && root.drag-y >= 760px: Rectangle {
+            x: (parent.width - 240px) / 2;
+            y: 770px;
+            width: 240px;
+            height: 64px;
+            border-radius: 24px;
+            background: #ADC6FF22;
+            border-width: 2px;
+            border-color: #ADC6FFAA;
+        }
+
         // Dynamic 4x4 Grid Shortcuts for the Current Page
         for item[idx] in root.homescreen-items: Rectangle {
             property <bool> is-on-page: item.page == root.current-page;
             visible: self.is-on-page;
+            opacity: (root.is-dragging-app && root.dragging-app-item.id == item.id) ? 0.0 : 1.0;
 
             x: 20px + (item.x * 93px) + 6px;
             y: (root.current-page == 0 ? 152px : 86px) + (item.y * 105px);
@@ -349,6 +379,7 @@ export component AppSurface inherits Rectangle {
                 }
                 drag-started(id, sx, sy) => {
                     root.is-dragging-app = true;
+                    root.dragging-is-folder = item.is-folder;
                     root.dwell-direction = 0;
                     root.dwell-ticks = 0;
                     root.dragging-app-item = {
@@ -716,25 +747,31 @@ export component AppSurface inherits Rectangle {
         height: parent.height;
         z: 1000;
 
-        // Floating App Icon under pointer
+        // Floating App/Folder Icon under pointer
         Rectangle {
             x: Math.clamp(root.drag-x - 30px, 0px, parent.width - 60px);
             y: Math.clamp(root.drag-y - 30px, 0px, parent.height - 60px);
             width: 60px;
             height: 60px;
             border-radius: 20px;
-            background: #2b2832EE;
+            background: root.dragging-is-folder ? #1F1C25F0 : #2b2832EE;
             border-width: 2px;
             border-color: Theme.primary;
 
-            if root.dragging-app-item.has-icon: Image {
+            if root.dragging-is-folder: Text {
+                text: "📁";
+                font-size: 28px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            if !root.dragging-is-folder && root.dragging-app-item.has-icon: Image {
                 source: root.dragging-app-item.icon;
                 width: 44px;
                 height: 44px;
                 x: 8px;
                 y: 8px;
             }
-            if !root.dragging-app-item.has-icon: Text {
+            if !root.dragging-is-folder && !root.dragging-app-item.has-icon: Text {
                 text: "📱";
                 font-size: 26px;
                 horizontal-alignment: center;

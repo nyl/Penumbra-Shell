@@ -184,6 +184,28 @@ impl ShellLayoutConfig {
         self.folders.retain(|f| f.id != id);
     }
 
+    /// Moves an existing folder to a specific cell (page, x, y).
+    pub fn place_or_move_folder(&mut self, folder_id: &str, page: i32, x: i32, y: i32) {
+        if let Some(folder) = self.folders.iter_mut().find(|f| f.id == folder_id) {
+            folder.page = page;
+            folder.x = x;
+            folder.y = y;
+        }
+        if page >= self.num_pages {
+            self.num_pages = page + 1;
+        }
+    }
+
+    /// Sanitizes the config:
+    /// - Removes duplicate entries between homescreen_apps and folders.
+    /// - Ensures folder IDs are not present in homescreen_apps.
+    /// - Dissolves/removes empty folders.
+    pub fn sanitize(&mut self) {
+        let folder_ids: Vec<String> = self.folders.iter().map(|f| f.id.clone()).collect();
+        self.homescreen_apps.retain(|e| !folder_ids.contains(&e.id));
+        self.folders.retain(|f| !f.app_ids.is_empty());
+    }
+
     pub fn set_wallpaper(&mut self, path: &str) {
         self.wallpaper_path = path.to_string();
     }
@@ -238,6 +260,7 @@ pub fn load_layout_config(available_app_ids: &[String]) -> ShellLayoutConfig {
                         .unwrap_or_default();
                     name_lower != "screenshots" && name_lower != "screenshot"
                 });
+                config.sanitize();
                 return config;
             } else {
                 warn!("Failed to parse layout config at {:?}, falling back to default", path);

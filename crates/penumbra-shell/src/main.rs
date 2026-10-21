@@ -1280,25 +1280,54 @@ fn spawn_real_app(app: &str, target: &str) {
             let origin_y = if page == 0 { 152.0 } else { 86.0 };
             let row = (((sy - origin_y) / 105.0).round() as i32).clamp(0, 3);
 
-            // Check if there is already an item at this target slot
-            let existing_app = cfg.homescreen_apps.iter().find(|e| e.page == page && e.x == col && e.y == row).cloned();
             let existing_folder = cfg.folders.iter().find(|f| f.page == page && f.x == col && f.y == row).cloned();
+            let existing_app = cfg.homescreen_apps.iter().find(|e| e.page == page && e.x == col && e.y == row).cloned();
+            let is_folder = cfg.folders.iter().any(|f| f.id == app_id);
 
-            if let Some(folder) = existing_folder {
-                info!("Dropping app '{}' into existing folder '{}' ({})", app_id, folder.name, folder.id);
-                cfg.add_to_folder(&folder.id, &app_id);
-            } else if let Some(target) = existing_app {
-                if target.id != app_id {
-                    info!("Merging '{}' and '{}' into new folder at page {}, cell ({}, {})", target.id, app_id, page, col, row);
-                    cfg.merge_into_folder(&target.id, &app_id, page, col, row);
+            if is_folder {
+                info!("Moving folder '{}' to page={}, cell=({}, {})", app_id, page, col, row);
+                if let Some(target_folder) = existing_folder {
+                    if target_folder.id != app_id {
+                        let source_apps = cfg.folders.iter().find(|f| f.id == app_id).map(|f| f.app_ids.clone()).unwrap_or_default();
+                        if let Some(tf) = cfg.folders.iter_mut().find(|f| f.id == target_folder.id) {
+                            for aid in source_apps {
+                                if !tf.app_ids.contains(&aid) {
+                                    tf.app_ids.push(aid);
+                                }
+                            }
+                        }
+                        cfg.folders.retain(|f| f.id != app_id);
+                    } else {
+                        cfg.place_or_move_folder(&app_id, page, col, row);
+                    }
+                } else if let Some(target_app) = existing_app {
+                    if let Some(f) = cfg.folders.iter_mut().find(|f| f.id == app_id) {
+                        if !f.app_ids.contains(&target_app.id) {
+                            f.app_ids.push(target_app.id.clone());
+                        }
+                    }
+                    cfg.homescreen_apps.retain(|e| e.id != target_app.id);
+                    cfg.place_or_move_folder(&app_id, page, col, row);
+                } else {
+                    cfg.place_or_move_folder(&app_id, page, col, row);
+                }
+            } else {
+                if let Some(folder) = existing_folder {
+                    info!("Dropping app '{}' into existing folder '{}'", app_id, folder.id);
+                    cfg.add_to_folder(&folder.id, &app_id);
+                } else if let Some(target) = existing_app {
+                    if target.id != app_id {
+                        info!("Merging '{}' and '{}' into new folder", target.id, app_id);
+                        cfg.merge_into_folder(&target.id, &app_id, page, col, row);
+                    } else {
+                        cfg.place_or_move_app(&app_id, page, col, row);
+                    }
                 } else {
                     cfg.place_or_move_app(&app_id, page, col, row);
                 }
-            } else {
-                info!("Placing app '{}' at page {}, cell ({}, {})", app_id, page, col, row);
-                cfg.place_or_move_app(&app_id, page, col, row);
             }
 
+            cfg.sanitize();
             save_layout_config(&cfg);
             drop(cfg);
             update_ui();
