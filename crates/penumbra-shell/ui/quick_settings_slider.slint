@@ -566,30 +566,31 @@ export component QuickSettingsSlider inherits Rectangle {
                 }
             }
 
-            // Bottom Dismiss Pull Handle (Draggable)
+            // Bottom Dismiss Pull Handle (Tactile Pill Drag Indicator)
             handle-container := Rectangle {
-                height: 32px;
+                height: 28px;
                 background: transparent;
 
+                // Tactile Pill Drag Handle at the bottom edge: 48px x 5px, border-radius 2.5px, #ffffff66
                 Rectangle {
-                    width: 52px;
+                    width: 48px;
                     height: 5px;
                     x: (parent.width - self.width) / 2;
-                    y: (parent.height - self.height) / 2;
+                    y: parent.height - 14px;
                     border-radius: 2.5px;
-                    background: #FFFFFF66;
+                    background: #ffffff66;
                 }
 
                 handle-touch := TouchArea {
                     property <length> press-start-y: 0px;
                     property <length> last-pos-y: 0px;
+                    property <float> last-time: 0.0;
 
                     pointer-event(event) => {
                         if (event.kind == PointerEventKind.down) {
                             self.press-start-y = handle-touch.mouse-y;
                             self.last-pos-y = handle-touch.mouse-y;
                         } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
-                            let total-dy = handle-touch.mouse-y - self.press-start-y;
                             let vel = (handle-touch.mouse-y - self.last-pos-y) / 1px / 0.016;
                             root.drag-released(root.slide-offset-y, vel);
                         }

@@ -65,6 +65,7 @@ pub enum PhoneMode {
 pub struct ShellState {
     pub mode: PhoneMode,
     pub drawer_open: bool,
+    pub drawer_pull_dy: f64,
     pub overview_index: usize,
     pub overview_scroll: f64,
     pub is_dragging: bool,
@@ -85,6 +86,7 @@ impl ShellState {
                 ("mode", "overview") => s.mode = PhoneMode::Overview,
                 ("mode", _) => s.mode = PhoneMode::Home,
                 ("drawer", v) => s.drawer_open = v == "1" || v == "true",
+                ("drawer_pull_dy", v) => s.drawer_pull_dy = v.parse().unwrap_or(0.0),
                 ("overview_index", v) => s.overview_index = v.parse().unwrap_or(0),
                 ("overview_scroll", v) => {
                     s.overview_scroll = v.parse().unwrap_or(0.0);
@@ -108,9 +110,10 @@ impl ShellState {
             PhoneMode::Overview => "overview",
         };
         format!(
-            "mode={}\ndrawer={}\noverview_index={}\noverview_scroll={:.3}\nis_dragging={}\nactive_card_dy={:.1}\n",
+            "mode={}\ndrawer={}\ndrawer_pull_dy={:.1}\noverview_index={}\noverview_scroll={:.3}\nis_dragging={}\nactive_card_dy={:.1}\n",
             mode,
             if self.drawer_open { 1 } else { 0 },
+            self.drawer_pull_dy,
             self.overview_index,
             self.overview_scroll,
             if self.is_dragging { 1 } else { 0 },
@@ -211,6 +214,7 @@ mod tests {
         let s = ShellState {
             mode: PhoneMode::Overview,
             drawer_open: true,
+            drawer_pull_dy: 45.0,
             overview_index: 2,
             overview_scroll: 2.0,
             is_dragging: false,

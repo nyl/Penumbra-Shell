@@ -20,23 +20,29 @@ export component TopBarWindow inherits Window {
 
     touch-area := TouchArea {
         property <length> press-y: 0px;
+        property <bool> has-dragged: false;
 
         pointer-event(event) => {
             if (event.kind == PointerEventKind.down) {
                 self.press-y = touch-area.mouse-y;
-            } else if (event.kind == PointerEventKind.up) {
+                self.has-dragged = false;
+            } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
                 let dy = touch-area.mouse-y - self.press-y;
-                if (dy > 8px) {
-                    root.top-bar-pulled-down(dy / 1px);
-                } else {
-                    root.top-bar-clicked();
+                if (!self.has-dragged) {
+                    if (dy > 6px) {
+                        root.top-bar-pulled-down(dy / 1px);
+                    } else {
+                        root.top-bar-clicked();
+                    }
                 }
+                self.has-dragged = false;
             }
         }
         moved => {
             if (touch-area.pressed) {
                 let dy = touch-area.mouse-y - self.press-y;
-                if (dy > 12px) {
+                if (dy > 4px) {
+                    self.has-dragged = true;
                     root.top-bar-pulled-down(dy / 1px);
                 }
             }

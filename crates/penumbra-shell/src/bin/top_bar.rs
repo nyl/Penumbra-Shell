@@ -42,6 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         move || {
             let mut state = penumbra_shell::ipc::ShellState::load();
             state.drawer_open = !state.drawer_open;
+            state.drawer_pull_dy = if state.drawer_open { 320.0 } else { 0.0 };
             let _ = state.save();
             info!("Top Bar clicked -> toggled Quick Settings drawer: {}", state.drawer_open);
         }
@@ -50,11 +51,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     bar.on_top_bar_pulled_down({
         move |dy| {
             let mut state = penumbra_shell::ipc::ShellState::load();
-            if !state.drawer_open {
-                state.drawer_open = true;
-                let _ = state.save();
-                info!("Top Bar pulled down (dy={:.1}) -> opened Quick Settings drawer", dy);
-            }
+            state.drawer_open = true;
+            state.drawer_pull_dy = dy as f64;
+            let _ = state.save();
+            info!("Top Bar pulled down (dy={:.1}) -> signaling Quick Settings overlay transfer", dy);
         }
     });
 
