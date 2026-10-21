@@ -33,6 +33,14 @@ export component AppSurface inherits Rectangle {
     in-out property <string> open-folder-id: "";
     in-out property <string> open-folder-name: "Folder";
     in-out property <[AppItem]> open-folder-apps: [];
+    in-out property <string> dragging-from-folder-id: "";
+    in-out property <int> dragging-from-folder-idx: -1;
+    property <int> folder-drag-target-idx: (!root.is-dragging-app || !root.is-folder-open) ? -1 :
+        Math.clamp(
+            Math.clamp(Math.floor(((root.drag-y / 1px) - 252.0) / 100.0), 0, Math.max(0, (root.open-folder-apps.length - 1) / 3)) * 3 +
+            Math.clamp(Math.floor(((root.drag-x / 1px) - 60.0) / 90.0), 0, 2),
+            0, Math.max(0, root.open-folder-apps.length - 1)
+        );
 
     // Edge Dwell Timer state for creating/turning pages while dragging
     property <int> dwell-direction: 0; // 1: right, -1: left, 0: none
@@ -58,6 +66,7 @@ export component AppSurface inherits Rectangle {
     callback app-dropped-on-homescreen(string, int, length, length); // id, page, sx, sy
     callback folder-renamed(string, string); // folder_id, new_name
     callback folder-item-removed(string, string); // folder_id, app_id
+    callback folder-apps-reordered(string, int, int); // folder_id, from_idx, to_idx
     callback open-folder-requested(string); // folder_id
     callback clear-all-recents();
     callback resume-active-task();
@@ -191,7 +200,7 @@ export component AppSurface inherits Rectangle {
         // - Swiping LEFT/RIGHT navigates between homescreen pages
         // - Tap and Hold (450ms) opens Android-style Homescreen Context Menu
         // - Tap exits edit mode
-        if root.active-mode == 0 && !root.is-folder-open: TouchArea {
+        if root.active-mode == 0 && !root.is-folder-open && !root.is-dragging-app: TouchArea {
             x: 0px;
             y: 0px;
             width: parent.width;
@@ -319,7 +328,7 @@ export component AppSurface inherits Rectangle {
         }
 
         // Drop Snap Target Preview Box on Homescreen Grid
-        if root.is-dragging-app && root.active-mode == 0 && root.drag-y < 760px: Rectangle {
+        if root.is-dragging-app && !root.is-folder-open && root.active-mode == 0 && root.drag-y < 760px: Rectangle {
             property <float> origin-y-f: root.current-page == 0 ? 152.0 : 86.0;
             property <int> snap-col: Math.clamp(Math.round(((root.drag-x / 1px) - 20.0) / 93.0), 0, 3);
             property <int> snap-row: Math.clamp(Math.round(((root.drag-y / 1px) - self.origin-y-f) / 105.0), 0, 3);
@@ -335,7 +344,7 @@ export component AppSurface inherits Rectangle {
         }
 
         // Drop Snap Target Preview Box on Bottom Dock
-        if root.is-dragging-app && root.active-mode == 0 && root.drag-y >= 760px: Rectangle {
+        if root.is-dragging-app && !root.is-folder-open && root.active-mode == 0 && root.drag-y >= 760px: Rectangle {
             x: (parent.width - 240px) / 2;
             y: 770px;
             width: 240px;
@@ -547,16 +556,17 @@ export component AppSurface inherits Rectangle {
     // =========================================================================
     // FOLDER MODAL POPUP DIALOG (Like iOS / Android Folder Overlay)
     // =========================================================================
-    if root.is-folder-open: Rectangle {
+    if root.is-folder-open || (root.is-dragging-app && root.dragging-from-folder-id != ""): Rectangle {
         x: 0px;
         y: 0px;
         width: parent.width;
         height: parent.height;
         z: 900;
-        background: #00000088;
+        background: root.is-folder-open ? #00000088 : transparent;
 
         // Click outside closes folder
         TouchArea {
+            enabled: root.is-folder-open;
             clicked => {
                 root.is-folder-open = false;
             }
@@ -569,12 +579,14 @@ export component AppSurface inherits Rectangle {
             width: parent.width - 72px;
             height: 380px;
             border-radius: 28px;
-            background: #1C1924F8;
-            border-width: 1.5px;
-            border-color: #ffffff22;
-            drop-shadow-blur: 24px;
-            drop-shadow-color: #000000AA;
+            background: root.is-folder-open ? #1C1924F8 : transparent;
+            border-width: root.is-folder-open ? 1.5px : 0px;
+            border-color: root.is-folder-open ? #ffffff22 : transparent;
+            drop-shadow-blur: root.is-folder-open ? 24px : 0px;
+            drop-shadow-color: root.is-folder-open ? #000000AA : transparent;
             clip: true;
+            opacity: root.is-folder-open ? 1.0 : 0.0;
+            animate opacity { duration: 150ms; }
 
             VerticalLayout {
                 padding: 24px;
@@ -635,35 +647,80 @@ export component AppSurface inherits Rectangle {
                                 width: 72px;
                                 height: 88px;
                                 property <int> item-idx: r * 3 + c;
+                                property <length> folder-slot-x: 60px + ((root.width - 336px) / 6) + (c * (72px + ((root.width - 336px) / 3)));
+                                property <length> folder-slot-y: 252px + (r * 100px);
+
+                                // Target Drop Preview Indicator inside Folder
+                                if self.item-idx == root.folder-drag-target-idx && root.is-dragging-app && root.is-folder-open && root.dragging-from-folder-idx != self.item-idx: Rectangle {
+                                    width: 58px;
+                                    height: 58px;
+                                    x: (parent.width - self.width) / 2;
+                                    y: 0px;
+                                    border-radius: 18px;
+                                    border-width: 2px;
+                                    border-color: Theme.primary;
+                                    background: #ADC6FF22;
+                                }
 
                                 if self.item-idx < root.open-folder-apps.length: ShortcutTile {
-                                    item: {
-                                        id: root.open-folder-apps[parent.item-idx].id,
-                                        name: root.open-folder-apps[parent.item-idx].name,
-                                        is-folder: false,
-                                        folder-id: "",
-                                        page: 0,
-                                        x: 0,
-                                        y: 0,
-                                        has-icon: root.open-folder-apps[parent.item-idx].has-icon,
-                                        icon: root.open-folder-apps[parent.item-idx].icon,
-                                        folder-count: 0,
-                                        has-prev-1: false,
-                                        preview-1: root.open-folder-apps[parent.item-idx].icon,
-                                        has-prev-2: false,
-                                        preview-2: root.open-folder-apps[parent.item-idx].icon,
-                                        has-prev-3: false,
-                                        preview-3: root.open-folder-apps[parent.item-idx].icon,
-                                        has-prev-4: false,
-                                        preview-4: root.open-folder-apps[parent.item-idx].icon,
-                                    };
+                                    opacity: (root.is-dragging-app && root.dragging-from-folder-id != "" && root.dragging-from-folder-idx == parent.item-idx) ? 0.0 : 1.0;
+                                    base-x: parent.folder-slot-x;
+                                    base-y: parent.folder-slot-y;
+                                    is-editing: root.is-editing;
+                                    app: root.open-folder-apps[parent.item-idx];
                                     show-label: true;
+
                                     clicked => {
                                         root.is-folder-open = false;
                                         root.app-clicked(root.open-folder-apps[parent.item-idx].id);
                                     }
+                                    long-pressed => {
+                                        root.is-editing = true;
+                                    }
                                     remove-clicked => {
                                         root.folder-item-removed(root.open-folder-id, root.open-folder-apps[parent.item-idx].id);
+                                    }
+                                    drag-started(id, sx, sy) => {
+                                        root.is-dragging-app = true;
+                                        root.dragging-is-folder = false;
+                                        root.dragging-from-folder-id = root.open-folder-id;
+                                        root.dragging-from-folder-idx = parent.item-idx;
+                                        root.dragging-app-item = root.open-folder-apps[parent.item-idx];
+                                        root.drag-x = sx;
+                                        root.drag-y = sy;
+                                    }
+                                    drag-moved(sx, sy) => {
+                                        root.drag-x = sx;
+                                        root.drag-y = sy;
+                                        // If dragged outside the folder card boundary, close folder and continue homescreen drag!
+                                        if (root.is-folder-open) {
+                                            if (sx < 36px || sx > root.width - 36px || sy < 160px || sy > 580px) {
+                                                root.is-folder-open = false;
+                                            }
+                                        }
+                                    }
+                                    drag-ended(id, sx, sy) => {
+                                        root.is-dragging-app = false;
+                                        if (!root.is-folder-open) {
+                                            // Dropped outside folder onto homescreen or dock!
+                                            let drop-y = sy / 1px;
+                                            if (drop-y >= 760.0) {
+                                                root.app-pinned-to-dock(id);
+                                            } else if (drop-y < 760.0) {
+                                                root.app-dropped-on-homescreen(id, root.current-page, sx, sy);
+                                            }
+                                        } else {
+                                            // Dropped inside folder: reorder items inside folder!
+                                            let max-r = Math.max(0, (root.open-folder-apps.length - 1) / 3);
+                                            let fc = Math.clamp(Math.floor(((sx / 1px) - 60.0) / 90.0), 0, 2);
+                                            let fr = Math.clamp(Math.floor(((sy / 1px) - 252.0) / 100.0), 0, max-r);
+                                            let target-idx = Math.clamp(fr * 3 + fc, 0, Math.max(0, root.open-folder-apps.length - 1));
+                                            if (target-idx != root.dragging-from-folder-idx) {
+                                                root.folder-apps-reordered(root.open-folder-id, root.dragging-from-folder-idx, target-idx);
+                                            }
+                                        }
+                                        root.dragging-from-folder-id = "";
+                                        root.dragging-from-folder-idx = -1;
                                     }
                                 }
                             }

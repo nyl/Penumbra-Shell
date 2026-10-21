@@ -63,6 +63,7 @@ export component HomescreenWindow inherits Window {
     callback app-dropped-on-homescreen(string, int, length, length);
     callback folder-renamed(string, string);
     callback folder-item-removed(string, string);
+    callback folder-apps-reordered(string, int, int);
     callback open-folder-requested(string);
     callback clear-all-recents();
     callback resume-active-task();
@@ -128,6 +129,7 @@ export component HomescreenWindow inherits Window {
         app-dropped-on-homescreen(id, page, sx, sy) => { root.app-dropped-on-homescreen(id, page, sx, sy); }
         folder-renamed(fid, name) => { root.folder-renamed(fid, name); }
         folder-item-removed(fid, aid) => { root.folder-item-removed(fid, aid); }
+        folder-apps-reordered(fid, from-idx, to-idx) => { root.folder-apps-reordered(fid, from-idx, to-idx); }
         open-folder-requested(fid) => { root.open-folder-requested(fid); }
         clear-all-recents() => { root.clear-all-recents(); }
         resume-active-task() => { root.resume-active-task(); }

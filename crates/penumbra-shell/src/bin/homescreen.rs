@@ -365,7 +365,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             } else if !cfg.dock_apps.contains(&app_id) {
                 info!("Pinning app '{}' to bottom dock", app_id);
-                cfg.dock_apps.push(app_id);
+                cfg.dock_apps.push(app_id.clone());
+                cfg.homescreen_apps.retain(|e| e.id != app_id);
+                for folder in cfg.folders.iter_mut() {
+                    folder.app_ids.retain(|id| id != &app_id);
+                }
+                cfg.folders.retain(|f| !f.app_ids.is_empty());
                 save_layout_config(&cfg);
                 drop(cfg);
                 update_ui();
@@ -541,6 +546,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             drop(cfg);
             update_ui();
+        });
+    }
+
+    {
+        let ui_weak = ui_weak.clone();
+        let layout_config = Rc::clone(&layout_config);
+        let apps_list = Arc::clone(&apps_list);
+        let update_ui = update_layout_models.clone();
+        ui.on_folder_apps_reordered(move |folder_id_slint, from_idx_slint, to_idx_slint| {
+            let folder_id = folder_id_slint.as_str();
+            let from_idx = from_idx_slint as usize;
+            let to_idx = to_idx_slint as usize;
+            let mut cfg = layout_config.borrow_mut();
+            if cfg.reorder_folder_apps(folder_id, from_idx, to_idx) {
+                save_layout_config(&cfg);
+                if let Some(ui) = ui_weak.upgrade() {
+                    if let Some(folder) = cfg.folders.iter().find(|f| f.id == folder_id) {
+                        let folder_apps = Rc::new(VecModel::default());
+                        let apps = apps_list.read().unwrap();
+                        for id in &folder.app_ids {
+                            folder_apps.push(resolve_app_item(id, &apps));
+                        }
+                        ui.set_open_folder_apps(ModelRc::from(folder_apps));
+                    }
+                }
+                drop(cfg);
+                update_ui();
+            }
         });
     }
 

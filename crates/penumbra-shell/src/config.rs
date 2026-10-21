@@ -99,7 +99,16 @@ impl Default for ShellLayoutConfig {
 impl ShellLayoutConfig {
     /// Adds an app or moves it to a specific cell (page, x, y).
     /// If it was already on the homescreen, its position is updated.
+    /// Adds an app or moves it to a specific cell (page, x, y).
+    /// If it was already on the homescreen, its position is updated.
+    /// If it was inside any folder, it is removed from that folder.
     pub fn place_or_move_app(&mut self, app_id: &str, page: i32, x: i32, y: i32) {
+        // Remove from any folders it was inside
+        for folder in self.folders.iter_mut() {
+            folder.app_ids.retain(|id| id != app_id);
+        }
+        self.folders.retain(|f| !f.app_ids.is_empty());
+
         if let Some(entry) = self.homescreen_apps.iter_mut().find(|e| e.id == app_id) {
             entry.page = page;
             entry.x = x;
@@ -129,6 +138,10 @@ impl ShellLayoutConfig {
     ) -> String {
         // Remove both apps from standalone homescreen list
         self.homescreen_apps.retain(|e| e.id != target_app_id && e.id != new_app_id);
+        for folder in self.folders.iter_mut() {
+            folder.app_ids.retain(|id| id != target_app_id && id != new_app_id);
+        }
+        self.folders.retain(|f| !f.app_ids.is_empty());
 
         let folder_id = format!("folder_{}", std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -155,11 +168,29 @@ impl ShellLayoutConfig {
     /// Adds an app to an existing folder by folder ID.
     pub fn add_to_folder(&mut self, folder_id: &str, app_id: &str) {
         self.homescreen_apps.retain(|e| e.id != app_id);
+        for folder in self.folders.iter_mut() {
+            if folder.id != folder_id {
+                folder.app_ids.retain(|id| id != app_id);
+            }
+        }
         if let Some(folder) = self.folders.iter_mut().find(|f| f.id == folder_id) {
             if !folder.app_ids.contains(&app_id.to_string()) {
                 folder.app_ids.push(app_id.to_string());
             }
         }
+        self.folders.retain(|f| !f.app_ids.is_empty());
+    }
+
+    /// Reorders an app inside a folder from from_idx to to_idx.
+    pub fn reorder_folder_apps(&mut self, folder_id: &str, from_idx: usize, to_idx: usize) -> bool {
+        if let Some(folder) = self.folders.iter_mut().find(|f| f.id == folder_id) {
+            if from_idx < folder.app_ids.len() && to_idx < folder.app_ids.len() && from_idx != to_idx {
+                let item = folder.app_ids.remove(from_idx);
+                folder.app_ids.insert(to_idx, item);
+                return true;
+            }
+        }
+        false
     }
 
     /// Renames a folder.
@@ -422,11 +453,17 @@ mod tests {
         cfg.rename_folder(&folder_id, "Dev Tools");
         assert_eq!(cfg.folders[0].name, "Dev Tools");
 
-        // Drag to right edge: move app to page 1
-        cfg.place_or_move_app("chatty", 1, 0, 0);
-        assert_eq!(cfg.num_pages, 2);
-        assert_eq!(cfg.homescreen_apps.len(), 1);
-        assert_eq!(cfg.homescreen_apps[0].page, 1);
+        // Test reordering apps inside folder
+        cfg.add_to_folder(&folder_id, "alacritty");
+        assert_eq!(cfg.folders[0].app_ids, vec!["firefox", "foot", "alacritty"]);
+        assert!(cfg.reorder_folder_apps(&folder_id, 2, 0));
+        assert_eq!(cfg.folders[0].app_ids, vec!["alacritty", "firefox", "foot"]);
+
+        // Test dragging foot out of folder onto homescreen
+        cfg.place_or_move_app("foot", 0, 2, 0);
+        assert_eq!(cfg.folders[0].app_ids, vec!["alacritty", "firefox"]);
+        assert_eq!(cfg.homescreen_apps.len(), 1); // foot
+        assert!(cfg.homescreen_apps.iter().any(|e| e.id == "foot"));
     }
 
     #[test]

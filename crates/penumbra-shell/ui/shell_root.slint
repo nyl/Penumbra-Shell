@@ -96,6 +96,7 @@ export component ShellRoot inherits Window {
     callback app-dropped-on-homescreen(string, int, length, length); // id, page, sx, sy
     callback folder-renamed(string, string); // folder_id, new_name
     callback folder-item-removed(string, string); // folder_id, app_id
+    callback folder-apps-reordered(string, int, int); // folder_id, from_idx, to_idx
     callback open-folder-requested(string); // folder_id
     callback nav-gesture-invoked(string);
     callback brightness-changed(float);
@@ -187,6 +188,9 @@ export component ShellRoot inherits Window {
             }
             folder-item-removed(folder-id, app-id) => {
                 root.folder-item-removed(folder-id, app-id);
+            }
+            folder-apps-reordered(folder-id, from-idx, to-idx) => {
+                root.folder-apps-reordered(folder-id, from-idx, to-idx);
             }
             open-folder-requested(folder-id) => {
                 root.open-folder-requested(folder-id);
