@@ -30,6 +30,7 @@ pub struct ShellState {
     pub mode: PhoneMode,
     pub drawer_open: bool,
     pub drawer_pull_dy: f64,
+    pub drawer_dragging: bool,
     pub overview_index: usize,
     pub overview_scroll: f64,
     pub is_dragging: bool,
@@ -50,6 +51,7 @@ impl ShellState {
                 ("mode", _) => s.mode = PhoneMode::Home,
                 ("drawer", v) => s.drawer_open = v == "1" || v == "true",
                 ("drawer_pull_dy", v) => s.drawer_pull_dy = v.parse().unwrap_or(0.0),
+                ("drawer_dragging", v) => s.drawer_dragging = v == "1" || v == "true",
                 ("overview_index", v) => s.overview_index = v.parse().unwrap_or(0),
                 ("overview_scroll", v) => {
                     s.overview_scroll = v.parse().unwrap_or(0.0);
@@ -73,10 +75,11 @@ impl ShellState {
             PhoneMode::Overview => "overview",
         };
         format!(
-            "mode={}\ndrawer={}\ndrawer_pull_dy={:.1}\noverview_index={}\noverview_scroll={:.3}\nis_dragging={}\nactive_card_dy={:.1}\n",
+            "mode={}\ndrawer={}\ndrawer_pull_dy={:.1}\ndrawer_dragging={}\noverview_index={}\noverview_scroll={:.3}\nis_dragging={}\nactive_card_dy={:.1}\n",
             mode,
             if self.drawer_open { 1 } else { 0 },
             self.drawer_pull_dy,
+            if self.drawer_dragging { 1 } else { 0 },
             self.overview_index,
             self.overview_scroll,
             if self.is_dragging { 1 } else { 0 },

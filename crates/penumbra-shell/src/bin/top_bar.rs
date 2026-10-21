@@ -42,10 +42,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         move |dy| {
             let mut state = penumbra_shell::ipc::ShellState::load();
             state.drawer_open = true;
+            state.drawer_dragging = true;
             state.drawer_pull_dy = dy as f64;
             let _ = state.save();
             info!("Top Bar pulled down (dy={:.1}) -> signaling Quick Settings overlay transfer", dy);
         }
+    });
+
+    bar.on_top_bar_released(|| {
+        let mut state = penumbra_shell::ipc::ShellState::load();
+        state.drawer_dragging = false;
+        let _ = state.save();
+        info!("Top Bar drag released -> Quick Settings takes over settle");
     });
 
     // 3. Telemetry Clock Timer (updates every second)

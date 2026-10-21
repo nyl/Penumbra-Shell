@@ -118,9 +118,12 @@ component SliderPill inherits Rectangle {
             text: root.icon-text;
             font-size: 16px;
             color: root.value > 0.1 ? Theme.on-primary : Theme.on-surface;
+            horizontal-stretch: 0;
             vertical-alignment: center;
         }
         Text {
+            horizontal-stretch: 1;
+            horizontal-alignment: left;
             text: root.label;
             font-size: Theme.font-label;
             font-weight: 600;
@@ -187,7 +190,7 @@ export component QuickSettingsSlider inherits Rectangle {
     // Stage 1 (QQS + notifications) up to ~300px, then continuous morph to full QS by ~700px.
     property <float> morph: root.edit-mode ? 1.0 : Math.clamp((root.disp - 300px) / 400px, 0.0, 1.0);
     property <length> pad: 16px;
-    property <length> grid-top: 80px;
+    property <length> grid-top: 108px;
     property <int> n-tiles: root.active-tiles.length;
     property <length> grid-h: Math.ceil(root.n-tiles / 2) * 76px;
     property <length> tiles-h: 64px + (Math.max(root.grid-h, 64px) - 64px) * root.morph;
@@ -218,7 +221,7 @@ export component QuickSettingsSlider inherits Rectangle {
         // ---- Header ----
         VerticalLayout {
             x: root.pad;
-            y: 40px;
+            y: 46px;
             width: parent.width - 2 * root.pad - 150px;
             height: 44px;
             spacing: 2px;
@@ -238,7 +241,7 @@ export component QuickSettingsSlider inherits Rectangle {
         }
         HorizontalLayout {
             x: parent.width - root.pad - 138px;
-            y: 44px;
+            y: 51px;
             width: 138px;
             height: 34px;
             spacing: 6px;
@@ -271,7 +274,7 @@ export component QuickSettingsSlider inherits Rectangle {
                 visible: i < 4 || root.morph > 0.02;
                 opacity: i < 4 ? 1.0 : root.morph;
                 x: i < 4 ? self.cx + (self.ex - self.cx) * root.morph : self.ex;
-                y: i < 4 ? root.grid-top + (self.ey - root.grid-top) * root.morph : self.ey;
+                y: root.grid-top + (self.ey - root.grid-top) * root.morph;
                 width: i < 4 ? self.cw4 + (self.cw2 - self.cw4) * root.morph : self.cw2;
                 height: 64px;
                 clicked => { root.tile-clicked(tile.id); }

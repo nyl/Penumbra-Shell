@@ -38,6 +38,21 @@ fn icon_glyph(name: &str) -> &'static str {
 
 slint::include_modules!();
 
+/// Release/snap rule (offset coordinates): closed -915, compact -565 (350px), full 0.
+fn release_target(y_current: f64, v_y: f64) -> f64 {
+    if v_y < -300.0 {
+        -915.0
+    } else if v_y > 600.0 {
+        0.0
+    } else if y_current < 140.0 {
+        if v_y > 100.0 { -565.0 } else { -915.0 }
+    } else if y_current < 450.0 {
+        -565.0
+    } else {
+        0.0
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let subscriber = FmtSubscriber::builder()
         .with_max_level(Level::INFO)
@@ -124,6 +139,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                         let mut state = ShellState::load();
                         state.drawer_open = target > -900.0;
+                        state.drawer_pull_dy = 0.0;
+                        state.drawer_dragging = false;
                         let _ = state.save();
                     }
                 },
@@ -172,6 +189,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         qs.set_carrier_text(net_info.ssid.clone().into());
         let battery = rt.block_on(BatteryService::new());
         qs.set_battery_pct(battery.current().percentage as i32);
+        {
+            let mut rx = battery.subscribe();
+            let weak = ui_weak.clone();
+            rt.spawn(async move {
+                let _keep = battery; // keep the service (and its poller) alive
+                while rx.changed().await.is_ok() {
+                    let pct = rx.borrow().percentage as i32;
+                    let w = weak.clone();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = w.upgrade() {
+                            ui.set_battery_pct(pct);
+                        }
+                    });
+                }
+            });
+        }
+        {
+            let mut rx = network_service.subscribe();
+            let weak = ui_weak.clone();
+            rt.spawn(async move {
+                while rx.changed().await.is_ok() {
+                    let ssid = rx.borrow().ssid.clone();
+                    let w = weak.clone();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = w.upgrade() {
+                            ui.set_carrier_text(ssid.into());
+                        }
+                    });
+                }
+            });
+        }
         if let Some(t) = registry.borrow_mut().iter_mut().find(|t| t.id == "internet") {
             t.state = if net_info.is_connected { TileState::Active } else { TileState::Inactive };
             t.subtitle = if net_info.is_connected { net_info.ssid.clone() } else { "Off".into() };
@@ -369,41 +417,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Current shade extension displacement from top bar: y_current in [0, 915]
             let y_current = y_offset + 915.0;
 
-            // Touch Release & Snap Logic:
-            // - Abort Snap (Closed): If y_current < 140px and v_y <= 0: target y_target = -915px (offset -915)
-            // - Compact Shade Snap: If 140px <= y_current < 450px: target y_target = 350px (offset 350 - 915 = -565px)
-            // - Full Expansion Snap: If y_current >= 450px or positive downward flick (v_y > 600px/s): target y_target = 915px (offset 0px)
-            let target_offset = if v_y < -300.0 {
-                -915.0
-            } else if v_y > 600.0 {
-                0.0
-            } else if y_current < 140.0 && v_y <= 0.0 {
-                -915.0
-            } else if y_current < 140.0 {
-                // Low positive velocity near top: snap to compact shade if pulling down, else closed
-                if v_y > 100.0 {
-                    -565.0 // 350px shade height
-                } else {
-                    -915.0
-                }
-            } else if y_current < 450.0 {
-                -565.0 // 350px compact shade (QQS + notifications)
-            } else {
-                0.0 // 915px fully expanded stage
-            };
-
+            let target_offset = release_target(y_current, v_y);
             info!("Quick Settings: Drag released at y_current={:.1}px, vel={:.1}px/s -> target_offset={:.1}", y_current, v_y, target_offset);
             animate_to(target_offset, v_y);
         });
     }
 
-    // 7. Watch for external drawer_open / drawer_pull_dy trigger from top-bar
+    // 7. Watch for external drawer state from the top bar (drag handoff + release)
     let ipc_timer = Timer::default();
     {
         let animate_to = Rc::clone(&animate_to);
         let spring_state = Rc::clone(&spring_state);
+        let spring_timer = Rc::clone(&spring_timer);
         let last_known_open = Rc::new(RefCell::new(false));
-        let last_known_pull_dy = Rc::new(RefCell::new(0.0));
+        let last_known_pull_dy = Rc::new(RefCell::new(0.0f64));
+        let last_dragging = Rc::new(RefCell::new(false));
+        let pull_vel = Rc::new(RefCell::new(0.0f64));
+        let last_pull_at = Rc::new(RefCell::new(Instant::now()));
         let ui_weak = ui_weak.clone();
 
         ipc_timer.start(
@@ -413,48 +443,76 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let state = ShellState::load();
                 let mut last_open = last_known_open.borrow_mut();
                 let mut last_pull = last_known_pull_dy.borrow_mut();
+                let mut was_dragging = last_dragging.borrow_mut();
+                let mut vel = pull_vel.borrow_mut();
+                let mut last_at = last_pull_at.borrow_mut();
 
-                // Check pull-down gesture transfer from Top Bar
-                if state.drawer_open && state.drawer_pull_dy != *last_pull {
-                    *last_pull = state.drawer_pull_dy;
+                // Live finger tracking handed over from the Top Bar
+                if state.drawer_dragging && state.drawer_pull_dy != *last_pull {
                     let pull = state.drawer_pull_dy;
-
-                    // If user is actively dragging down from the top bar:
-                    // Transfer the displacement to the quick settings overlay smoothly
-                    if pull > 4.0 {
-                        let cur_touch = pull;
-                        let shade_disp = if cur_touch <= 320.0 {
-                            cur_touch
-                        } else {
-                            320.0 + (cur_touch - 320.0) * 0.85
-                        }.clamp(0.0, 915.0);
-
-                        let new_y = shade_disp - 915.0; // [-915, 0]
-
-                        if let Some(ui) = ui_weak.upgrade() {
-                            ui.set_slide_offset_y(new_y as f32);
-                            let progress = (shade_disp / 915.0).clamp(0.0, 1.0) as f32;
-                            ui.set_expansion_progress(progress);
-                        }
-
-                        let mut sp = spring_state.borrow_mut();
-                        sp.position = new_y;
-                        sp.velocity = 0.0;
+                    if !*was_dragging {
+                        // Take over: stop any running settle spring
+                        spring_timer.borrow().stop();
+                        *vel = 0.0;
+                    } else {
+                        let dt = last_at.elapsed().as_secs_f64().clamp(0.004, 0.1);
+                        *vel = *vel * 0.6 + ((pull - *last_pull) / dt) * 0.4;
                     }
+                    *last_at = Instant::now();
+                    *last_pull = pull;
+
+                    let shade_disp = if pull <= 320.0 {
+                        pull
+                    } else {
+                        320.0 + (pull - 320.0) * 0.85
+                    }
+                    .clamp(0.0, 915.0);
+                    let new_y = shade_disp - 915.0;
+
+                    if let Some(ui) = ui_weak.upgrade() {
+                        ui.set_slide_offset_y(new_y as f32);
+                        ui.set_expansion_progress((shade_disp / 915.0).clamp(0.0, 1.0) as f32);
+                    }
+                    let mut sp = spring_state.borrow_mut();
+                    sp.position = new_y;
+                    sp.velocity = 0.0;
+                } else if !state.drawer_dragging {
+                    *last_pull = state.drawer_pull_dy;
                 }
 
-                // Check open/close toggle state changes
+                // Release: explicit flag drop, or stale drag (release event lost)
+                let stale = state.drawer_dragging
+                    && *was_dragging
+                    && last_at.elapsed() > Duration::from_millis(500);
+                if (*was_dragging && !state.drawer_dragging) || stale {
+                    let y_current = spring_state.borrow().position + 915.0;
+                    let v = if stale { 0.0 } else { *vel };
+                    let target = release_target(y_current, v);
+                    info!("Top-bar handoff released: y={:.1} v={:.1} -> {:.1}", y_current, v, target);
+                    if stale {
+                        let mut s = ShellState::load();
+                        s.drawer_dragging = false;
+                        let _ = s.save();
+                    }
+                    *vel = 0.0;
+                    animate_to(target, v);
+                }
+                *was_dragging = state.drawer_dragging && !stale;
+
+                // Open/close toggles from other components (never while a finger is down)
                 if state.drawer_open != *last_open {
                     *last_open = state.drawer_open;
-                    let cur_target = spring_state.borrow().target;
-                    if state.drawer_open {
-                        if cur_target < -570.0 {
-                            info!("External trigger: opening Quick Settings shade (compact target: -565px / 350px)");
-                            animate_to(-565.0, 400.0);
+                    if !state.drawer_dragging {
+                        let cur_target = spring_state.borrow().target;
+                        if state.drawer_open {
+                            if cur_target < -570.0 {
+                                info!("External trigger: opening Quick Settings shade (compact)");
+                                animate_to(-565.0, 400.0);
+                            }
+                        } else if cur_target > -900.0 {
+                            info!("External trigger: closing Quick Settings shade");
+                            animate_to(-915.0, -400.0);
                         }
-                    } else if cur_target > -900.0 {
-                        info!("External trigger: closing Quick Settings shade (target: -915px)");
-                        animate_to(-915.0, -400.0);
                     }
                 }
             },

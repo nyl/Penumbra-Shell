@@ -16,6 +16,7 @@ export component TopBarWindow inherits Window {
     in-out property <bool> privacy-active: false;
 
     callback top-bar-pulled-down(float /* dy */);
+    callback top-bar-released();
 
     touch-area := TouchArea {
         property <length> press-y: 0px;
@@ -29,6 +30,10 @@ export component TopBarWindow inherits Window {
                 let dy = touch-area.mouse-y - self.press-y;
                 if (!self.has-dragged && dy > 6px) {
                     root.top-bar-pulled-down(dy / 1px);
+                    self.has-dragged = true;
+                }
+                if (self.has-dragged) {
+                    root.top-bar-released();
                 }
                 self.has-dragged = false;
             }
