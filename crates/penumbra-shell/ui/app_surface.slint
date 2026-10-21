@@ -71,6 +71,8 @@ export component AppSurface inherits Rectangle {
     callback list-directory(string) -> string;
     callback eval-calc(string, string, string) -> string;
     callback save-file(string, string) -> bool;
+    callback homescreen-pulled-down(float /* dy */);
+    callback homescreen-pull-released();
 
     in-out property <string> app-search-query: "";
     callback app-search-query-changed(string);
@@ -197,13 +199,14 @@ export component AppSurface inherits Rectangle {
             property <float> start-x: 0.0;
             property <float> start-y: 0.0;
             property <bool> is-active: false;
+            property <bool> is-pulling-down: false;
             property <bool> hold-triggered: false;
 
             hold-timer := Timer {
                 interval: 450ms;
                 running: false;
                 triggered => {
-                    if (is-active && !hold-triggered && !root.is-dragging-app) {
+                    if (is-active && !hold-triggered && !root.is-dragging-app && !is-pulling-down) {
                         hold-triggered = true;
                         root.show-context-menu = true;
                     }
@@ -215,6 +218,7 @@ export component AppSurface inherits Rectangle {
                     self.start-x = self.mouse-x / 1px;
                     self.start-y = self.mouse-y / 1px;
                     self.is-active = true;
+                    self.is-pulling-down = false;
                     self.hold-triggered = false;
                     hold-timer.running = true;
                 } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
@@ -223,8 +227,11 @@ export component AppSurface inherits Rectangle {
                         self.is-active = false;
                         let dx = (self.mouse-x / 1px) - self.start-x;
                         let dy = self.start-y - (self.mouse-y / 1px);
+                        let pull-dy = (self.mouse-y / 1px) - self.start-y;
 
-                        if (dy > 30.0 && Math.abs(dy) > Math.abs(dx)) {
+                        if (self.is-pulling-down || (pull-dy > 25.0 && pull-dy > Math.abs(dx))) {
+                            root.homescreen-pull-released();
+                        } else if (dy > 30.0 && Math.abs(dy) > Math.abs(dx)) {
                             root.active-mode = 2; // Swipe UP -> Open App Drawer
                         } else if (dx < -40.0 && Math.abs(dx) > Math.abs(dy)) {
                             // Swipe LEFT -> next page
@@ -240,15 +247,20 @@ export component AppSurface inherits Rectangle {
                             root.is-editing = false; // Tap background -> exit edit mode
                         }
                     }
+                    self.is-pulling-down = false;
                 }
             }
 
             moved => {
                 if (self.is-active) {
-                    let move-dx = Math.abs((self.mouse-x / 1px) - self.start-x);
-                    let move-dy = Math.abs((self.mouse-y / 1px) - self.start-y);
-                    if (move-dx > 12.0 || move-dy > 12.0) {
+                    let move-dx = (self.mouse-x / 1px) - self.start-x;
+                    let pull-dy = (self.mouse-y / 1px) - self.start-y;
+                    if (Math.abs(move-dx) > 12.0 || Math.abs(pull-dy) > 12.0) {
                         hold-timer.running = false;
+                    }
+                    if (pull-dy > 12.0 && pull-dy > Math.abs(move-dx) * 1.1) {
+                        self.is-pulling-down = true;
+                        root.homescreen-pulled-down(pull-dy);
                     }
                 }
             }

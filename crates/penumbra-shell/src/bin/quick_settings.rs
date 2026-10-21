@@ -40,13 +40,34 @@ slint::include_modules!();
 
 /// Release/snap rule (offset coordinates): closed -915, compact -565 (350px), full 0.
 fn release_target(y_current: f64, v_y: f64) -> f64 {
-    if v_y < -300.0 {
+    // Fast pull up gesture: any upward flick or pull up (v_y < -120) immediately closes the shade
+    if v_y < -120.0 {
+        return -915.0;
+    }
+    // Moderate upward drag from compact shade or lower half closes
+    if v_y < -40.0 {
+        if y_current < 600.0 {
+            return -915.0;
+        } else {
+            return -565.0;
+        }
+    }
+    // Fast downward flick -> full expansion
+    if v_y > 400.0 {
+        return 0.0;
+    }
+    // Downward gesture from top
+    if v_y > 60.0 {
+        if y_current > 420.0 {
+            return 0.0;
+        } else {
+            return -565.0;
+        }
+    }
+    // Positional snap thresholds
+    if y_current < 160.0 {
         -915.0
-    } else if v_y > 600.0 {
-        0.0
-    } else if y_current < 140.0 {
-        if v_y > 100.0 { -565.0 } else { -915.0 }
-    } else if y_current < 450.0 {
+    } else if y_current < 500.0 {
         -565.0
     } else {
         0.0
@@ -333,7 +354,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let animate_to = Rc::clone(&animate_to);
         qs.on_close_requested(move || {
             info!("Quick Settings: Close requested -> snapping to -915px");
-            animate_to(-915.0, 0.0);
+            animate_to(-915.0, -600.0);
+        });
+    }
+
+    {
+        let animate_to = Rc::clone(&animate_to);
+        qs.on_fast_pull_up(move || {
+            info!("Quick Settings: Fast pull up gesture detected -> snapping closed to -915px");
+            animate_to(-915.0, -850.0);
         });
     }
 

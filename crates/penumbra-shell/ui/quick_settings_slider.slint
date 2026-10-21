@@ -184,6 +184,7 @@ export component QuickSettingsSlider inherits Rectangle {
     callback add-tile(string);
     callback drag-delta(length /* dy */);
     callback drag-released(length /* current_y */, float /* velocity */);
+    callback fast-pull-up();
 
     // Visible shade height in px (0 = closed .. 915 = fully open).
     property <length> disp: Math.clamp(root.slide-offset-y + 915px, 0px, 915px);
@@ -199,12 +200,25 @@ export component QuickSettingsSlider inherits Rectangle {
 
     background: #000000.with-alpha(Math.clamp(root.disp / 915px * 0.55, 0.0, 0.55));
 
-    // Tap the scrim below the shade to dismiss.
+    // Tap or swipe up on the scrim below the shade to dismiss.
     scrim-touch := TouchArea {
         y: root.disp;
         width: parent.width;
         height: Math.max(0px, parent.height - self.y);
-        clicked => { root.close-requested(); }
+        property <length> press-y: 0px;
+
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.down) {
+                self.press-y = self.mouse-y;
+            } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
+                let dy = self.mouse-y - self.press-y;
+                if (dy < -15px) {
+                    root.fast-pull-up();
+                } else if (Math.abs(dy) < 12px) {
+                    root.close-requested();
+                }
+            }
+        }
     }
 
     // The shade is a window that reveals fixed content (clip), not a card that translates.
@@ -217,6 +231,54 @@ export component QuickSettingsSlider inherits Rectangle {
         border-bottom-left-radius: 28px;
         border-bottom-right-radius: 28px;
         clip: true;
+
+        // Full-body gesture listener for swiping / dragging anywhere on the shade background
+        shade-touch := TouchArea {
+            x: 0px;
+            y: 0px;
+            width: parent.width;
+            height: parent.height;
+
+            property <length> press-y: 0px;
+            property <length> last-pos-y: 0px;
+            property <float> velocity: 0.0;
+            property <bool> is-dragging: false;
+
+            pointer-event(event) => {
+                if (event.kind == PointerEventKind.down) {
+                    self.press-y = self.mouse-y;
+                    self.last-pos-y = self.mouse-y;
+                    self.velocity = 0.0;
+                    self.is-dragging = false;
+                } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
+                    let total-dy = self.mouse-y - self.press-y;
+                    if (self.is-dragging) {
+                        if (self.velocity < -120.0 || total-dy < -40px) {
+                            root.fast-pull-up();
+                        } else {
+                            root.drag-released(root.slide-offset-y, self.velocity);
+                        }
+                    } else if (total-dy < -25px || self.velocity < -120.0) {
+                        root.fast-pull-up();
+                    }
+                    self.is-dragging = false;
+                }
+            }
+
+            moved => {
+                if (self.pressed) {
+                    let total-dy = self.mouse-y - self.press-y;
+                    let delta = self.mouse-y - self.last-pos-y;
+                    self.velocity = self.velocity * 0.6 + (delta / 1px / 0.016) * 0.4;
+                    self.last-pos-y = self.mouse-y;
+
+                    if (Math.abs(total-dy) > 6px) {
+                        self.is-dragging = true;
+                        root.drag-delta(delta);
+                    }
+                }
+            }
+        }
 
         // ---- Header ----
         VerticalLayout {
@@ -464,15 +526,22 @@ export component QuickSettingsSlider inherits Rectangle {
             }
 
             handle-touch := TouchArea {
+                property <length> press-y: 0px;
                 property <length> last-pos-y: 0px;
                 property <float> velocity: 0.0;
 
                 pointer-event(event) => {
                     if (event.kind == PointerEventKind.down) {
+                        self.press-y = handle-touch.mouse-y;
                         self.last-pos-y = handle-touch.mouse-y;
                         self.velocity = 0.0;
                     } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
-                        root.drag-released(root.slide-offset-y, self.velocity);
+                        let total-dy = handle-touch.mouse-y - self.press-y;
+                        if (self.velocity < -120.0 || total-dy < -30px) {
+                            root.fast-pull-up();
+                        } else {
+                            root.drag-released(root.slide-offset-y, self.velocity);
+                        }
                     }
                 }
 
@@ -482,6 +551,7 @@ export component QuickSettingsSlider inherits Rectangle {
                         let delta = handle-touch.mouse-y - self.last-pos-y;
                         // low-pass filtered velocity in px/s assuming ~60Hz motion events
                         self.velocity = self.velocity * 0.6 + (delta / 1px / 0.016) * 0.4;
+                        self.last-pos-y = handle-touch.mouse-y;
                         root.drag-delta(delta);
                     }
                 }

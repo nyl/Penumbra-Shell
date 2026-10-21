@@ -38,6 +38,7 @@ export component QuickSettingsWindow inherits Window {
     callback add-tile(string);
     callback drag-delta(length);
     callback drag-released(length, float);
+    callback fast-pull-up();
 
     slider := QuickSettingsSlider {
         width: 100%;
@@ -69,5 +70,6 @@ export component QuickSettingsWindow inherits Window {
         add-tile(id) => { root.add-tile(id); }
         drag-delta(dy) => { root.drag-delta(dy); }
         drag-released(cur_y, vel) => { root.drag-released(cur_y, vel); }
+        fast-pull-up => { root.fast-pull-up(); }
     }
 }

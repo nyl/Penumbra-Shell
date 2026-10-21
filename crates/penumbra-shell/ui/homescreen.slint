@@ -84,6 +84,8 @@ export component HomescreenWindow inherits Window {
     callback add-scan-folder(string);
     callback remove-scan-folder(string);
     callback rescan-wallpapers();
+    callback homescreen-pulled-down(float);
+    callback homescreen-pull-released();
 
     app_surface := AppSurface {
         width: parent.width;
@@ -148,5 +150,7 @@ export component HomescreenWindow inherits Window {
         add-scan-folder(path) => { root.add-scan-folder(path); }
         remove-scan-folder(path) => { root.remove-scan-folder(path); }
         rescan-wallpapers() => { root.rescan-wallpapers(); }
+        homescreen-pulled-down(dy) => { root.homescreen-pulled-down(dy); }
+        homescreen-pull-released() => { root.homescreen-pull-released(); }
     }
 }

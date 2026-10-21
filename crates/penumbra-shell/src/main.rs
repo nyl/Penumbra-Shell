@@ -630,6 +630,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    {
+        let drawer_spring = drawer_spring.clone();
+        let ui_weak = ui_weak.clone();
+        ui.on_homescreen_pulled_down(move |dy| {
+            let drag_y = (DRAWER_CLOSED_Y + dy as f64).clamp(DRAWER_CLOSED_Y, DRAWER_OPEN_Y);
+            drawer_spring.borrow_mut().set_position(drag_y);
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_drawer_y(drag_y as f32);
+                ui.set_drawer_open(true);
+            }
+        });
+    }
+
+    {
+        let drawer_spring = drawer_spring.clone();
+        let start_spring = start_spring_transition.clone();
+        ui.on_homescreen_pull_released(move || {
+            let current_pos = drawer_spring.borrow().position;
+            if current_pos > DRAWER_CLOSED_Y + 40.0 {
+                info!("Homescreen pull down opened Quick Settings drawer");
+                start_spring(DRAWER_OPEN_Y, 800.0);
+            } else {
+                start_spring(DRAWER_CLOSED_Y, -800.0);
+            }
+        });
+    }
+
     // 3. Quick Settings Bottom Pull-Up Handle
     let handle_drag_start = Rc::new(std::cell::Cell::new(None::<(f64, f64)>));
     {

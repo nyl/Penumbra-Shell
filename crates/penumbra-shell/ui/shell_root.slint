@@ -105,6 +105,8 @@ export component ShellRoot inherits Window {
     callback list-directory(string) -> string;
     callback save-file(string, string) -> bool;
     callback eval-calc(string, string, string) -> string;
+    callback homescreen-pulled-down(float);
+    callback homescreen-pull-released();
 
     // Wallpaper properties
     in-out property <bool> has-wallpaper: false;
@@ -220,6 +222,12 @@ export component ShellRoot inherits Window {
             }
             eval-calc(a, op, b) => {
                 return root.eval-calc(a, op, b);
+            }
+            homescreen-pulled-down(dy) => {
+                root.homescreen-pulled-down(dy);
+            }
+            homescreen-pull-released() => {
+                root.homescreen-pull-released();
             }
             has-wallpaper: root.has-wallpaper;
             wallpaper-image: root.wallpaper-image;

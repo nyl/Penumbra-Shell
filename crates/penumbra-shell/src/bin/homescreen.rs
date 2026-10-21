@@ -324,6 +324,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    // Pulldown gesture on main screen -> opens / drags down Quick Settings
+    ui.on_homescreen_pulled_down(move |dy| {
+        let mut state = ShellState::load();
+        state.drawer_open = true;
+        state.drawer_dragging = true;
+        state.drawer_pull_dy = dy as f64;
+        let _ = state.save();
+        info!("Homescreen pulled down (dy={:.1}) -> signaling Quick Settings overlay transfer", dy);
+    });
+
+    ui.on_homescreen_pull_released(move || {
+        let mut state = ShellState::load();
+        state.drawer_dragging = false;
+        let _ = state.save();
+        info!("Homescreen drag released -> Quick Settings takes over settle");
+    });
+
     // 7. Dock & Homescreen Drag-and-Drop Handlers
     {
         let ui_weak = ui_weak.clone();
