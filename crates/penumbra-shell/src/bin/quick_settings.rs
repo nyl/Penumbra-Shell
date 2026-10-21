@@ -15,8 +15,26 @@ use tracing_subscriber::FmtSubscriber;
 
 use layer_shell_slint::{Anchor, KeyboardInteractivity, Layer, LayerConfig};
 use penumbra_gestures::Spring;
-use penumbra_services::NetworkService;
+use penumbra_services::{BatteryService, NetworkService};
 use penumbra_shell::ipc::ShellState;
+use penumbra_shell::quick_settings::{tile, QuickSettingsConfig, TileDefinition, TileState};
+use slint::{ModelRc, VecModel};
+
+fn icon_glyph(name: &str) -> &'static str {
+    match name {
+        "wifi" => "📶",
+        "bluetooth" => "ᛒ",
+        "flashlight" => "🔦",
+        "dnd" => "⛔",
+        "rotation" => "⟳",
+        "battery" => "🔋",
+        "airplane" => "✈",
+        "hotspot" => "📡",
+        "night" => "🌙",
+        "recorder" => "⏺",
+        _ => "●",
+    }
+}
 
 slint::include_modules!();
 
@@ -145,10 +163,121 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         NetworkService::new().await
     });
 
+    // Tile engine: registry (live tile state) + persisted order/visibility.
+    let registry: Rc<RefCell<Vec<TileDefinition>>> = Rc::new(RefCell::new(tile::registry()));
+    let qs_config = Rc::new(RefCell::new(QuickSettingsConfig::load()));
+
     {
         let net_info = network_service.current();
-        qs.set_carrier_text(net_info.ssid.into());
-        qs.set_tile_internet(net_info.is_connected);
+        qs.set_carrier_text(net_info.ssid.clone().into());
+        let battery = rt.block_on(BatteryService::new());
+        qs.set_battery_pct(battery.current().percentage as i32);
+        if let Some(t) = registry.borrow_mut().iter_mut().find(|t| t.id == "internet") {
+            t.state = if net_info.is_connected { TileState::Active } else { TileState::Inactive };
+            t.subtitle = if net_info.is_connected { net_info.ssid.clone() } else { "Off".into() };
+        }
+    }
+
+    let refresh_tiles: Rc<dyn Fn()> = {
+        let registry = Rc::clone(&registry);
+        let qs_config = Rc::clone(&qs_config);
+        let ui_weak = ui_weak.clone();
+        Rc::new(move || {
+            let reg = registry.borrow();
+            let cfg = qs_config.borrow();
+            let to_data = |id: &String| {
+                reg.iter().find(|t| &t.id == id).map(|t| TileData {
+                    id: t.id.clone().into(),
+                    title: t.title.clone().into(),
+                    subtitle: t.subtitle.clone().into(),
+                    icon_text: icon_glyph(&t.icon_name).into(),
+                    active: t.state == TileState::Active,
+                    enabled: t.is_enabled && t.state != TileState::Unavailable,
+                })
+            };
+            let active: Vec<TileData> = cfg.active_tiles.iter().filter_map(to_data).collect();
+            let available: Vec<TileData> = cfg.available_tiles.iter().filter_map(to_data).collect();
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_active_tiles(ModelRc::from(Rc::new(VecModel::from(active))));
+                ui.set_available_tiles(ModelRc::from(Rc::new(VecModel::from(available))));
+            }
+        })
+    };
+    refresh_tiles();
+
+    // Notification stack. The org.freedesktop.Notifications D-Bus server is not wired yet,
+    // so only the system status card is shown.
+    qs.set_notifications(ModelRc::from(Rc::new(VecModel::from(vec![NotificationData {
+        app: "Penumbra".into(),
+        title: "Penumbra Core • Wayland Ready".into(),
+        body: "Wayland convergence active: DSI phone shell ready".into(),
+    }]))));
+
+    {
+        let registry = Rc::clone(&registry);
+        let refresh = Rc::clone(&refresh_tiles);
+        qs.on_tile_clicked(move |id| {
+            if let Some(t) = registry.borrow_mut().iter_mut().find(|t| t.id == id.as_str()) {
+                t.toggle();
+            }
+            refresh();
+        });
+    }
+    {
+        let animate_to = Rc::clone(&animate_to);
+        let ui_weak = ui_weak.clone();
+        qs.on_enter_edit_mode(move || {
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_edit_mode(true);
+            }
+            animate_to(0.0, 0.0);
+        });
+    }
+    {
+        let qs_config = Rc::clone(&qs_config);
+        let ui_weak = ui_weak.clone();
+        qs.on_exit_edit_mode(move || {
+            if let Err(e) = qs_config.borrow().save() {
+                tracing::warn!("Failed to save quicksettings.json: {e}");
+            }
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_edit_mode(false);
+            }
+        });
+    }
+    {
+        let qs_config = Rc::clone(&qs_config);
+        let refresh = Rc::clone(&refresh_tiles);
+        qs.on_reset_tiles(move || {
+            *qs_config.borrow_mut() = QuickSettingsConfig::default();
+            refresh();
+        });
+    }
+    {
+        let qs_config = Rc::clone(&qs_config);
+        let refresh = Rc::clone(&refresh_tiles);
+        qs.on_reorder_tiles(move |from, to| {
+            if from >= 0 && to >= 0 {
+                qs_config.borrow_mut().reorder(from as usize, to as usize);
+            }
+            refresh();
+        });
+    }
+    {
+        let qs_config = Rc::clone(&qs_config);
+        let refresh = Rc::clone(&refresh_tiles);
+        qs.on_remove_tile(move |id| {
+            qs_config.borrow_mut().remove(id.as_str());
+            refresh();
+        });
+    }
+    {
+        let qs_config = Rc::clone(&qs_config);
+        let refresh = Rc::clone(&refresh_tiles);
+        qs.on_add_tile(move |id| {
+            qs_config.borrow_mut().add(id.as_str());
+            refresh();
+        });
     }
 
     // 6. User Interaction & Drag Callbacks
@@ -242,7 +371,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // Touch Release & Snap Logic:
             // - Abort Snap (Closed): If y_current < 140px and v_y <= 0: target y_target = -915px (offset -915)
-            // - Compact Shade Snap: If 140px <= y_current < 450px: target y_target = 320px (offset 320 - 915 = -595px)
+            // - Compact Shade Snap: If 140px <= y_current < 450px: target y_target = 350px (offset 350 - 915 = -565px)
             // - Full Expansion Snap: If y_current >= 450px or positive downward flick (v_y > 600px/s): target y_target = 915px (offset 0px)
             let target_offset = if v_y < -300.0 {
                 -915.0
@@ -253,12 +382,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else if y_current < 140.0 {
                 // Low positive velocity near top: snap to compact shade if pulling down, else closed
                 if v_y > 100.0 {
-                    -595.0 // 320px shade height
+                    -565.0 // 350px shade height
                 } else {
                     -915.0
                 }
             } else if y_current < 450.0 {
-                -595.0 // 320px compact shade
+                -565.0 // 350px compact shade (QQS + notifications)
             } else {
                 0.0 // 915px fully expanded stage
             };
@@ -319,9 +448,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     *last_open = state.drawer_open;
                     let cur_target = spring_state.borrow().target;
                     if state.drawer_open {
-                        if cur_target < -600.0 {
-                            info!("External trigger: opening Quick Settings shade (compact target: -595px / 320px)");
-                            animate_to(-595.0, 400.0);
+                        if cur_target < -570.0 {
+                            info!("External trigger: opening Quick Settings shade (compact target: -565px / 350px)");
+                            animate_to(-565.0, 400.0);
                         }
                     } else if cur_target > -900.0 {
                         info!("External trigger: closing Quick Settings shade (target: -915px)");

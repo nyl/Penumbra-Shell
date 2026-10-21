@@ -60,7 +60,7 @@ pub struct NetworkService {
 impl NetworkService {
     /// Connects to NetworkManager on the system bus. Falls back to mock provider if unavailable.
     pub async fn new() -> Self {
-        let (info_tx, info_rx) = watch::channel(NetworkInfo::default());
+        let (info_tx, info_rx) = watch::channel(Self::read_system());
         let is_mock = Arc::new(AtomicBool::new(false));
 
         let service = Self {
@@ -139,15 +139,12 @@ impl NetworkService {
                 ConnectivityState::Full | ConnectivityState::Limited
             );
 
+            let sys = Self::read_system();
             let _ = tx.send(NetworkInfo {
                 is_connected,
                 is_wifi_enabled: wifi_enabled,
-                ssid: if is_connected {
-                    "Penumbra-Mesh-5G".to_string()
-                } else {
-                    "Disconnected".to_string()
-                },
-                signal_strength: if is_connected { 92 } else { 0 },
+                ssid: sys.ssid,
+                signal_strength: if is_connected { sys.signal_strength } else { 0 },
                 connectivity,
             });
 
@@ -155,19 +152,65 @@ impl NetworkService {
         }
     }
 
+    /// Reads real link state from the OS (no fabricated values).
+    fn read_system() -> NetworkInfo {
+        let mut up_iface = false;
+        let mut wifi_iface = false;
+        if let Ok(dir) = std::fs::read_dir("/sys/class/net") {
+            for e in dir.flatten() {
+                let name = e.file_name().to_string_lossy().to_string();
+                if name == "lo" {
+                    continue;
+                }
+                let state = std::fs::read_to_string(e.path().join("operstate")).unwrap_or_default();
+                if state.trim() == "up" {
+                    up_iface = true;
+                    if e.path().join("wireless").exists() {
+                        wifi_iface = true;
+                    }
+                }
+            }
+        }
+        // Link quality (0..70) from /proc/net/wireless.
+        let mut signal = 0u8;
+        if let Ok(s) = std::fs::read_to_string("/proc/net/wireless") {
+            for line in s.lines().skip(2) {
+                let cols: Vec<&str> = line.split_whitespace().collect();
+                if let Some(q) = cols.get(2) {
+                    if let Ok(q) = q.trim_end_matches('.').parse::<f32>() {
+                        signal = ((q / 70.0) * 100.0).clamp(0.0, 100.0) as u8;
+                    }
+                }
+            }
+        }
+        let mut ssid = String::new();
+        if wifi_iface {
+            if let Ok(out) = std::process::Command::new("nmcli")
+                .args(["-t", "-f", "active,ssid", "dev", "wifi"])
+                .output()
+            {
+                for l in String::from_utf8_lossy(&out.stdout).lines() {
+                    if let Some(s) = l.strip_prefix("yes:") {
+                        ssid = s.to_string();
+                    }
+                }
+            }
+        }
+        let wifi_enabled = wifi_iface || std::path::Path::new("/proc/net/wireless").exists();
+        NetworkInfo {
+            is_connected: up_iface,
+            is_wifi_enabled: wifi_enabled,
+            ssid: if up_iface && ssid.is_empty() && !wifi_iface { "Ethernet".into() } else { ssid },
+            signal_strength: if wifi_iface { signal } else if up_iface { 100 } else { 0 },
+            connectivity: if up_iface { ConnectivityState::Full } else { ConnectivityState::None },
+        }
+    }
+
     async fn run_mock_simulator(tx: watch::Sender<NetworkInfo>) {
-        let mut toggle = true;
+        // Fallback without NetworkManager: report real kernel state.
         loop {
-            tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
-            toggle = !toggle;
-            let strength = if toggle { 96 } else { 84 };
-            let _ = tx.send(NetworkInfo {
-                is_connected: true,
-                is_wifi_enabled: true,
-                ssid: "Penumbra-Mesh-5G".to_string(),
-                signal_strength: strength,
-                connectivity: ConnectivityState::Full,
-            });
+            let _ = tx.send(Self::read_system());
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
         }
     }
 }

@@ -15,7 +15,6 @@ export component TopBarWindow inherits Window {
     in-out property <string> carrier-text: "Penumbra";
     in-out property <bool> privacy-active: false;
 
-    callback top-bar-clicked();
     callback top-bar-pulled-down(float /* dy */);
 
     touch-area := TouchArea {
@@ -28,12 +27,8 @@ export component TopBarWindow inherits Window {
                 self.has-dragged = false;
             } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
                 let dy = touch-area.mouse-y - self.press-y;
-                if (!self.has-dragged) {
-                    if (dy > 6px) {
-                        root.top-bar-pulled-down(dy / 1px);
-                    } else {
-                        root.top-bar-clicked();
-                    }
+                if (!self.has-dragged && dy > 6px) {
+                    root.top-bar-pulled-down(dy / 1px);
                 }
                 self.has-dragged = false;
             }
@@ -116,8 +111,9 @@ export component TopBarWindow inherits Window {
             spacing: 8px;
             alignment: end;
 
-            // Cellular signal bars (4 bottom-aligned bars on common baseline)
+            // Cellular bars: no modem backend yet, so hidden instead of faked
             VerticalLayout {
+                visible: false;
                 alignment: center;
                 Rectangle {
                     width: 17px;
@@ -161,6 +157,7 @@ export component TopBarWindow inherits Window {
 
             // Native Vector Wi-Fi Icon (Clean Material 3 filled fan)
             VerticalLayout {
+                visible: root.wifi-connected;
                 alignment: center;
                 Rectangle {
                     width: 16px;
@@ -175,7 +172,7 @@ export component TopBarWindow inherits Window {
                         viewbox-width: 24;
                         viewbox-height: 24;
                         commands: "M 12 4 C 7.31 4 3.07 5.9 0 8.98 L 12 21 L 24 8.98 C 20.93 5.9 16.69 4 12 4 Z";
-                        fill: root.wifi-connected ? Theme.on-surface : Theme.on-surface-variant;
+                        fill: Theme.on-surface.with-alpha(0.35 + 0.65 * Math.clamp(root.wifi-signal / 100.0, 0.0, 1.0));
                     }
                 }
             }

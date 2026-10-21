@@ -38,16 +38,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bar = TopBarWindow::new()?;
     let ui_weak = bar.as_weak();
 
-    bar.on_top_bar_clicked({
-        move || {
-            let mut state = penumbra_shell::ipc::ShellState::load();
-            state.drawer_open = !state.drawer_open;
-            state.drawer_pull_dy = if state.drawer_open { 320.0 } else { 0.0 };
-            let _ = state.save();
-            info!("Top Bar clicked -> toggled Quick Settings drawer: {}", state.drawer_open);
-        }
-    });
-
     bar.on_top_bar_pulled_down({
         move |dy| {
             let mut state = penumbra_shell::ipc::ShellState::load();

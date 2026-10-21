@@ -1,5 +1,80 @@
 import { Theme } from "theme.slint";
 
+export struct TileData {
+    id: string,
+    title: string,
+    subtitle: string,
+    icon-text: string,
+    active: bool,
+    enabled: bool,
+}
+
+export struct NotificationData {
+    app: string,
+    title: string,
+    body: string,
+}
+
+// Single morphing tile: `morph` 0.0 = compact icon cell, 1.0 = full pastille.
+component TileView inherits Rectangle {
+    in property <float> morph: 1.0;
+    in property <TileData> data;
+    callback clicked();
+
+    border-radius: 18px + 4px * root.morph;
+    background: !root.data.enabled ? Theme.surface-low : (root.data.active ? Theme.primary : Theme.surface-high);
+    opacity: root.data.enabled ? 1.0 : 0.5;
+    border-width: 1px;
+    border-color: root.data.active ? Theme.specular-rim-active : Theme.specular-rim;
+    clip: true;
+
+    animate background { duration: 160ms; easing: ease-out; }
+
+    TouchArea {
+        clicked => { if (root.data.enabled) { root.clicked(); } }
+    }
+
+    // Icon badge slides from the cell centre (compact) to the left edge (expanded).
+    Rectangle {
+        width: 36px;
+        height: 36px;
+        x: (parent.width - self.width) / 2 * (1.0 - root.morph) + 12px * root.morph;
+        y: (parent.height - self.height) / 2;
+        border-radius: 18px;
+        background: root.data.active ? Theme.on-primary : Theme.surface-highest;
+        Text {
+            text: root.data.icon-text;
+            font-size: 16px;
+            color: root.data.active ? Theme.primary : Theme.on-surface;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    VerticalLayout {
+        x: 56px;
+        width: parent.width - 62px;
+        y: 0px;
+        height: parent.height;
+        alignment: center;
+        spacing: 2px;
+        opacity: Math.clamp((root.morph - 0.4) / 0.6, 0.0, 1.0);
+        Text {
+            text: root.data.title;
+            font-size: 13px;
+            font-weight: 700;
+            color: root.data.active ? Theme.on-primary : Theme.on-surface;
+            overflow: elide;
+        }
+        Text {
+            text: root.data.subtitle;
+            font-size: 11px;
+            color: root.data.active ? Theme.on-primary : Theme.on-surface-variant;
+            overflow: elide;
+        }
+    }
+}
+
 component SliderPill inherits Rectangle {
     in-out property <float> value: 0.75;
     in property <string> icon-text: "☀";
@@ -15,11 +90,9 @@ component SliderPill inherits Rectangle {
 
     Rectangle {
         x: 0px;
-        y: 0px;
         width: parent.width * Math.clamp(root.value, 0.0, 1.0);
         height: parent.height;
         background: Theme.primary;
-        border-radius: Theme.radius-pill;
     }
 
     slider-touch := TouchArea {
@@ -40,568 +113,373 @@ component SliderPill inherits Rectangle {
     HorizontalLayout {
         padding-left: 16px;
         padding-right: 16px;
-        alignment: space-between;
-
-        HorizontalLayout {
-            spacing: 10px;
-            alignment: center;
-
-            Text {
-                text: root.icon-text;
-                font-size: 16px;
-                color: root.value > 0.15 ? Theme.on-primary : Theme.on-surface;
-                vertical-alignment: center;
-            }
-
-            Text {
-                text: root.label;
-                font-size: Theme.font-label;
-                font-weight: 600;
-                color: root.value > 0.4 ? Theme.on-primary : Theme.on-surface;
-                vertical-alignment: center;
-            }
-        }
-
+        spacing: 10px;
         Text {
-            text: "\{Math.round(root.value * 100.0)}%";
-            font-size: Theme.font-caption;
-            font-weight: 700;
-            color: root.value > 0.85 ? Theme.on-primary : Theme.on-surface-variant;
+            text: root.icon-text;
+            font-size: 16px;
+            color: root.value > 0.1 ? Theme.on-primary : Theme.on-surface;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.label;
+            font-size: Theme.font-label;
+            font-weight: 600;
+            color: root.value > 0.35 ? Theme.on-primary : Theme.on-surface;
             vertical-alignment: center;
         }
     }
 }
 
-component ToggleTile inherits Rectangle {
-    in-out property <bool> is-active: false;
-    in property <string> icon-text: "󰤨";
-    in property <string> title: "Toggle";
-    in property <string> subtitle: "Status";
+component SmallButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> accent: false;
+    in property <length> button-width: 30px;
     callback clicked();
-
-    height: 64px;
-    border-radius: Theme.radius-tile;
-    background: root.is-active ? Theme.primary : Theme.surface-high;
-    border-width: 1px;
-    border-color: root.is-active ? Theme.specular-rim-active : Theme.specular-rim;
-
-    animate background { duration: 160ms; easing: cubic-bezier(0.2, 0.0, 0.0, 1.0); }
-    animate border-color { duration: 160ms; easing: ease-out; }
-
-    TouchArea {
-        clicked => {
-            root.is-active = !root.is-active;
-            root.clicked();
-        }
+    width: root.button-width;
+    height: 30px;
+    border-radius: 15px;
+    background: root.accent ? Theme.primary : Theme.surface-highest;
+    Text {
+        text: root.label;
+        font-size: 12px;
+        font-weight: 700;
+        color: root.accent ? Theme.on-primary : Theme.on-surface;
+        horizontal-alignment: center;
+        vertical-alignment: center;
     }
-
-    HorizontalLayout {
-        padding-left: 12px;
-        padding-right: 12px;
-        spacing: 10px;
-        alignment: start;
-
-        Rectangle {
-            width: 36px;
-            height: 36px;
-            y: (parent.height - self.height) / 2;
-            border-radius: Theme.radius-pill;
-            background: root.is-active ? Theme.on-primary : Theme.surface-highest;
-
-            animate background { duration: 160ms; easing: ease-out; }
-
-            Text {
-                text: root.icon-text;
-                font-size: 16px;
-                color: root.is-active ? Theme.primary : Theme.on-surface;
-                vertical-alignment: center;
-                horizontal-alignment: center;
-            }
-        }
-
-        VerticalLayout {
-            alignment: center;
-            spacing: 2px;
-
-            Text {
-                text: root.title;
-                font-size: 13px;
-                font-weight: 700;
-                color: root.is-active ? Theme.on-primary : Theme.on-surface;
-                overflow: elide;
-            }
-
-            Text {
-                text: root.subtitle;
-                font-size: 11px;
-                color: root.is-active ? Theme.on-primary : Theme.on-surface-variant;
-                overflow: elide;
-            }
-        }
-    }
-}
-
-component CompactToggleIcon inherits Rectangle {
-    in-out property <bool> is-active: false;
-    in property <string> icon-text: "󰤨";
-    in property <string> label: "Wi-Fi";
-    callback clicked();
-
-    width: 78px;
-    height: 64px;
-    border-radius: 18px;
-    background: root.is-active ? Theme.primary : Theme.surface-high;
-    border-width: 1px;
-    border-color: root.is-active ? Theme.specular-rim-active : Theme.specular-rim;
-
-    animate background { duration: 160ms; easing: ease-out; }
-
-    TouchArea {
-        clicked => {
-            root.is-active = !root.is-active;
-            root.clicked();
-        }
-    }
-
-    VerticalLayout {
-        alignment: center;
-        spacing: 4px;
-
-        Text {
-            text: root.icon-text;
-            font-size: 20px;
-            color: root.is-active ? Theme.on-primary : Theme.on-surface;
-            horizontal-alignment: center;
-        }
-
-        Text {
-            text: root.label;
-            font-size: 11px;
-            font-weight: 600;
-            color: root.is-active ? Theme.on-primary : Theme.on-surface-variant;
-            horizontal-alignment: center;
-            overflow: elide;
-        }
-    }
+    TouchArea { clicked => { root.clicked(); } }
 }
 
 export component QuickSettingsSlider inherits Rectangle {
-    in-out property <length> slide-offset-y: -915px; // Fully retracted
-    in property <float> expansion-progress: 0.0;     // 0.0 to 1.0 (0.0 = closed, 0.35 = compact, 1.0 = full)
+    // Rust drives `slide-offset-y` in [-915px, 0px]; the visible shade height is its offset from closed.
+    in-out property <length> slide-offset-y: -915px;
+    in property <float> expansion-progress: 0.0;
+    in-out property <bool> edit-mode: false;
 
     in-out property <float> brightness: 0.75;
     in-out property <float> volume: 0.60;
     in-out property <string> time-text: "12:00";
     in-out property <string> date-text: "Wednesday, Oct 21";
     in-out property <string> carrier-text: "Penumbra 5G";
+    in property <int> battery-pct: 100;
 
-    in-out property <bool> tile-internet: true;
-    in-out property <bool> tile-bluetooth: true;
-    in-out property <bool> tile-flashlight: false;
-    in-out property <bool> tile-dnd: false;
-    in-out property <bool> tile-hotspot: false;
-    in-out property <bool> tile-rotate: true;
-    in-out property <bool> tile-airplane: false;
-    in-out property <bool> tile-battery-saver: false;
+    in property <[TileData]> active-tiles;
+    in property <[TileData]> available-tiles;
+    in property <[NotificationData]> notifications;
 
     callback close-requested();
     callback power-action();
     callback settings-action();
     callback brightness-changed(float);
     callback volume-changed(float);
+    callback tile-clicked(string /* id */);
+    callback enter-edit-mode();
+    callback exit-edit-mode();
+    callback reset-tiles();
+    callback reorder-tiles(int, int);
+    callback remove-tile(string);
+    callback add-tile(string);
     callback drag-delta(length /* dy */);
     callback drag-released(length /* current_y */, float /* velocity */);
 
-    // Dynamic backdrop scrim: darkens smoothly as shade expands
-    property <float> scrim-alpha: Math.clamp((root.slide-offset-y + 915px) / 915px * 0.55, 0.0, 0.55);
+    // Visible shade height in px (0 = closed .. 915 = fully open).
+    property <length> disp: Math.clamp(root.slide-offset-y + 915px, 0px, 915px);
+    // Stage 1 (QQS + notifications) up to ~300px, then continuous morph to full QS by ~700px.
+    property <float> morph: root.edit-mode ? 1.0 : Math.clamp((root.disp - 300px) / 400px, 0.0, 1.0);
+    property <length> pad: 16px;
+    property <length> grid-top: 80px;
+    property <int> n-tiles: root.active-tiles.length;
+    property <length> grid-h: Math.ceil(root.n-tiles / 2) * 76px;
+    property <length> tiles-h: 64px + (Math.max(root.grid-h, 64px) - 64px) * root.morph;
+    property <length> below-tiles: root.grid-top + root.tiles-h + 12px;
+    property <length> qs-block-h: 48px + 8px + 48px + 8px + 72px + 12px;
 
-    background: #000000.with-alpha(root.scrim-alpha);
+    background: #000000.with-alpha(Math.clamp(root.disp / 915px * 0.55, 0.0, 0.55));
 
-    // Tap backdrop below the shade to dismiss
+    // Tap the scrim below the shade to dismiss.
     scrim-touch := TouchArea {
-        x: 0px;
-        y: Math.max(0px, root.slide-offset-y + 915px);
+        y: root.disp;
         width: parent.width;
         height: Math.max(0px, parent.height - self.y);
-        clicked => {
-            root.close-requested();
-        }
+        clicked => { root.close-requested(); }
     }
 
-    sliding-chassis := Rectangle {
-        y: root.slide-offset-y;
-        width: 100%;
-        height: 915px;
-        background: #141218f2;
+    // The shade is a window that reveals fixed content (clip), not a card that translates.
+    chassis := Rectangle {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: root.disp;
+        background: #0f0e13.with-alpha(Math.clamp(root.disp / 400px, 0.0, 0.96));
         border-bottom-left-radius: 28px;
         border-bottom-right-radius: 28px;
         clip: true;
 
-        // Specular highlight line along bottom edge
-        Rectangle {
-            x: 0px;
-            y: parent.height - 1.5px;
-            width: parent.width;
-            height: 1.5px;
-            background: #ffffff33;
+        // ---- Header ----
+        VerticalLayout {
+            x: root.pad;
+            y: 40px;
+            width: parent.width - 2 * root.pad - 150px;
+            height: 44px;
+            spacing: 2px;
+            alignment: center;
+            Text {
+                text: root.time-text;
+                font-size: 22px + 8px * root.morph;
+                font-weight: 800;
+                color: Theme.on-surface;
+            }
+            Text {
+                text: "\{root.date-text} • \{root.carrier-text} • \{root.battery-pct}%";
+                font-size: 11px;
+                color: Theme.on-surface-variant;
+                overflow: elide;
+            }
+        }
+        HorizontalLayout {
+            x: parent.width - root.pad - 138px;
+            y: 44px;
+            width: 138px;
+            height: 34px;
+            spacing: 6px;
+            alignment: end;
+            if root.morph > 0.5 || root.edit-mode: SmallButton {
+                label: "✎";
+                button-width: 34px;
+                accent: root.edit-mode;
+                clicked => { if (root.edit-mode) { root.exit-edit-mode(); } else { root.enter-edit-mode(); } }
+            }
+            SmallButton { label: "⚙"; button-width: 34px; clicked => { root.settings-action(); } }
+            SmallButton { label: "⏻"; button-width: 34px; clicked => { root.power-action(); } }
         }
 
-        VerticalLayout {
-            padding-top: 44px;
-            padding-bottom: 16px;
-            padding-left: 18px;
-            padding-right: 18px;
-            spacing: 14px;
+        // ---- Normal mode ----
+        if !root.edit-mode: Rectangle {
+            width: parent.width;
+            height: parent.height;
 
-            // Header: Clock, Date/Carrier, Settings, Power
-            HorizontalLayout {
-                alignment: space-between;
-
-                VerticalLayout {
-                    spacing: 2px;
-                    alignment: center;
-
-                    Text {
-                        text: root.time-text;
-                        font-size: root.expansion-progress > 0.35 ? 32px : 26px;
-                        font-weight: 800;
-                        color: Theme.on-surface;
-                    }
-
-                    Text {
-                        text: "\{root.date-text} • \{root.carrier-text}";
-                        font-size: 12px;
-                        font-weight: 500;
-                        color: Theme.on-surface-variant;
-                    }
-                }
-
-                HorizontalLayout {
-                    spacing: 8px;
-                    alignment: center;
-
-                    Rectangle {
-                        width: 38px;
-                        height: 38px;
-                        border-radius: Theme.radius-pill;
-                        background: Theme.surface-high;
-                        border-width: 1px;
-                        border-color: Theme.specular-rim;
-
-                        Text {
-                            text: "⚙";
-                            font-size: 15px;
-                            color: Theme.on-surface;
-                            vertical-alignment: center;
-                            horizontal-alignment: center;
-                        }
-
-                        TouchArea {
-                            clicked => { root.settings-action(); }
-                        }
-                    }
-
-                    Rectangle {
-                        width: 38px;
-                        height: 38px;
-                        border-radius: Theme.radius-pill;
-                        background: #FFB4AB26;
-                        border-width: 1px;
-                        border-color: #FFB4AB4D;
-
-                        Text {
-                            text: "⏻";
-                            font-size: 15px;
-                            color: #FFB4AB;
-                            vertical-alignment: center;
-                            horizontal-alignment: center;
-                        }
-
-                        TouchArea {
-                            clicked => { root.power-action(); }
-                        }
-                    }
-                }
+            // Morphing tiles: compact 4-up strip -> 2-column pastille grid
+            for tile[i] in root.active-tiles: TileView {
+                property <length> cw4: (parent.width - 2 * root.pad - 30px) / 4;
+                property <length> cw2: (parent.width - 2 * root.pad - 12px) / 2;
+                property <length> cx: root.pad + i * (self.cw4 + 10px);
+                property <length> ex: root.pad + Math.mod(i, 2) * (self.cw2 + 12px);
+                property <length> ey: root.grid-top + Math.floor(i / 2) * 76px;
+                morph: root.morph;
+                data: tile;
+                // tiles beyond the 4th only exist in the full grid
+                visible: i < 4 || root.morph > 0.02;
+                opacity: i < 4 ? 1.0 : root.morph;
+                x: i < 4 ? self.cx + (self.ex - self.cx) * root.morph : self.ex;
+                y: i < 4 ? root.grid-top + (self.ey - root.grid-top) * root.morph : self.ey;
+                width: i < 4 ? self.cw4 + (self.cw2 - self.cw4) * root.morph : self.cw2;
+                height: 64px;
+                clicked => { root.tile-clicked(tile.id); }
             }
 
-            // STAGE 1: Compact View (expansion-progress <= 0.35)
-            if root.expansion-progress <= 0.35: HorizontalLayout {
-                spacing: 12px;
-                alignment: space-between;
+            // Sliders + media (Stage 2)
+            if root.morph > 0.05: Rectangle {
+                x: root.pad;
+                y: root.below-tiles;
+                width: parent.width - 2 * root.pad;
+                height: root.qs-block-h;
+                opacity: Math.clamp((root.morph - 0.15) / 0.6, 0.0, 1.0);
 
-                CompactToggleIcon {
-                    is-active <=> root.tile-internet;
-                    icon-text: "󰤨";
-                    label: "Internet";
-                }
-                CompactToggleIcon {
-                    is-active <=> root.tile-bluetooth;
-                    icon-text: "󰂯";
-                    label: "Bluetooth";
-                }
-                CompactToggleIcon {
-                    is-active <=> root.tile-airplane;
-                    icon-text: "✈";
-                    label: "Airplane";
-                }
-                CompactToggleIcon {
-                    is-active <=> root.tile-flashlight;
-                    icon-text: "󰛨";
-                    label: "Flashlight";
-                }
-            }
-
-            // STAGE 2: Full Expansion (expansion-progress > 0.35)
-            if root.expansion-progress > 0.35: VerticalLayout {
-                spacing: 12px;
-
-                // 2x4 Toggle Grid
-                // Row 1
-                HorizontalLayout {
-                    spacing: 12px;
-                    ToggleTile {
-                        width: (parent.width - 12px) / 2;
-                        is-active <=> root.tile-internet;
-                        icon-text: "󰤨";
-                        title: "Internet";
-                        subtitle: root.tile-internet ? root.carrier-text : "Off";
-                    }
-                    ToggleTile {
-                        width: (parent.width - 12px) / 2;
-                        is-active <=> root.tile-bluetooth;
-                        icon-text: "󰂯";
-                        title: "Bluetooth";
-                        subtitle: root.tile-bluetooth ? "Connected" : "Off";
-                    }
-                }
-
-                // Row 2
-                HorizontalLayout {
-                    spacing: 12px;
-                    ToggleTile {
-                        width: (parent.width - 12px) / 2;
-                        is-active <=> root.tile-flashlight;
-                        icon-text: "󰛨";
-                        title: "Flashlight";
-                        subtitle: root.tile-flashlight ? "Active" : "Off";
-                    }
-                    ToggleTile {
-                        width: (parent.width - 12px) / 2;
-                        is-active <=> root.tile-dnd;
-                        icon-text: "󰂲";
-                        title: "Do Not Disturb";
-                        subtitle: root.tile-dnd ? "Priority only" : "Off";
-                    }
-                }
-
-                // Row 3
-                HorizontalLayout {
-                    spacing: 12px;
-                    ToggleTile {
-                        width: (parent.width - 12px) / 2;
-                        is-active <=> root.tile-hotspot;
-                        icon-text: "󰖩";
-                        title: "Hotspot";
-                        subtitle: root.tile-hotspot ? "Penumbra-AP" : "Off";
-                    }
-                    ToggleTile {
-                        width: (parent.width - 12px) / 2;
-                        is-active <=> root.tile-rotate;
-                        icon-text: "󰑮";
-                        title: "Auto-rotate";
-                        subtitle: root.tile-rotate ? "Portrait" : "Locked";
-                    }
-                }
-
-                // Row 4
-                HorizontalLayout {
-                    spacing: 12px;
-                    ToggleTile {
-                        width: (parent.width - 12px) / 2;
-                        is-active <=> root.tile-airplane;
-                        icon-text: "✈";
-                        title: "Airplane Mode";
-                        subtitle: root.tile-airplane ? "On" : "Off";
-                    }
-                    ToggleTile {
-                        width: (parent.width - 12px) / 2;
-                        is-active <=> root.tile-battery-saver;
-                        icon-text: "🔋";
-                        title: "Battery Saver";
-                        subtitle: root.tile-battery-saver ? "Eco mode" : "Off";
-                    }
-                }
-
-                // Sliders: Brightness & Volume
                 SliderPill {
+                    y: 0px;
                     value <=> root.brightness;
                     icon-text: "☀";
                     label: "Brightness";
                     changed(v) => { root.brightness-changed(v); }
                 }
-
                 SliderPill {
+                    y: 56px;
                     value <=> root.volume;
-                    icon-text: "";
-                    label: "Media Volume";
+                    icon-text: "♪";
+                    label: "Media volume";
                     changed(v) => { root.volume-changed(v); }
                 }
-            }
-
-            // Media Playback Widget (Visible in both compact and full)
-            Rectangle {
-                height: 72px;
-                border-radius: Theme.radius-tile;
-                background: Theme.surface-low;
-                border-width: 1px;
-                border-color: Theme.specular-rim;
-
-                HorizontalLayout {
-                    padding: 12px;
-                    spacing: 12px;
-                    alignment: space-between;
-
-                    // Album Art
-                    Rectangle {
-                        width: 48px;
-                        height: 48px;
-                        border-radius: 12px;
-                        background: #3B2E58;
-
-                        Text {
-                            text: "🎵";
-                            font-size: 20px;
-                            vertical-alignment: center;
-                            horizontal-alignment: center;
-                        }
-                    }
-
-                    // Track Info
-                    VerticalLayout {
-                        alignment: center;
-                        spacing: 2px;
-                        horizontal-stretch: 1;
-
-                        Text {
-                            text: "Resonance";
-                            font-size: 13px;
-                            font-weight: 700;
-                            color: Theme.on-surface;
-                            overflow: elide;
-                        }
-
-                        Text {
-                            text: "HOME • Odyssey";
-                            font-size: 11px;
-                            color: Theme.on-surface-variant;
-                            overflow: elide;
-                        }
-                    }
-
-                    // Play/Pause
-                    Rectangle {
-                        width: 40px;
-                        height: 40px;
-                        y: (parent.height - self.height) / 2;
-                        border-radius: Theme.radius-pill;
-                        background: Theme.primary;
-
-                        Text {
-                            text: "⏸";
-                            font-size: 15px;
-                            color: Theme.on-primary;
-                            vertical-alignment: center;
-                            horizontal-alignment: center;
-                        }
-                    }
-                }
-            }
-
-            // Chronological Notification Preview Card (Full expansion)
-            if root.expansion-progress > 0.35: Rectangle {
-                height: 70px;
-                border-radius: Theme.radius-tile;
-                background: Theme.surface-low;
-                border-width: 1px;
-                border-color: Theme.specular-rim;
-
-                HorizontalLayout {
-                    padding: 12px;
-                    spacing: 10px;
-                    alignment: start;
-
-                    Rectangle {
-                        width: 34px;
-                        height: 34px;
-                        y: (parent.height - self.height) / 2;
-                        border-radius: 10px;
-                        background: Theme.primary-container;
-
-                        Text {
-                            text: "★";
-                            font-size: 16px;
-                            color: Theme.primary;
-                            vertical-alignment: center;
-                            horizontal-alignment: center;
-                        }
-                    }
-
-                    VerticalLayout {
-                        spacing: 2px;
-                        alignment: center;
-
-                        Text {
-                            text: "Penumbra Core • Wayland Ready";
-                            font-size: 12px;
-                            font-weight: 700;
-                            color: Theme.on-surface;
-                        }
-
-                        Text {
-                            text: "Wayland convergence active: DSI phone shell ready";
-                            font-size: 11px;
-                            color: Theme.on-surface-variant;
-                        }
-                    }
-                }
-            }
-
-            // Bottom Dismiss Pull Handle (Tactile Pill Drag Indicator)
-            handle-container := Rectangle {
-                height: 28px;
-                background: transparent;
-
-                // Tactile Pill Drag Handle at the bottom edge: 48px x 5px, border-radius 2.5px, #ffffff66
                 Rectangle {
-                    width: 48px;
-                    height: 5px;
-                    x: (parent.width - self.width) / 2;
-                    y: parent.height - 14px;
-                    border-radius: 2.5px;
-                    background: #ffffff66;
-                }
-
-                handle-touch := TouchArea {
-                    property <length> press-start-y: 0px;
-                    property <length> last-pos-y: 0px;
-                    property <float> last-time: 0.0;
-
-                    pointer-event(event) => {
-                        if (event.kind == PointerEventKind.down) {
-                            self.press-start-y = handle-touch.mouse-y;
-                            self.last-pos-y = handle-touch.mouse-y;
-                        } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
-                            let vel = (handle-touch.mouse-y - self.last-pos-y) / 1px / 0.016;
-                            root.drag-released(root.slide-offset-y, vel);
+                    y: 112px;
+                    height: 72px;
+                    border-radius: Theme.radius-tile;
+                    background: Theme.surface-low;
+                    border-width: 1px;
+                    border-color: Theme.specular-rim;
+                    HorizontalLayout {
+                        padding: 12px;
+                        spacing: 12px;
+                        Rectangle {
+                            width: 48px;
+                            height: 48px;
+                            border-radius: 12px;
+                            background: Theme.primary-container;
+                            Text { text: "♫"; font-size: 20px; color: Theme.primary; horizontal-alignment: center; vertical-alignment: center; }
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: 2px;
+                            Text { text: "Nothing playing"; font-size: 13px; font-weight: 700; color: Theme.on-surface; }
+                            Text { text: "MPRIS player"; font-size: 11px; color: Theme.on-surface-variant; }
                         }
                     }
+                }
+            }
 
-                    moved => {
-                        if (handle-touch.pressed) {
-                            let delta = handle-touch.mouse-y - self.last-pos-y;
-                            self.last-pos-y = handle-touch.mouse-y;
-                            root.drag-delta(delta);
-                        }
+            // Notification stack: sits under the compact strip, gets pushed down as QS expands
+            VerticalLayout {
+                x: root.pad;
+                y: root.below-tiles + root.qs-block-h * root.morph;
+                width: parent.width - 2 * root.pad;
+                spacing: 8px;
+                if root.notifications.length == 0: Text {
+                    text: "No notifications";
+                    font-size: 12px;
+                    color: Theme.on-surface-variant;
+                    horizontal-alignment: center;
+                }
+                for n in root.notifications: Rectangle {
+                    height: 64px;
+                    border-radius: Theme.radius-tile;
+                    background: Theme.surface-low;
+                    border-width: 1px;
+                    border-color: Theme.specular-rim;
+                    VerticalLayout {
+                        padding: 12px;
+                        spacing: 2px;
+                        alignment: center;
+                        Text { text: n.app; font-size: 10px; color: Theme.on-surface-variant; overflow: elide; }
+                        Text { text: n.title; font-size: 13px; font-weight: 700; color: Theme.on-surface; overflow: elide; }
+                        Text { text: n.body; font-size: 11px; color: Theme.on-surface-variant; overflow: elide; }
+                    }
+                }
+            }
+        }
+
+        // ---- Edit mode ----
+        if root.edit-mode: Rectangle {
+            width: parent.width;
+            height: parent.height;
+            property <length> cw: (parent.width - 2 * root.pad - 10px) / 2;
+
+            Text {
+                x: root.pad;
+                y: 88px;
+                text: "Reorder with ◀ ▶, remove with ✕";
+                font-size: 12px;
+                font-weight: 600;
+                color: Theme.on-surface-variant;
+            }
+            for tile[i] in root.active-tiles: Rectangle {
+                x: root.pad + Math.mod(i, 2) * (parent.cw + 10px);
+                y: 112px + Math.floor(i / 2) * 64px;
+                width: parent.cw;
+                height: 56px;
+                border-radius: 16px;
+                background: Theme.surface-high;
+                border-width: 1px;
+                border-color: Theme.specular-rim;
+                Text { x: 12px; width: parent.width - 108px; text: "\{tile.icon-text}  \{tile.title}"; font-size: 12px; font-weight: 600; color: Theme.on-surface; vertical-alignment: center; overflow: elide; }
+                HorizontalLayout {
+                    x: parent.width - 96px;
+                    y: 13px;
+                    width: 90px;
+                    spacing: 3px;
+                    SmallButton { label: "◀"; button-width: 28px; clicked => { root.reorder-tiles(i, i - 1); } }
+                    SmallButton { label: "▶"; button-width: 28px; clicked => { root.reorder-tiles(i, i + 1); } }
+                    SmallButton { label: "✕"; button-width: 28px; clicked => { root.remove-tile(tile.id); } }
+                }
+            }
+
+            Rectangle {
+                x: root.pad;
+                y: 112px + Math.ceil(root.active-tiles.length / 2) * 64px + 8px;
+                width: parent.width - 2 * root.pad;
+                height: 1px;
+                background: Theme.specular-rim;
+            }
+            Text {
+                x: root.pad;
+                y: 112px + Math.ceil(root.active-tiles.length / 2) * 64px + 18px;
+                text: "Available tiles — tap + to add";
+                font-size: 12px;
+                font-weight: 600;
+                color: Theme.on-surface-variant;
+            }
+            for tile[i] in root.available-tiles: Rectangle {
+                x: root.pad + Math.mod(i, 2) * (parent.cw + 10px);
+                y: 112px + Math.ceil(root.active-tiles.length / 2) * 64px + 42px + Math.floor(i / 2) * 64px;
+                width: parent.cw;
+                height: 56px;
+                border-radius: 16px;
+                background: Theme.surface-low;
+                border-width: 1px;
+                border-color: Theme.specular-rim;
+                Text { x: 12px; width: parent.width - 52px; text: "\{tile.icon-text}  \{tile.title}"; font-size: 12px; color: Theme.on-surface; vertical-alignment: center; overflow: elide; }
+                SmallButton {
+                    x: parent.width - 40px;
+                    y: 13px;
+                    label: "+";
+                    accent: true;
+                    clicked => { root.add-tile(tile.id); }
+                }
+            }
+
+            SmallButton {
+                x: root.pad;
+                y: 790px;
+                label: "Reset";
+                button-width: 96px;
+                clicked => { root.reset-tiles(); }
+            }
+            SmallButton {
+                x: parent.width - root.pad - 96px;
+                y: 790px;
+                label: "Done";
+                accent: true;
+                button-width: 96px;
+                clicked => { root.exit-edit-mode(); }
+            }
+        }
+
+        // ---- Drag handle, glued to the bottom of the visible shade ----
+        Rectangle {
+            x: 0px;
+            y: parent.height - 36px;
+            width: parent.width;
+            height: 36px;
+            background: transparent;
+
+            Rectangle {
+                width: 48px;
+                height: 5px;
+                x: (parent.width - self.width) / 2;
+                y: 22px;
+                border-radius: 2.5px;
+                background: #ffffff50;
+                opacity: root.disp > 880px ? 0.4 : 1.0;
+            }
+
+            handle-touch := TouchArea {
+                property <length> last-pos-y: 0px;
+                property <float> velocity: 0.0;
+
+                pointer-event(event) => {
+                    if (event.kind == PointerEventKind.down) {
+                        self.last-pos-y = handle-touch.mouse-y;
+                        self.velocity = 0.0;
+                    } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
+                        root.drag-released(root.slide-offset-y, self.velocity);
+                    }
+                }
+
+                moved => {
+                    if (handle-touch.pressed) {
+                        // mouse-y is relative to this (moving) area, so the delta is the true finger motion.
+                        let delta = handle-touch.mouse-y - self.last-pos-y;
+                        // low-pass filtered velocity in px/s assuming ~60Hz motion events
+                        self.velocity = self.velocity * 0.6 + (delta / 1px / 0.016) * 0.4;
+                        root.drag-delta(delta);
                     }
                 }
             }

@@ -1,4 +1,6 @@
-import { QuickSettingsSlider } from "quick_settings_slider.slint";
+import { QuickSettingsSlider, TileData, NotificationData } from "quick_settings_slider.slint";
+
+export { TileData, NotificationData }
 
 export component QuickSettingsWindow inherits Window {
     title: "Penumbra Quick Settings";
@@ -9,25 +11,31 @@ export component QuickSettingsWindow inherits Window {
 
     in-out property <length> slide-offset-y: -915px;
     in-out property <float> expansion-progress: 0.0;
+    in-out property <bool> edit-mode: false;
 
     in-out property <float> brightness: 0.75;
     in-out property <float> volume: 0.60;
     in-out property <string> time-text: "12:00";
     in-out property <string> date-text: "Wednesday, Oct 21";
     in-out property <string> carrier-text: "Penumbra 5G";
+    in-out property <int> battery-pct: 100;
 
-    in-out property <bool> tile-internet: true;
-    in-out property <bool> tile-bluetooth: true;
-    in-out property <bool> tile-flashlight: false;
-    in-out property <bool> tile-dnd: false;
-    in-out property <bool> tile-hotspot: false;
-    in-out property <bool> tile-rotate: true;
+    in property <[TileData]> active-tiles;
+    in property <[TileData]> available-tiles;
+    in property <[NotificationData]> notifications;
 
     callback close-requested();
     callback power-action();
     callback settings-action();
     callback brightness-changed(float);
     callback volume-changed(float);
+    callback tile-clicked(string);
+    callback enter-edit-mode();
+    callback exit-edit-mode();
+    callback reset-tiles();
+    callback reorder-tiles(int, int);
+    callback remove-tile(string);
+    callback add-tile(string);
     callback drag-delta(length);
     callback drag-released(length, float);
 
@@ -35,26 +43,31 @@ export component QuickSettingsWindow inherits Window {
         width: 100%;
         height: 100%;
         slide-offset-y <=> root.slide-offset-y;
-        expansion-progress <=> root.expansion-progress;
-        brightness: root.brightness;
-        volume: root.volume;
+        expansion-progress: root.expansion-progress;
+        edit-mode <=> root.edit-mode;
+        brightness <=> root.brightness;
+        volume <=> root.volume;
         time-text: root.time-text;
         date-text: root.date-text;
         carrier-text: root.carrier-text;
-        tile-internet <=> root.tile-internet;
-        tile-bluetooth <=> root.tile-bluetooth;
-        tile-flashlight <=> root.tile-flashlight;
-        tile-dnd <=> root.tile-dnd;
-        tile-hotspot <=> root.tile-hotspot;
-        tile-rotate <=> root.tile-rotate;
+        battery-pct: root.battery-pct;
+        active-tiles: root.active-tiles;
+        available-tiles: root.available-tiles;
+        notifications: root.notifications;
 
         close-requested => { root.close-requested(); }
         power-action => { root.power-action(); }
         settings-action => { root.settings-action(); }
         brightness-changed(v) => { root.brightness-changed(v); }
         volume-changed(v) => { root.volume-changed(v); }
+        tile-clicked(id) => { root.tile-clicked(id); }
+        enter-edit-mode => { root.enter-edit-mode(); }
+        exit-edit-mode => { root.exit-edit-mode(); }
+        reset-tiles => { root.reset-tiles(); }
+        reorder-tiles(a, b) => { root.reorder-tiles(a, b); }
+        remove-tile(id) => { root.remove-tile(id); }
+        add-tile(id) => { root.add-tile(id); }
         drag-delta(dy) => { root.drag-delta(dy); }
         drag-released(cur_y, vel) => { root.drag-released(cur_y, vel); }
     }
 }
-

@@ -64,7 +64,7 @@ pub struct BatteryService {
 impl BatteryService {
     /// Connects to UPower on the system bus. If unavailable, initializes the mock provider.
     pub async fn new() -> Self {
-        let (info_tx, info_rx) = watch::channel(BatteryInfo::default());
+        let (info_tx, info_rx) = watch::channel(Self::read_system());
         let is_mock = Arc::new(AtomicBool::new(false));
 
         let service = Self {
@@ -156,36 +156,36 @@ impl BatteryService {
         }
     }
 
-    async fn run_mock_simulator(tx: watch::Sender<BatteryInfo>) {
-        let mut pct = 88.0;
-        let mut charging = false;
-
-        loop {
-            tokio::time::sleep(tokio::time::Duration::from_secs(4)).await;
-            if charging {
-                pct += 1.0;
-                if pct >= 100.0 {
-                    pct = 100.0;
-                    charging = false;
+    /// Reads the real battery from /sys/class/power_supply; no battery => AC at 100%.
+    fn read_system() -> BatteryInfo {
+        if let Ok(dir) = std::fs::read_dir("/sys/class/power_supply") {
+            for e in dir.flatten() {
+                let p = e.path();
+                let ty = std::fs::read_to_string(p.join("type")).unwrap_or_default();
+                if ty.trim() != "Battery" {
+                    continue;
                 }
-            } else {
-                pct -= 0.5;
-                if pct <= 15.0 {
-                    charging = true;
-                }
+                let pct = std::fs::read_to_string(p.join("capacity"))
+                    .ok()
+                    .and_then(|s| s.trim().parse::<f64>().ok())
+                    .unwrap_or(100.0);
+                let state = match std::fs::read_to_string(p.join("status")).unwrap_or_default().trim() {
+                    "Charging" => BatteryState::Charging,
+                    "Discharging" => BatteryState::Discharging,
+                    "Full" => BatteryState::FullyCharged,
+                    "Not charging" => BatteryState::PendingCharge,
+                    _ => BatteryState::Unknown,
+                };
+                return BatteryInfo { percentage: pct, is_charging: state.is_charging(), state };
             }
+        }
+        BatteryInfo { percentage: 100.0, state: BatteryState::FullyCharged, is_charging: false }
+    }
 
-            let state = if charging {
-                BatteryState::Charging
-            } else {
-                BatteryState::Discharging
-            };
-
-            let _ = tx.send(BatteryInfo {
-                percentage: pct,
-                state,
-                is_charging: charging,
-            });
+    async fn run_mock_simulator(tx: watch::Sender<BatteryInfo>) {
+        loop {
+            let _ = tx.send(Self::read_system());
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
         }
     }
 }
