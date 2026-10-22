@@ -61,10 +61,10 @@ fn to_sctk_keyboard(
 
 use crate::error::LayerShellError;
 use crate::input::InputProcessor;
-use crate::LayerConfig;
 use crate::shm::calculate_buffer_size;
 use crate::state::AppState;
 use crate::window::LayerWindow;
+use crate::LayerConfig;
 
 /// Internal holder of runtime event loop and Wayland connection structures.
 struct PlatformRuntime {
@@ -91,8 +91,9 @@ impl LayerShellPlatform {
         );
 
         let connection = Connection::connect_to_env()?;
-        let (globals, event_queue) = registry_queue_init::<AppState>(&connection)
-            .map_err(|e| LayerShellError::ProtocolError(format!("Registry init failed: {:?}", e)))?;
+        let (globals, event_queue) = registry_queue_init::<AppState>(&connection).map_err(|e| {
+            LayerShellError::ProtocolError(format!("Registry init failed: {:?}", e))
+        })?;
 
         let qh = event_queue.handle();
 
@@ -100,10 +101,9 @@ impl LayerShellPlatform {
         let registry_state = RegistryState::new(&globals);
 
         // Bind standard Wayland compositor protocol
-        let compositor_state =
-            CompositorState::bind(&globals, &qh).map_err(|e| {
-                LayerShellError::ProtocolError(format!("wl_compositor bind failure: {:?}", e))
-            })?;
+        let compositor_state = CompositorState::bind(&globals, &qh).map_err(|e| {
+            LayerShellError::ProtocolError(format!("wl_compositor bind failure: {:?}", e))
+        })?;
 
         // Bind output manager protocol
         let output_state = OutputState::new(&globals, &qh);
@@ -112,9 +112,8 @@ impl LayerShellPlatform {
         let seat_state = SeatState::new(&globals, &qh);
 
         // Bind shared memory protocol
-        let shm = Shm::bind(&globals, &qh).map_err(|e| {
-            LayerShellError::ProtocolError(format!("wl_shm bind failure: {:?}", e))
-        })?;
+        let shm = Shm::bind(&globals, &qh)
+            .map_err(|e| LayerShellError::ProtocolError(format!("wl_shm bind failure: {:?}", e)))?;
 
         // Pre-allocate a slot pool capable of holding at least one full window frame
         let initial_buf_size = calculate_buffer_size(config.width.max(1), config.height.max(1));
@@ -153,7 +152,10 @@ impl LayerShellPlatform {
 
         // Create ping mechanism to wake up event loop from Slint request_redraw
         let (ping, ping_source) = make_ping().map_err(|e| {
-            LayerShellError::EventLoopError(format!("Failed to create calloop ping source: {:?}", e))
+            LayerShellError::EventLoopError(format!(
+                "Failed to create calloop ping source: {:?}",
+                e
+            ))
         })?;
 
         loop_handle
@@ -166,11 +168,9 @@ impl LayerShellPlatform {
 
         // Register the Wayland socket event source
         let wayland_source = WaylandSource::new(connection.clone(), event_queue);
-        wayland_source
-            .insert(loop_handle)
-            .map_err(|e| {
-                LayerShellError::EventLoopError(format!("Failed to insert WaylandSource: {:?}", e))
-            })?;
+        wayland_source.insert(loop_handle).map_err(|e| {
+            LayerShellError::EventLoopError(format!("Failed to insert WaylandSource: {:?}", e))
+        })?;
 
         let runtime = PlatformRuntime {
             connection,
@@ -280,7 +280,10 @@ impl Platform for LayerShellPlatform {
 
             if let Err(e) = event_loop.dispatch(Some(timeout), app_state) {
                 error!("Error in calloop event loop dispatch: {:?}", e);
-                return Err(PlatformError::Other(format!("Event loop dispatch error: {:?}", e)));
+                return Err(PlatformError::Other(format!(
+                    "Event loop dispatch error: {:?}",
+                    e
+                )));
             }
 
             // Advance Slint timers and trigger animation step

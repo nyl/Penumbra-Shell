@@ -96,21 +96,16 @@ impl InputProcessor {
 
     /// Handles a touch down event. If no touch contact is active, claims this ID and emits
     /// a move followed by a press event.
-    pub fn touch_down(
-        &mut self,
-        id: i32,
-        pos: (f64, f64),
-        scale_factor: f32,
-    ) -> Vec<WindowEvent> {
+    pub fn touch_down(&mut self, id: i32, pos: (f64, f64), scale_factor: f32) -> Vec<WindowEvent> {
         let mut out = Vec::new();
         if self.active_touch_id.is_none() {
             self.active_touch_id = Some(id);
             self.last_touch_position = pos;
-            let logical_pos = LogicalPosition::new(
-                (pos.0 as f32) / scale_factor,
-                (pos.1 as f32) / scale_factor,
-            );
-            out.push(WindowEvent::PointerMoved { position: logical_pos });
+            let logical_pos =
+                LogicalPosition::new((pos.0 as f32) / scale_factor, (pos.1 as f32) / scale_factor);
+            out.push(WindowEvent::PointerMoved {
+                position: logical_pos,
+            });
             out.push(WindowEvent::PointerPressed {
                 position: logical_pos,
                 button: PointerEventButton::Left,
@@ -129,11 +124,11 @@ impl InputProcessor {
         let mut out = Vec::new();
         if self.active_touch_id == Some(id) {
             self.last_touch_position = pos;
-            let logical_pos = LogicalPosition::new(
-                (pos.0 as f32) / scale_factor,
-                (pos.1 as f32) / scale_factor,
-            );
-            out.push(WindowEvent::PointerMoved { position: logical_pos });
+            let logical_pos =
+                LogicalPosition::new((pos.0 as f32) / scale_factor, (pos.1 as f32) / scale_factor);
+            out.push(WindowEvent::PointerMoved {
+                position: logical_pos,
+            });
         }
         out
     }

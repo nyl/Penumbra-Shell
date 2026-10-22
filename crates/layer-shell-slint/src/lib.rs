@@ -35,6 +35,61 @@ pub use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::{
     Anchor, KeyboardInteractivity,
 };
 
+/// Returns a configured logical mobile shell size and the output scale derived
+/// from the real panel dimensions when available.
+pub fn mobile_output_geometry() -> (u32, u32, f32) {
+    let output_w = std::env::var("PENUMBRA_OUTPUT_WIDTH")
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .unwrap_or(1080);
+    let output_h = std::env::var("PENUMBRA_OUTPUT_HEIGHT")
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .unwrap_or(2340);
+
+    // The logical canvas is the 412x915 mobile design size. The compositor scales
+    // it uniformly onto the physical panel (letterboxed), so shells never lay out
+    // at panel pixels.
+    let logical_w = std::env::var("PENUMBRA_LOGICAL_WIDTH")
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .unwrap_or(412);
+    let logical_h = std::env::var("PENUMBRA_LOGICAL_HEIGHT")
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .unwrap_or(915);
+
+    let scale = std::env::var("PENUMBRA_SCALE_FACTOR")
+        .ok()
+        .and_then(|value| value.parse::<f32>().ok())
+        .unwrap_or_else(|| {
+            let scale_w = output_w as f32 / logical_w.max(1) as f32;
+            let scale_h = output_h as f32 / logical_h.max(1) as f32;
+            scale_w.min(scale_h)
+        });
+
+    (logical_w, logical_h, scale)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mobile_output_geometry;
+
+    #[test]
+    fn native_output_geometry_defaults_to_412x915_logical_canvas() {
+        std::env::set_var("PENUMBRA_OUTPUT_WIDTH", "1080");
+        std::env::set_var("PENUMBRA_OUTPUT_HEIGHT", "2340");
+        std::env::remove_var("PENUMBRA_LOGICAL_WIDTH");
+        std::env::remove_var("PENUMBRA_LOGICAL_HEIGHT");
+        std::env::remove_var("PENUMBRA_SCALE_FACTOR");
+
+        let (w, h, scale) = mobile_output_geometry();
+        assert_eq!(w, 412);
+        assert_eq!(h, 915);
+        assert!((scale - 2.557).abs() < 0.01, "scale={scale}");
+    }
+}
+
 /// Declarative configuration for creating a Wayland layer shell surface.
 #[derive(Debug, Clone)]
 pub struct LayerConfig {
@@ -158,10 +213,7 @@ impl LayerConfig {
     }
 
     /// Sets the keyboard interactivity mode (`None`, `Exclusive`, or `OnDemand`).
-    pub fn with_keyboard_interactivity(
-        mut self,
-        interactivity: KeyboardInteractivity,
-    ) -> Self {
+    pub fn with_keyboard_interactivity(mut self, interactivity: KeyboardInteractivity) -> Self {
         self.keyboard_interactivity = interactivity;
         self
     }

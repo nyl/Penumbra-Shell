@@ -1,7 +1,5 @@
 //! Implements [`slint::platform::WindowAdapter`] for native Wayland layer-shell surfaces.
 
-use std::cell::Cell;
-use std::rc::{Rc, Weak};
 use log::{debug, error, trace};
 use slint::platform::software_renderer::SoftwareRenderer;
 use slint::platform::{Renderer, WindowAdapter, WindowEvent};
@@ -9,6 +7,8 @@ use slint::{PhysicalSize, Window};
 use smithay_client_toolkit::shell::wlr_layer::LayerSurface;
 use smithay_client_toolkit::shell::WaylandSurface;
 use smithay_client_toolkit::shm::slot::SlotPool;
+use std::cell::Cell;
+use std::rc::{Rc, Weak};
 use wayland_client::protocol::wl_shm::Format;
 use wayland_client::QueueHandle;
 
@@ -50,6 +50,12 @@ impl LayerWindow {
     ) -> Rc<Self> {
         let renderer = SoftwareRenderer::new();
         let initial_size = PhysicalSize::new(initial_width, initial_height);
+        // Shells lay out at 1:1; panel scaling happens in the compositor.
+        let scale_factor = std::env::var("PENUMBRA_SCALE_FACTOR")
+            .ok()
+            .and_then(|value| value.parse::<f32>().ok())
+            .filter(|value| value.is_finite() && *value > 0.0)
+            .unwrap_or(1.0);
 
         Rc::new_cyclic(|weak_adapter: &Weak<Self>| {
             // Slint window requires a Weak<dyn WindowAdapter>
@@ -61,7 +67,7 @@ impl LayerWindow {
                 renderer,
                 layer_surface,
                 size: Cell::new(initial_size),
-                scale_factor: Cell::new(1.0),
+                scale_factor: Cell::new(scale_factor),
                 configured: Cell::new(false),
                 needs_redraw: Cell::new(true),
                 frame_callback_pending: Cell::new(false),
@@ -95,20 +101,8 @@ impl LayerWindow {
     /// Handles a Wayland configure event from the compositor.
     pub fn on_configure(&self, width: u32, height: u32) {
         let (current_w, current_h) = (self.size.get().width, self.size.get().height);
-        let new_w = if width > 0 {
-            width
-        } else if current_w > 0 {
-            current_w
-        } else {
-            412
-        };
-        let new_h = if height > 0 {
-            height
-        } else if current_h > 0 {
-            current_h
-        } else {
-            38
-        };
+        let new_w = if width > 0 { width } else { current_w };
+        let new_h = if height > 0 { height } else { current_h };
 
         let new_size = PhysicalSize::new(new_w, new_h);
         if self.size.get() != new_size || !self.configured.get() {
@@ -164,18 +158,14 @@ impl LayerWindow {
         let stride = calculate_stride(width);
 
         // Allocate or reuse a buffer slot from the shared memory pool
-        let (buffer, canvas) = match pool.create_buffer(
-            width as i32,
-            height as i32,
-            stride,
-            Format::Argb8888,
-        ) {
-            Ok(res) => res,
-            Err(e) => {
-                error!("Failed to allocate SHM buffer from SlotPool: {:?}", e);
-                return;
-            }
-        };
+        let (buffer, canvas) =
+            match pool.create_buffer(width as i32, height as i32, stride, Format::Argb8888) {
+                Ok(res) => res,
+                Err(e) => {
+                    error!("Failed to allocate SHM buffer from SlotPool: {:?}", e);
+                    return;
+                }
+            };
 
         // Safety: Argb8888Pixel is #[repr(C)] with 4 u8 bytes, identical to 32-bit ARGB8888.
         let pixel_count = (width as usize) * (height as usize);

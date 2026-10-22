@@ -143,7 +143,8 @@ impl OutputHandler for AppState {
 
     fn new_output(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _output: WlOutput) {}
     fn update_output(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _output: WlOutput) {}
-    fn output_destroyed(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _output: WlOutput) {}
+    fn output_destroyed(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _output: WlOutput) {
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -344,12 +345,7 @@ impl TouchHandler for AppState {
 // Layer Shell Handler
 // ---------------------------------------------------------------------------
 impl LayerShellHandler for AppState {
-    fn closed(
-        &mut self,
-        _conn: &Connection,
-        _qh: &QueueHandle<Self>,
-        _layer: &LayerSurface,
-    ) {
+    fn closed(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _layer: &LayerSurface) {
         info!("Wayland layer surface closed by compositor; terminating event loop");
         self.exit_flag.store(true, Ordering::SeqCst);
     }
