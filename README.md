@@ -15,7 +15,7 @@ Penumbra is an open-source desktop environment for Linux phones. It provides a t
 
 | Home screen | App drawer | Folder | Quick settings |
 |:---:|:---:|:---:|:---:|
-| <img src="assets/screenshots/homescreen.png" width="200" alt="Home screen"> | <img src="assets/screenshots/app_drawer.png" width="200" alt="App drawer"> | <img src="assets/screenshots/folder.png" width="200" alt="Folder"> | <img src="assets/screenshots/quick_settings.png" width="200" alt="Quick settings"> |
+| <img src="assets/screenshots/homescreen.jpg" width="200" alt="Home screen"> | <img src="assets/screenshots/app_drawer.jpg" width="200" alt="App drawer"> | <img src="assets/screenshots/folder.jpg" width="200" alt="Folder"> | <img src="assets/screenshots/quick_settings.jpg" width="200" alt="Quick settings"> |
 
 **Running on a real phone**
 
