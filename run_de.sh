@@ -43,7 +43,7 @@ cargo build --bin penumbra-comp --bin penumbra-top-bar --bin penumbra-homescreen
 rm -f "$XDG_RUNTIME_DIR/$PENUMBRA_SOCKET"* "/tmp/$PENUMBRA_SOCKET"* 2>/dev/null || true
 
 # 1. Start Compositor
-COMP_ARGS="--socket $PENUMBRA_SOCKET"
+COMP_ARGS="--nested --socket $PENUMBRA_SOCKET"
 if [ "$MODE" = "dual" ]; then
     COMP_ARGS="$COMP_ARGS --convergence"
 fi

@@ -1,0 +1,2 @@
+# ARM64 native builds use the reproducible Alpine image in
+# Dockerfile.aarch64-alpine via scripts/build-arm64-alpine.sh.

@@ -12,7 +12,7 @@ cargo build --workspace
 rm -f "$XDG_RUNTIME_DIR/$PENUMBRA_SOCKET"* "/tmp/$PENUMBRA_SOCKET"* 2>/dev/null || true
 
 # 1. Start Penumbra Compositor
-COMPOSITOR_ARGS="--socket $PENUMBRA_SOCKET"
+COMPOSITOR_ARGS="--nested --socket $PENUMBRA_SOCKET"
 WAYLAND_DISPLAY="$HOST_WAYLAND" DISPLAY="$HOST_X11" HOST_WAYLAND_DISPLAY="$HOST_WAYLAND" ./target/debug/penumbra-comp $COMPOSITOR_ARGS &
 COMP_PID=$!
 

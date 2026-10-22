@@ -1,0 +1,104 @@
+FROM alpine:edge
+
+COPY docker/aarch64-unknown-linux-musl-gcc /tmp/aarch64-unknown-linux-musl-gcc
+
+RUN apk add --no-cache \
+        bash \
+        build-base \
+        alpine-keys \
+        bison \
+        ca-certificates \
+        cargo-zigbuild \
+        cmake \
+        flex \
+        git \
+        meson \
+        ninja \
+        pkgconf \
+        python3 \
+        rustup \
+        tar \
+        wget \
+        zig \
+    && rustup-init -y --profile minimal --default-toolchain stable \
+        --target aarch64-unknown-linux-musl --no-modify-path \
+    && mkdir -p /opt/aarch64-sysroot/etc/apk \
+    && cp -a /etc/apk/keys /opt/aarch64-sysroot/etc/apk/ \
+    && printf '%s\n' \
+        'https://dl-cdn.alpinelinux.org/alpine/edge/main' \
+        'https://dl-cdn.alpinelinux.org/alpine/edge/community' \
+        > /opt/aarch64-sysroot/etc/apk/repositories \
+    && apk --root /opt/aarch64-sysroot \
+        --keys-dir /etc/apk/keys \
+        --arch aarch64 \
+        --initdb \
+        --no-cache \
+        --no-scripts \
+        --allow-untrusted \
+        add \
+        eudev-dev \
+        elogind-dev \
+        libdrm-dev \
+        libinput-dev \
+        libseat-dev \
+        libxkbcommon-dev \
+        musl-dev \
+        linux-headers \
+        mesa-dev \
+        mesa-egl \
+        mesa-gbm \
+        mesa-gles \
+    && for library in gbm seat input drm udev; do \
+        soname=$(ls /opt/aarch64-sysroot/usr/lib/lib${library}.so.* 2>/dev/null | head -n 1); \
+        soname=${soname##*/}; \
+        [ -n "$soname" ] && ln -sf "$soname" "/opt/aarch64-sysroot/usr/lib/lib${library}.so"; \
+    done \
+    && mkdir -p /usr/local/bin \
+    && install -m 0755 /tmp/aarch64-unknown-linux-musl-gcc /usr/local/bin/aarch64-unknown-linux-musl-gcc \
+    && printf '%s\n' '#!/bin/sh' 'exec zig ar "$@"' > /usr/local/bin/aarch64-unknown-linux-musl-ar \
+    && chmod +x /usr/local/bin/aarch64-unknown-linux-musl-ar \
+    && printf '%s\n' '#!/bin/sh' 'exec zig ranlib "$@"' > /usr/local/bin/aarch64-unknown-linux-musl-ranlib \
+    && chmod +x /usr/local/bin/aarch64-unknown-linux-musl-ranlib \
+    && printf '%s\n' '#!/bin/sh' 'exec zig strip "$@"' > /usr/local/bin/aarch64-unknown-linux-musl-strip \
+    && chmod +x /usr/local/bin/aarch64-unknown-linux-musl-strip \
+    && cd /tmp \
+    && wget -q https://github.com/xkbcommon/libxkbcommon/archive/refs/tags/xkbcommon-1.7.0.tar.gz -O xkbcommon.tar.gz \
+    && tar -xzf xkbcommon.tar.gz \
+    && sed -i 's/#if defined(HAVE_EACCESS)/#if 0 \/\* eaccess is unavailable in the musl cross sysroot *\//' libxkbcommon-xkbcommon-1.7.0/src/utils.h \
+    && sed -i 's/#elif defined(HAVE_EUIDACCESS)/#elif 0 \/\* euidaccess is unavailable in the musl cross sysroot *\//' libxkbcommon-xkbcommon-1.7.0/src/utils.h \
+    && printf '%s\n' \
+        '[binaries]' \
+        "c = '/usr/local/bin/aarch64-unknown-linux-musl-gcc'" \
+        "ar = '/usr/local/bin/aarch64-unknown-linux-musl-ar'" \
+        "strip = '/usr/local/bin/aarch64-unknown-linux-musl-strip'" \
+        '[host_machine]' \
+        "system = 'linux'" \
+        "cpu_family = 'aarch64'" \
+        "cpu = 'aarch64'" \
+        "endian = 'little'" \
+        > xkbcommon-cross.txt \
+        && sed -i '/^# Tests$/i if false' libxkbcommon-xkbcommon-1.7.0/meson.build \
+        && sed -i '/^# Documentation\.$/i endif' libxkbcommon-xkbcommon-1.7.0/meson.build \
+    && meson setup xkbcommon-build libxkbcommon-xkbcommon-1.7.0 \
+        --cross-file xkbcommon-cross.txt \
+        --prefix=/opt/aarch64-sysroot/usr \
+        --buildtype=minsize \
+        -Ddefault_library=static \
+        -Dxkb-config-root=/opt/aarch64-sysroot/usr/share/X11/xkb \
+        -Denable-x11=false \
+        -Denable-wayland=false \
+        -Denable-xkbregistry=false \
+        -Denable-docs=false \
+        -Denable-tools=false \
+    && meson compile -C xkbcommon-build \
+    && meson install -C xkbcommon-build
+
+ENV PKG_CONFIG_ALLOW_CROSS=1 \
+    PATH=/root/.cargo/bin:$PATH \
+    PKG_CONFIG_LIBDIR=/opt/aarch64-sysroot/usr/lib/pkgconfig:/opt/aarch64-sysroot/usr/share/pkgconfig \
+    PKG_CONFIG_PATH=/opt/aarch64-sysroot/usr/lib/pkgconfig:/opt/aarch64-sysroot/usr/share/pkgconfig \
+    PKG_CONFIG_SYSROOT_DIR=/opt/aarch64-sysroot \
+    CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-unknown-linux-musl-gcc \
+    RUSTFLAGS=-Lnative=/opt/aarch64-sysroot/usr/lib
+
+WORKDIR /workspace

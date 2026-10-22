@@ -1,0 +1,17 @@
+#!/bin/sh
+set -eu
+
+runtime_dir=${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR must be set}
+host_display=${HOST_WAYLAND_DISPLAY:-wayland-0}
+child_display=wayland-penumbra-host
+log_file="$runtime_dir/penumbra-nested-session.log"
+
+exec >>"$log_file" 2>&1
+printf '%s starting host=%s child=%s\n' "$(date -Iseconds)" "$host_display" "$child_display"
+
+export WAYLAND_DISPLAY="$host_display"
+exec /usr/bin/phoc \
+    --socket "$child_display" \
+    -S \
+    -C /usr/share/phosh/phoc.ini \
+    -E /usr/local/bin/penumbra-session

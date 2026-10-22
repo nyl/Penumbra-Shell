@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+log_file="${PENUMBRA_SESSION_LOG:-/tmp/penumbra-session-${UID}.log}"
+if [[ -z "${PENUMBRA_SESSION_LOG:-}" ]]; then
+    : >"$log_file"
+fi
+exec >>"$log_file" 2>&1
+printf '%s launcher uid=%s dbus=%s\n' \
+    "$(date -Iseconds)" "$(id -u)" "${DBUS_SESSION_BUS_ADDRESS:-unset}"
+
+if [[ -z "${PENUMBRA_DBUS_WRAPPED:-}" ]] && command -v dbus-run-session >/dev/null 2>&1 \
+    && [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
+    export PENUMBRA_DBUS_WRAPPED=1
+    exec dbus-run-session -- "$0" "$@"
+fi
+
+export XDG_CURRENT_DESKTOP=Penumbra
+export XDG_SESSION_DESKTOP=Penumbra
+export XDG_SESSION_TYPE=wayland
+export GDK_BACKEND=wayland,x11
+export QT_QPA_PLATFORM="wayland;xcb"
+export SDL_VIDEODRIVER=wayland
+export MOZ_ENABLE_WAYLAND=1
+export XKB_CONFIG_ROOT="${XKB_CONFIG_ROOT:-/usr/share/X11/xkb}"
+export SLINT_DEFAULT_FONT="${SLINT_DEFAULT_FONT:-/usr/share/fonts/droid/DroidSans.ttf}"
+export PENUMBRA_OUTPUT_WIDTH="${PENUMBRA_OUTPUT_WIDTH:-1080}"
+export PENUMBRA_OUTPUT_HEIGHT="${PENUMBRA_OUTPUT_HEIGHT:-2340}"
+# Shells lay out at 1:1 on the fixed 412x915 logical canvas; the compositor scales it to the panel.
+export PENUMBRA_LOGICAL_WIDTH="${PENUMBRA_LOGICAL_WIDTH:-412}"
+export PENUMBRA_LOGICAL_HEIGHT="${PENUMBRA_LOGICAL_HEIGHT:-915}"
+export PENUMBRA_SCALE_FACTOR="${PENUMBRA_SCALE_FACTOR:-1.0}"
+
+runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+socket="$runtime_dir/wayland-penumbra-0"
+
+printf '%s starting uid=%s seat=%s session=%s\n' \
+    "$(date -Iseconds)" "$(id -u)" "${XDG_SEAT:-}" "${XDG_SESSION_ID:-}"
+printf '%s runtime=%s wayland=%s path=%s\n' \
+    "$(date -Iseconds)" "$runtime_dir" "${WAYLAND_DISPLAY:-}" "$PATH"
+
+if [[ ! -d "$runtime_dir" ]]; then
+    printf '%s runtime directory is unavailable\n' "$(date -Iseconds)"
+    exit 1
+fi
+
+penumbra_comp_pid=''
+shell_pids=()
+
+cleanup() {
+    trap - EXIT INT TERM
+    if [[ -n "$penumbra_comp_pid" ]]; then
+        kill "$penumbra_comp_pid" 2>/dev/null || true
+    fi
+    if ((${#shell_pids[@]} > 0)); then
+        kill "${shell_pids[@]}" 2>/dev/null || true
+    fi
+}
+
+trap cleanup EXIT INT TERM
+
+rm -f "$socket"
+case "${PENUMBRA_BACKEND:-nested}" in
+    native)
+        compositor_args=(--native)
+        backend_name=native
+        ;;
+    nested)
+        compositor_args=(--nested)
+        backend_name=nested
+        if [[ -z "${WAYLAND_DISPLAY:-}" ]]; then
+            export WAYLAND_DISPLAY="${HOST_WAYLAND_DISPLAY:-wayland-0}"
+        fi
+        ;;
+    *)
+        printf '%s invalid PENUMBRA_BACKEND=%s\n' \
+            "$(date -Iseconds)" "${PENUMBRA_BACKEND}" >&2
+        exit 2
+        ;;
+esac
+printf '%s backend=%s host_wayland=%s\n' \
+    "$(date -Iseconds)" "$backend_name" "${WAYLAND_DISPLAY:-unset}"
+penumbra-comp "${compositor_args[@]}" --socket wayland-penumbra-0 &
+penumbra_comp_pid=$!
+printf '%s compositor_pid=%s\n' "$(date -Iseconds)" "$penumbra_comp_pid"
+
+for _ in {1..50}; do
+    if [[ -S "$socket" ]]; then
+        break
+    fi
+    if ! kill -0 "$penumbra_comp_pid" 2>/dev/null; then
+        printf '%s compositor exited before socket was ready\n' "$(date -Iseconds)"
+        wait "$penumbra_comp_pid"
+        exit 1
+    fi
+    sleep 0.1
+done
+
+if [[ ! -S "$socket" ]]; then
+    printf '%s timed out waiting for %s\n' "$(date -Iseconds)" "$socket"
+    echo "Timed out waiting for $socket" >&2
+    exit 1
+fi
+
+export WAYLAND_DISPLAY=wayland-penumbra-0
+
+penumbra-top-bar &
+shell_pids+=("$!")
+penumbra-homescreen &
+shell_pids+=("$!")
+penumbra-quicksettings &
+shell_pids+=("$!")
+penumbra-nav-bar &
+shell_pids+=("$!")
+
+set +e
+wait "$penumbra_comp_pid"
+compositor_status=$?
+set -e
+printf '%s compositor_exit_status=%s\n' "$(date -Iseconds)" "$compositor_status"
+for shell_pid in "${shell_pids[@]}"; do
+    wait "$shell_pid" 2>/dev/null || true
+done
+exit "$compositor_status"

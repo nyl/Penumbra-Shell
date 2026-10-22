@@ -1,0 +1,23 @@
+#!/bin/sh
+
+filtered_args=
+for argument do
+    case "$argument" in
+        */rustlib/*/lib/self-contained/crt1.o|*/rustlib/*/lib/self-contained/crti.o|*/rustlib/*/lib/self-contained/crtbegin.o|*/rustlib/*/lib/self-contained/crtend.o|*/rustlib/*/lib/self-contained/crtn.o)
+            continue
+            ;;
+        -Wl,--fix-cortex-a53-843419|-Wl,-O1|-static)
+            continue
+            ;;
+        -lgbm|-lseat|-linput|-ludev|-ldrm)
+            filtered_args="$filtered_args -Wl,-Bdynamic $argument -Wl,-Bstatic"
+            ;;
+        *)
+            filtered_args="$filtered_args $argument"
+            ;;
+    esac
+done
+
+# shellcheck disable=SC2086
+set -- $filtered_args
+exec zig cc -target aarch64-linux-musl "$@"
