@@ -20,7 +20,7 @@ wayland-penumbra-*
 .agents/
 .gemini/
 
-# AI agent instructions and tooling (kept local, not pushed)
+# AI agent instructions and tooling (kept local, not pushed if someone uses the repository)
 AGENT_RULES.md
 AGENTS.md
 CLAUDE.md
@@ -28,7 +28,20 @@ CLAUDE.md
 .cursor/
 .claude/
 .copilot/
+.windsurf/
+.windsurfrules
+.clinerules
+.roo/
+.continue/
+.codex/
+.aider*
 .github/copilot-instructions.md
+.github/prompts/
+.github/instructions/
+.github/agents/
+*.prompt.md
+*.instructions.md
+*.agent.md
 
 # OS specific files
 .DS_Store
