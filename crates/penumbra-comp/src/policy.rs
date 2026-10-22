@@ -2,10 +2,12 @@
 
 use std::collections::HashMap;
 
+use crate::phone::{PHONE_H, PHONE_W};
+
 /// Physical output role in the Penumbra convergence model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OutputRole {
-    /// Output A: Primary Phone Display (DSI, 412x915 @ 20:9).
+    /// Output A: Primary Phone Display (DSI, 412x915 logical canvas @ 20:9).
     /// Enforces strict single-window fullscreen layout, gesture interception, and layer-shell overlay.
     PhoneDsi,
     /// Output B: Secondary External Monitor (HDMI/Type-C, 1920x1080 @ 16:9).
@@ -41,13 +43,13 @@ pub struct OutputConfig {
 }
 
 impl OutputConfig {
-    /// Mobile Phone DSI output policy: 412x915 @ 120Hz.
+    /// Mobile Phone DSI output policy: 412x915 logical canvas @ 120Hz.
     pub fn phone_dsi() -> Self {
         Self {
             role: OutputRole::PhoneDsi,
             name: "DSI-1 (Pixel Mobile)".to_string(),
-            width: 412,
-            height: 915,
+            width: PHONE_W,
+            height: PHONE_H,
             refresh_rate_mhz: 120_000,
             scale: 1.0,
             allows_floating: false,

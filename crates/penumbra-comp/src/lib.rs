@@ -1,6 +1,10 @@
 //! Penumbra Compositor library.
 
 pub mod args;
+#[cfg(feature = "native-drm")]
+pub mod native;
+#[cfg(feature = "native-drm")]
+mod native_input;
 pub mod phone;
 pub mod policy;
 pub mod server;

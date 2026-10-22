@@ -6,9 +6,19 @@ authors.workspace = true
 license.workspace = true
 description = "Smithay-based Mobile Wayland Compositor with Convergence and Output Policies"
 
+[features]
+default = []
+native-drm = [
+	"smithay/backend_drm",
+	"smithay/backend_gbm",
+	"smithay/backend_session_libseat",
+	"smithay/backend_udev",
+	"smithay/backend_libinput",
+]
+
 [dependencies]
 penumbra-gestures = { path = "../penumbra-gestures" }
-smithay = { version = "0.7", default-features = false, features = ["backend_winit", "backend_egl", "desktop", "renderer_gl", "wayland_frontend", "input"] }
+smithay = { version = "0.7", default-features = false, features = ["backend_winit", "backend_egl", "desktop", "renderer_gl", "wayland_frontend"] }
 clap = { version = "4.5", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"

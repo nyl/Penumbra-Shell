@@ -12,10 +12,14 @@
 
 use std::path::PathBuf;
 
-/// Phone display width.
+/// Logical mobile UI canvas used by the shell and app layout (phone design size).
+/// The native backend scales this canvas onto the physical panel.
 pub const PHONE_W: i32 = 412;
-/// Phone display height.
+/// Logical mobile UI canvas height.
 pub const PHONE_H: i32 = 915;
+/// Physical panel size used when no compositor-provided mode is available.
+pub const NATIVE_OUTPUT_W: u32 = 1080;
+pub const NATIVE_OUTPUT_H: u32 = 2340;
 /// Persistent top status bar height (`y: 0..42`).
 pub const STATUS_BAR_H: i32 = 42;
 /// Persistent bottom gesture bar height (`y: 883..915`).
@@ -35,7 +39,7 @@ pub const CARD_W: i32 = 321;
 pub const CARD_H: i32 = 656;
 /// Overview card top edge.
 pub const CARD_Y: i32 = APP_Y + 70;
-/// Horizontal distance between adjacent cards (321px width + 20px gap).
+/// Horizontal distance between adjacent cards.
 pub const CARD_STEP: i32 = 341;
 
 pub const SHELL_STATE_FILE: &str = "penumbra-shell-state";
@@ -200,6 +204,37 @@ pub fn write_atomic(path: &std::path::Path, contents: &str) -> std::io::Result<(
     std::fs::rename(&tmp, path)
 }
 
+/// Calculates the uniform output scale factor that maps the logical mobile shell
+/// (412x915) onto the physical panel after a native DRM mode has been chosen.
+/// The logical shell layout stays fixed while the physical output size drives the scale.
+pub fn native_output_scale(physical: (u32, u32), logical: (u32, u32)) -> f64 {
+    let physical_w = physical.0 as f64;
+    let physical_h = physical.1 as f64;
+    let logical_w = logical.0 as f64;
+    let logical_h = logical.1 as f64;
+    let scale_w = if logical_w > 0.0 {
+        physical_w / logical_w
+    } else {
+        1.0
+    };
+    let scale_h = if logical_h > 0.0 {
+        physical_h / logical_h
+    } else {
+        1.0
+    };
+    scale_w.min(scale_h)
+}
+
+/// Logical-space offset that centers the scaled logical canvas on the physical panel.
+pub fn letterbox_offset(physical: (u32, u32), logical: (u32, u32), scale: f64) -> (i32, i32) {
+    if scale <= 0.0 {
+        return (0, 0);
+    }
+    let dx = (physical.0 as f64 / scale - logical.0 as f64) / 2.0;
+    let dy = (physical.1 as f64 / scale - logical.1 as f64) / 2.0;
+    (dx.round() as i32, dy.round() as i32)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -242,12 +277,25 @@ mod tests {
 
     #[test]
     fn overview_cards_layout() {
-        // Active card centered: (412 - 321) / 2 = 45.5 -> round = 46 (or 45)
         let center = ((PHONE_W - CARD_W) / 2) as f64;
         let expected_center = center.round() as i32;
         assert_eq!(card_x(0, 0.0), expected_center);
         assert_eq!(card_x(1, 0.0), expected_center - CARD_STEP);
-        // Scrolling to index 1 centers it
         assert_eq!(card_x(1, 1.0), expected_center);
+    }
+
+    #[test]
+    fn letterbox_centers_logical_canvas() {
+        assert_eq!(letterbox_offset((412, 915), (412, 915), 1.0), (0, 0));
+        // Panel 1080x2340: height limits the scale, width is centered (pillarbox).
+        let scale = native_output_scale((NATIVE_OUTPUT_W, NATIVE_OUTPUT_H), (PHONE_W as u32, PHONE_H as u32));
+        assert!((scale - 2.557).abs() < 0.01, "scale={scale}");
+        assert_eq!(
+            letterbox_offset((NATIVE_OUTPUT_W, NATIVE_OUTPUT_H), (PHONE_W as u32, PHONE_H as u32), scale),
+            (5, 0)
+        );
+        // Short wide output: height limits the scale, width is centered.
+        let scale = native_output_scale((1080, 1000), (412, 915));
+        assert_eq!(letterbox_offset((1080, 1000), (412, 915), scale), (288, 0));
     }
 }

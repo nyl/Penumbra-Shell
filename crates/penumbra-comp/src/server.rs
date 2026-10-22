@@ -10,8 +10,8 @@ use tracing::{debug, info};
 use smithay::{
     backend::{
         input::{
-            AbsolutePositionEvent, Axis, InputEvent, KeyboardKeyEvent,
-            PointerAxisEvent, PointerButtonEvent,
+            AbsolutePositionEvent, Axis, InputEvent, KeyboardKeyEvent, PointerAxisEvent,
+            PointerButtonEvent,
         },
         renderer::{
             element::{
@@ -77,9 +77,8 @@ use smithay::{
 
 use crate::args::CliArgs;
 use crate::phone::{
-    self, card_transform, parse_commands, runtime_path, task_line, write_atomic,
-    PhoneMode, ShellCommand, ShellState, APP_H, APP_Y, NAV_BAR_H,
-    NAV_BAR_Y, PHONE_H, PHONE_W, STATUS_BAR_H,
+    self, card_transform, parse_commands, runtime_path, task_line, write_atomic, PhoneMode,
+    ShellCommand, ShellState, APP_H, APP_Y, NAV_BAR_H, NAV_BAR_Y, PHONE_H, PHONE_W, STATUS_BAR_H,
 };
 use crate::policy::{AsymmetricOutputManager, OutputRole};
 use penumbra_gestures::{GestureStateMachine, NavigationGesture, Spring};
@@ -127,6 +126,8 @@ pub struct PenumbraServerState {
     pub overview_scroll: f64,
     /// Last task list written to the shell, to avoid redundant writes.
     pub last_tasks_published: String,
+    /// Logical canvas for Output A; layer surfaces are sized to this, not the raw mode.
+    pub phone_logical_size: (i32, i32),
 }
 
 /// A Wayland toplevel living on the phone output.
@@ -142,7 +143,7 @@ impl PenumbraServerState {
             .and_then(|w| w.toplevel().map(|t| t.wl_surface().clone()))
     }
 
-    fn active_phone_surface(&self) -> Option<WlSurface> {
+    pub(crate) fn active_phone_surface(&self) -> Option<WlSurface> {
         self.phone_tasks
             .first()
             .and_then(|t| t.window.toplevel().map(|t| t.wl_surface().clone()))
@@ -153,13 +154,13 @@ impl PenumbraServerState {
     }
 
     /// Whether an app currently occupies the phone inset (Layer 1 is visible).
-    fn phone_app_visible(&self) -> bool {
+    pub(crate) fn phone_app_visible(&self) -> bool {
         self.shell_state.mode == PhoneMode::App && !self.phone_tasks.is_empty()
     }
 
     /// Resolves the surface receiving input at `pos` on the phone output.
     /// Returns the surface and its origin in global compositor coordinates.
-    fn phone_focus_under(
+    pub(crate) fn phone_focus_under(
         &self,
         pos: Point<f64, smithay::utils::Logical>,
     ) -> Option<(WlSurface, Point<f64, smithay::utils::Logical>)> {
@@ -204,18 +205,31 @@ impl PenumbraServerState {
 
         // 5. Background layer (e.g. penumbra-homescreen)
         if let Some(l) = map_a.layer_under(Layer::Background, pos) {
-            return Some((
-                l.wl_surface().clone(),
-                (0.0, 0.0).into(),
-            ));
+            return Some((l.wl_surface().clone(), (0.0, 0.0).into()));
         }
 
         // 6. Legacy root_shell (if running legacy monolithic shell)
         self.root_surface().map(|s| (s, (0.0, 0.0).into()))
     }
 
+    /// Eases the animated overview carousel towards the shell's target index.
+    /// While the user drags, it tracks the finger 1:1; on release it decelerates
+    /// into a magnetic lock.
+    pub(crate) fn advance_overview_scroll(&mut self) {
+        let scroll_target = self.shell_state.overview_scroll;
+        if self.shell_state.is_dragging {
+            self.overview_scroll = scroll_target;
+        } else {
+            let scroll_diff = scroll_target - self.overview_scroll;
+            self.overview_scroll += scroll_diff * 0.35;
+            if scroll_diff.abs() < 0.002 {
+                self.overview_scroll = scroll_target;
+            }
+        }
+    }
+
     /// Reads shell state + commands and publishes the phone task list.
-    fn poll_shell_ipc(&mut self) {
+    pub(crate) fn poll_shell_ipc(&mut self) {
         if let Ok(text) = std::fs::read_to_string(runtime_path(phone::SHELL_STATE_FILE)) {
             let new_state = ShellState::parse(&text);
             if new_state != self.shell_state {
@@ -240,7 +254,10 @@ impl PenumbraServerState {
         if self.phone_tasks.is_empty() && self.shell_state.mode == PhoneMode::App {
             info!("All phone tasks closed -> returning to Home mode");
             self.shell_state.mode = PhoneMode::Home;
-            let _ = write_atomic(&runtime_path(phone::SHELL_STATE_FILE), &self.shell_state.serialize());
+            let _ = write_atomic(
+                &runtime_path(phone::SHELL_STATE_FILE),
+                &self.shell_state.serialize(),
+            );
         }
 
         let mut listing = String::new();
@@ -346,8 +363,7 @@ impl XdgShellHandler for PenumbraServerState {
         }
 
         // 2. Client Application Windows (routed to Phone or Desktop depending on launcher)
-        let runtime_dir =
-            std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
+        let runtime_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
         let target_file = Path::new(&runtime_dir).join("penumbra-target-output");
         let target_output = if target_file.exists() {
             let content = std::fs::read_to_string(&target_file).unwrap_or_default();
@@ -381,10 +397,15 @@ impl XdgShellHandler for PenumbraServerState {
             // Automatically switch to App mode and save state
             self.shell_state.mode = PhoneMode::App;
             self.shell_state.drawer_open = false;
-            let _ = write_atomic(&runtime_path(phone::SHELL_STATE_FILE), &self.shell_state.serialize());
+            let _ = write_atomic(
+                &runtime_path(phone::SHELL_STATE_FILE),
+                &self.shell_state.serialize(),
+            );
             return;
         } else {
-            info!("Routing application to Output B [External Desktop]: floating inside usable zone");
+            info!(
+                "Routing application to Output B [External Desktop]: floating inside usable zone"
+            );
             let mut offset_x = 414 + 60;
             let mut offset_y = 60;
             let mut win_w = 800;
@@ -393,7 +414,10 @@ impl XdgShellHandler for PenumbraServerState {
             if let Some(ref out_b) = self.output_b {
                 let map_b = layer_map_for_output(out_b);
                 let usable_zone = map_b.non_exclusive_zone();
-                info!("Output B layer-shell usable non-exclusive zone: {:?}", usable_zone);
+                info!(
+                    "Output B layer-shell usable non-exclusive zone: {:?}",
+                    usable_zone
+                );
 
                 let max_w = (usable_zone.size.w - 80).max(400);
                 let max_h = (usable_zone.size.h - 80).max(300);
@@ -450,9 +474,7 @@ impl WlrLayerShellHandler for PenumbraServerState {
         // Desktop components (desktop panel, dock, external monitor applets) map to Output B.
         // Mobile shell layer surfaces (top-bar, status-bar, nav, osk) default to Output A (Phone Screen).
         let ns = namespace.to_lowercase();
-        let target_output = if ns.contains("desktop")
-            || ns.contains("panel")
-            || ns.contains("dock")
+        let target_output = if ns.contains("desktop") || ns.contains("panel") || ns.contains("dock")
         {
             self.output_b.as_ref().unwrap_or(&self.output_a)
         } else if let Some(ref wl_out) = output {
@@ -468,33 +490,51 @@ impl WlrLayerShellHandler for PenumbraServerState {
 
         let mut map = layer_map_for_output(target_output);
         let layer_surface = LayerSurface::new(surface, namespace.clone());
-        let _ = map.map_layer(&layer_surface);
-        map.arrange();
-        let output_size = target_output.current_mode().map(|m| m.size).unwrap_or((412, 915).into());
-        if layer == Layer::Background {
+        // Phone chrome is sized to the logical canvas; the compositor scales it to the panel.
+        let output_size: smithay::utils::Size<i32, smithay::utils::Logical> =
+            if target_output == &self.output_a {
+                (self.phone_logical_size.0, self.phone_logical_size.1).into()
+            } else {
+                target_output
+                    .current_mode()
+                    .map(|m| (m.size.w, m.size.h).into())
+                    .unwrap_or((1280, 720).into())
+            };
+        let explicit_mobile_size = if ns.contains("homescreen") {
+            Some((output_size.w.max(1), output_size.h.max(1)))
+        } else if ns.contains("nav") {
+            Some((output_size.w.max(1), NAV_BAR_H))
+        } else if ns.contains("top") || ns.contains("status") {
+            Some((output_size.w.max(1), STATUS_BAR_H))
+        } else if ns.contains("quick") {
+            Some((output_size.w.max(1), output_size.h.max(1)))
+        } else {
+            None
+        };
+        if let Some((width, height)) = explicit_mobile_size {
+            debug!(
+                "Using explicit mobile layer size: {}x{} for namespace '{}'",
+                width, height, namespace
+            );
+            layer_surface.layer_surface().with_pending_state(|state| {
+                state.size = Some((width, height).into());
+            });
+        } else if layer == Layer::Background {
             layer_surface.layer_surface().with_pending_state(|state| {
                 state.size = Some((output_size.w, output_size.h).into());
             });
-        } else if let Some(geo) = map.layer_geometry(&layer_surface) {
-            debug!("Layer surface mapped geometry: {:?}", geo);
-            layer_surface.layer_surface().with_pending_state(|state| {
-                state.size = Some(geo.size);
-            });
-        } else {
-            let fallback_h = match layer {
-                Layer::Background | Layer::Bottom | Layer::Overlay => output_size.h,
-                Layer::Top => {
-                    if ns.contains("nav") {
-                        32
-                    } else {
-                        38
-                    }
-                }
-            };
-            debug!("Layer surface initial fallback size: ({}x{}) for layer {:?}", output_size.w, fallback_h, layer);
-            layer_surface.layer_surface().with_pending_state(|state| {
-                state.size = Some((output_size.w, fallback_h).into());
-            });
+        }
+
+        // Map and arrange only after the requested size is pending, so the initial configure carries it.
+        let _ = map.map_layer(&layer_surface);
+        map.arrange();
+        if explicit_mobile_size.is_none() && layer != Layer::Background {
+            if let Some(geo) = map.layer_geometry(&layer_surface) {
+                debug!("Layer surface mapped geometry: {:?}", geo);
+                layer_surface.layer_surface().with_pending_state(|state| {
+                    state.size = Some(geo.size);
+                });
+            }
         }
         layer_surface.layer_surface().send_configure();
         debug!("Sent send_configure() to layer surface '{}'", namespace);
@@ -528,7 +568,11 @@ impl CompositorHandler for PenumbraServerState {
     fn commit(&mut self, surface: &WlSurface) {
         on_commit_buffer_handler::<Self>(surface);
         for window in self.space.elements() {
-            if window.toplevel().map(|t| t.wl_surface() == surface).unwrap_or(false) {
+            if window
+                .toplevel()
+                .map(|t| t.wl_surface() == surface)
+                .unwrap_or(false)
+            {
                 window.on_commit();
             }
         }
@@ -620,17 +664,35 @@ impl PenumbraCompositor {
         info!("    PENUMBRA WAYLAND COMPOSITOR (Material 3 Expressive)     ");
         info!("============================================================");
         info!("Wayland socket: {}", self.args.socket);
-        info!("Nested simulation window: {}", self.args.nested);
+        let nested_enabled = self.args.nested_enabled();
+        info!("Nested simulation window: {}", nested_enabled);
         info!(
             "External HDMI convergence: {}",
             self.output_manager.is_convergence_active()
         );
+        if self.args.native {
+            info!("Backend: native DRM/libseat device");
+        } else if nested_enabled {
+            info!("Backend: nested Winit desktop window");
+        } else {
+            info!("Backend: Winit host display");
+        }
 
         if self.args.headless {
             info!("Running in headless validation mode. Executing policy assertions...");
             self.run_validation_loop()?;
             info!("Headless validation completed successfully.");
             return Ok(());
+        }
+
+        if self.args.native {
+            #[cfg(feature = "native-drm")]
+            return crate::native::run(self);
+            #[cfg(not(feature = "native-drm"))]
+            return Err(
+                "native backend unavailable: rebuild penumbra-comp with --features native-drm"
+                    .into(),
+            );
         }
 
         self.run_wayland_server()
@@ -641,8 +703,8 @@ impl PenumbraCompositor {
             .output_manager
             .output_config(OutputRole::PhoneDsi)
             .unwrap();
-        assert_eq!(dsi_config.width, 412);
-        assert_eq!(dsi_config.height, 915);
+        assert_eq!(dsi_config.width, PHONE_W);
+        assert_eq!(dsi_config.height, PHONE_H);
         assert!(dsi_config.enforces_gestures);
 
         if self.output_manager.is_convergence_active() {
@@ -662,7 +724,7 @@ impl PenumbraCompositor {
             .on_move(200.0, 700.0, Duration::from_millis(150));
         let gesture = self
             .gesture_sm
-            .on_up(200.0, 600.0, Duration::from_millis(200), 915.0);
+            .on_up(200.0, 600.0, Duration::from_millis(200), PHONE_H as f64);
         assert_eq!(gesture, Some(NavigationGesture::ReturnHome));
 
         Ok(())
@@ -673,8 +735,7 @@ impl PenumbraCompositor {
         let socket_name = &self.args.socket;
 
         // Clean up any stale socket and lock files before binding
-        let runtime_dir =
-            std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
+        let runtime_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
         let socket_path = Path::new(&runtime_dir).join(socket_name);
         let lock_path = Path::new(&runtime_dir).join(format!("{}.lock", socket_name));
         if socket_path.exists() {
@@ -783,6 +844,7 @@ impl PenumbraCompositor {
             shell_state: ShellState::default(),
             overview_scroll: 0.0,
             last_tasks_published: String::from("\u{0}"),
+            phone_logical_size: (mode_a.size.w, mode_a.size.h),
         };
 
         // Reset IPC files from any previous session.
@@ -797,7 +859,11 @@ impl PenumbraCompositor {
         // Output A: 412x915
         // Output B: 1280x720
         // Combined root canvas: (412 + 1280) x 915 = 1692 x 915
-        let canvas_w = if self.args.convergence { 412 + 1280 } else { 412 };
+        let canvas_w = if self.args.convergence {
+            412 + 1280
+        } else {
+            412
+        };
         let canvas_h = 915;
 
         info!(
@@ -863,13 +929,14 @@ impl PenumbraCompositor {
                         // Output A (phone): inset-aware routing, independent of space z-order.
                         if pos.x < PHONE_W as f64 {
                             let focus = state.phone_focus_under(pos);
-                            let kb_target = if state.phone_app_visible() && !state.shell_state.drawer_open {
-                                state.active_phone_surface()
-                            } else if let Some((ref surf, _)) = focus {
-                                Some(surf.clone())
-                            } else {
-                                state.root_surface()
-                            };
+                            let kb_target =
+                                if state.phone_app_visible() && !state.shell_state.drawer_open {
+                                    state.active_phone_surface()
+                                } else if let Some((ref surf, _)) = focus {
+                                    Some(surf.clone())
+                                } else {
+                                    state.root_surface()
+                                };
                             if keyboard.current_focus() != kb_target {
                                 keyboard.set_focus(&mut state, kb_target, serial_counter.into());
                             }
@@ -890,10 +957,17 @@ impl PenumbraCompositor {
                         let layer_under = if let Some(ref out_b) = state.output_b {
                             if pos.x >= 412.0 {
                                 let map_b = layer_map_for_output(out_b);
-                                let rel_p: Point<f64, smithay::utils::Logical> = (pos.x - 412.0, pos.y).into();
-                                map_b.layer_under(Layer::Overlay, rel_p)
+                                let rel_p: Point<f64, smithay::utils::Logical> =
+                                    (pos.x - 412.0, pos.y).into();
+                                map_b
+                                    .layer_under(Layer::Overlay, rel_p)
                                     .or_else(|| map_b.layer_under(Layer::Top, rel_p))
-                                    .map(|l| (l.wl_surface().clone(), map_b.layer_geometry(l).unwrap_or_default()))
+                                    .map(|l| {
+                                        (
+                                            l.wl_surface().clone(),
+                                            map_b.layer_geometry(l).unwrap_or_default(),
+                                        )
+                                    })
                             } else {
                                 None
                             }
@@ -902,7 +976,8 @@ impl PenumbraCompositor {
                         };
 
                         if let Some((surf, geo)) = layer_under {
-                            let loc: Point<f64, smithay::utils::Logical> = ((412 + geo.loc.x) as f64, geo.loc.y as f64).into();
+                            let loc: Point<f64, smithay::utils::Logical> =
+                                ((412 + geo.loc.x) as f64, geo.loc.y as f64).into();
                             pointer.motion(
                                 &mut state,
                                 Some((surf.clone(), loc)),
@@ -936,10 +1011,17 @@ impl PenumbraCompositor {
                             let bg_layer = if let Some(ref out_b) = state.output_b {
                                 if pos.x >= 412.0 {
                                     let map_b = layer_map_for_output(out_b);
-                                    let rel_p: Point<f64, smithay::utils::Logical> = (pos.x - 412.0, pos.y).into();
-                                    map_b.layer_under(Layer::Bottom, rel_p)
+                                    let rel_p: Point<f64, smithay::utils::Logical> =
+                                        (pos.x - 412.0, pos.y).into();
+                                    map_b
+                                        .layer_under(Layer::Bottom, rel_p)
                                         .or_else(|| map_b.layer_under(Layer::Background, rel_p))
-                                        .map(|l| (l.wl_surface().clone(), map_b.layer_geometry(l).unwrap_or_default()))
+                                        .map(|l| {
+                                            (
+                                                l.wl_surface().clone(),
+                                                map_b.layer_geometry(l).unwrap_or_default(),
+                                            )
+                                        })
                                 } else {
                                     None
                                 }
@@ -948,7 +1030,8 @@ impl PenumbraCompositor {
                             };
 
                             if let Some((surf, geo)) = bg_layer {
-                                let loc: Point<f64, smithay::utils::Logical> = ((412 + geo.loc.x) as f64, geo.loc.y as f64).into();
+                                let loc: Point<f64, smithay::utils::Logical> =
+                                    ((412 + geo.loc.x) as f64, geo.loc.y as f64).into();
                                 pointer.motion(
                                     &mut state,
                                     Some((surf.clone(), loc)),
@@ -980,8 +1063,11 @@ impl PenumbraCompositor {
                         let is_on_top_layer = if let Some(ref out_b) = state.output_b {
                             if state.pointer_location.x >= 412.0 {
                                 let map_b = layer_map_for_output(out_b);
-                                let rel_p: Point<f64, smithay::utils::Logical> = (state.pointer_location.x - 412.0, state.pointer_location.y).into();
-                                map_b.layer_under(Layer::Overlay, rel_p)
+                                let rel_p: Point<f64, smithay::utils::Logical> =
+                                    (state.pointer_location.x - 412.0, state.pointer_location.y)
+                                        .into();
+                                map_b
+                                    .layer_under(Layer::Overlay, rel_p)
                                     .or_else(|| map_b.layer_under(Layer::Top, rel_p))
                                     .is_some()
                             } else {
@@ -1042,8 +1128,9 @@ impl PenumbraCompositor {
             // 2. Accept incoming Wayland clients
             if let Some(stream) = listener.accept()? {
                 info!("Accepting new client stream on {}", socket_name);
-                if let Ok(client) =
-                    display.handle().insert_client(stream, Arc::new(ClientState::default()))
+                if let Ok(client) = display
+                    .handle()
+                    .insert_client(stream, Arc::new(ClientState::default()))
                 {
                     clients.push(client);
                 }
@@ -1059,18 +1146,8 @@ impl PenumbraCompositor {
             }
             display.flush_clients()?;
 
-            // Track overview carousel scroll: direct 1:1 finger tracking while dragging,
-            // or fluid deceleration into magnetic lock upon release.
-            let scroll_target = state.shell_state.overview_scroll;
-            if state.shell_state.is_dragging {
-                state.overview_scroll = scroll_target;
-            } else {
-                let scroll_diff = scroll_target - state.overview_scroll;
-                state.overview_scroll += scroll_diff * 0.35;
-                if scroll_diff.abs() < 0.002 {
-                    state.overview_scroll = scroll_target;
-                }
-            }
+            // Track overview carousel scroll (1:1 while dragging, eased on release).
+            state.advance_overview_scroll();
 
             // 4. Render.
             //
@@ -1094,40 +1171,57 @@ impl PenumbraCompositor {
                 let (renderer, mut framebuffer) = backend.bind()?;
 
                 // Helper to collect render elements for a specific layer on an output
-                let render_layer_elements = |renderer: &mut GlesRenderer, output: &Output, origin_x: i32, layer_kind: Layer| -> Vec<WaylandSurfaceRenderElement<GlesRenderer>> {
-                    let map = layer_map_for_output(output);
-                    map.layers()
-                        .filter(|l| l.layer() == layer_kind)
-                        .flat_map(|l| {
-                            if let Some(geo) = map.layer_geometry(l) {
-                                let (loc_x, loc_y) = if layer_kind == Layer::Background {
-                                    (0, 0)
+                let render_layer_elements =
+                    |renderer: &mut GlesRenderer,
+                     output: &Output,
+                     origin_x: i32,
+                     layer_kind: Layer|
+                     -> Vec<WaylandSurfaceRenderElement<GlesRenderer>> {
+                        let map = layer_map_for_output(output);
+                        map.layers()
+                            .filter(|l| l.layer() == layer_kind)
+                            .flat_map(|l| {
+                                if let Some(geo) = map.layer_geometry(l) {
+                                    let (loc_x, loc_y) = if layer_kind == Layer::Background {
+                                        (0, 0)
+                                    } else {
+                                        (geo.loc.x, geo.loc.y)
+                                    };
+                                    render_elements_from_surface_tree(
+                                        renderer,
+                                        l.wl_surface(),
+                                        (origin_x + loc_x, loc_y),
+                                        1.0,
+                                        1.0,
+                                        Kind::Unspecified,
+                                    )
                                 } else {
-                                    (geo.loc.x, geo.loc.y)
-                                };
-                                render_elements_from_surface_tree(
-                                    renderer,
-                                    l.wl_surface(),
-                                    (origin_x + loc_x, loc_y),
-                                    1.0,
-                                    1.0,
-                                    Kind::Unspecified,
-                                )
-                            } else {
-                                Vec::new()
-                            }
-                        })
-                        .collect()
-                };
+                                    Vec::new()
+                                }
+                            })
+                            .collect()
+                    };
 
-                let mut bg_elements = render_layer_elements(renderer, &state.output_a, 0, Layer::Background);
+                let mut bg_elements =
+                    render_layer_elements(renderer, &state.output_a, 0, Layer::Background);
                 if let Some(ref out_b) = state.output_b {
-                    bg_elements.extend(render_layer_elements(renderer, out_b, 412, Layer::Background));
+                    bg_elements.extend(render_layer_elements(
+                        renderer,
+                        out_b,
+                        412,
+                        Layer::Background,
+                    ));
                 }
 
-                let mut bottom_elements = render_layer_elements(renderer, &state.output_a, 0, Layer::Bottom);
+                let mut bottom_elements =
+                    render_layer_elements(renderer, &state.output_a, 0, Layer::Bottom);
                 if let Some(ref out_b) = state.output_b {
-                    bottom_elements.extend(render_layer_elements(renderer, out_b, 412, Layer::Bottom));
+                    bottom_elements.extend(render_layer_elements(
+                        renderer,
+                        out_b,
+                        412,
+                        Layer::Bottom,
+                    ));
                 }
 
                 let root_surface = state.root_surface();
@@ -1189,12 +1283,7 @@ impl PenumbraCompositor {
                         let card = phys_rect(x, y, w, h);
                         if let Some(clip) = card.intersection(phone_rect) {
                             overview_elements.extend(cropped(
-                                surface_elements(
-                                    renderer,
-                                    toplevel.wl_surface(),
-                                    (x, y),
-                                    scale,
-                                ),
+                                surface_elements(renderer, toplevel.wl_surface(), (x, y), scale),
                                 clip,
                             ));
                         }
@@ -1204,8 +1293,7 @@ impl PenumbraCompositor {
                 // Phone Layer 3: persistent system chrome re-composited from the shell surface
                 let chrome_rects: Vec<Rectangle<i32, Physical>> = if drawer_open {
                     vec![phone_rect]
-                } else if state.phone_app_visible()
-                    || state.shell_state.mode == PhoneMode::Overview
+                } else if state.phone_app_visible() || state.shell_state.mode == PhoneMode::Overview
                 {
                     vec![
                         phys_rect(0, 0, PHONE_W, STATUS_BAR_H),
@@ -1217,11 +1305,13 @@ impl PenumbraCompositor {
                 let mut chrome_elements = Vec::new();
                 if let Some(ref s) = root_surface {
                     for rect in chrome_rects {
-                        chrome_elements.extend(cropped(surface_elements(renderer, s, (0, 0), 1.0), rect));
+                        chrome_elements
+                            .extend(cropped(surface_elements(renderer, s, (0, 0), 1.0), rect));
                     }
                 }
 
-                let mut top_elements = render_layer_elements(renderer, &state.output_a, 0, Layer::Top);
+                let mut top_elements =
+                    render_layer_elements(renderer, &state.output_a, 0, Layer::Top);
                 if let Some(ref out_b) = state.output_b {
                     top_elements.extend(render_layer_elements(renderer, out_b, 412, Layer::Top));
                 }
@@ -1232,7 +1322,12 @@ impl PenumbraCompositor {
                     Vec::new()
                 };
                 if let Some(ref out_b) = state.output_b {
-                    overlay_elements.extend(render_layer_elements(renderer, out_b, 412, Layer::Overlay));
+                    overlay_elements.extend(render_layer_elements(
+                        renderer,
+                        out_b,
+                        412,
+                        Layer::Overlay,
+                    ));
                 }
 
                 let mut frame =
@@ -1304,10 +1399,10 @@ impl PenumbraCompositor {
     }
 }
 
-type SurfaceElement = WaylandSurfaceRenderElement<GlesRenderer>;
+pub(crate) type SurfaceElement = WaylandSurfaceRenderElement<GlesRenderer>;
 
 /// Collects render elements (front-to-back) for a surface tree at `loc`, scaled by `scale`.
-fn surface_elements(
+pub(crate) fn surface_elements(
     renderer: &mut GlesRenderer,
     surface: &WlSurface,
     loc: (i32, i32),
@@ -1317,7 +1412,7 @@ fn surface_elements(
 }
 
 /// Clips render elements to `rect` (elements fully outside are dropped).
-fn cropped(
+pub(crate) fn cropped(
     elements: Vec<SurfaceElement>,
     rect: Rectangle<i32, Physical>,
 ) -> Vec<CropRenderElement<SurfaceElement>> {
