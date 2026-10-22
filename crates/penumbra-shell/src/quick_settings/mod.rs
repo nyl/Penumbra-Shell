@@ -22,7 +22,10 @@ impl Default for QuickSettingsConfig {
             .map(|t| t.id)
             .filter(|id| !active.contains(id))
             .collect();
-        Self { active_tiles: active, available_tiles: available }
+        Self {
+            active_tiles: active,
+            available_tiles: available,
+        }
     }
 }
 
@@ -60,9 +63,11 @@ impl QuickSettingsConfig {
         let known: Vec<String> = tile::registry().into_iter().map(|t| t.id).collect();
         let mut seen = Vec::new();
         let mut keep = |ids: &mut Vec<String>| {
-            ids.retain(|id| known.contains(id) && !seen.contains(id) && {
-                seen.push(id.clone());
-                true
+            ids.retain(|id| {
+                known.contains(id) && !seen.contains(id) && {
+                    seen.push(id.clone());
+                    true
+                }
             });
         };
         keep(&mut self.active_tiles);
@@ -81,7 +86,8 @@ impl QuickSettingsConfig {
             return;
         }
         let item = self.active_tiles.remove(from);
-        self.active_tiles.insert(to.min(self.active_tiles.len()), item);
+        self.active_tiles
+            .insert(to.min(self.active_tiles.len()), item);
     }
 
     /// Moves a tile from the active list to the available pool.
@@ -108,7 +114,10 @@ mod tests {
     #[test]
     fn default_partitions_registry() {
         let c = QuickSettingsConfig::default();
-        assert_eq!(c.active_tiles.len() + c.available_tiles.len(), tile::registry().len());
+        assert_eq!(
+            c.active_tiles.len() + c.available_tiles.len(),
+            tile::registry().len()
+        );
         assert!(c.available_tiles.contains(&"airplane".to_string()));
     }
 
@@ -135,7 +144,10 @@ mod tests {
         }
         .sanitized();
         assert_eq!(c.active_tiles, vec!["internet".to_string()]);
-        assert_eq!(c.active_tiles.len() + c.available_tiles.len(), tile::registry().len());
+        assert_eq!(
+            c.active_tiles.len() + c.available_tiles.len(),
+            tile::registry().len()
+        );
     }
 
     #[test]

@@ -1,5 +1,5 @@
-use std::path::PathBuf;
 use freedesktop_desktop_entry::{default_paths, DesktopEntry, Iter};
+use std::path::PathBuf;
 use tracing::info;
 
 #[derive(Debug, Clone)]
@@ -25,7 +25,6 @@ pub fn discover_installed_apps() -> Vec<InstalledApp> {
             }
 
             if let Some(name) = entry.name(&[""]) {
-
                 if let Some(exec_raw) = entry.exec() {
                     let id = entry.id().to_string();
                     if seen_ids.contains(&id) {
@@ -70,7 +69,10 @@ pub fn find_icon_fast(icon_name: &str) -> Option<PathBuf> {
         format!("/usr/share/icons/hicolor/64x64/apps/{}.png", icon_name),
         format!("/usr/share/icons/hicolor/128x128/apps/{}.png", icon_name),
         format!("/usr/share/icons/hicolor/256x256/apps/{}.png", icon_name),
-        format!("/usr/share/icons/hicolor/symbolic/apps/{}-symbolic.svg", icon_name),
+        format!(
+            "/usr/share/icons/hicolor/symbolic/apps/{}-symbolic.svg",
+            icon_name
+        ),
         format!("/usr/share/pixmaps/{}.png", icon_name),
         format!("/usr/share/pixmaps/{}.svg", icon_name),
     ];
@@ -122,7 +124,8 @@ pub fn clean_exec_cmd(exec: &str) -> String {
 
 /// Spawns the application strictly on Penumbra's Wayland display
 pub fn launch_app(app: &InstalledApp, target_output: Option<&str>) -> std::io::Result<()> {
-    let socket = std::env::var("WAYLAND_DISPLAY").unwrap_or_else(|_| "wayland-penumbra-0".to_string());
+    let socket =
+        std::env::var("WAYLAND_DISPLAY").unwrap_or_else(|_| "wayland-penumbra-0".to_string());
     let target = target_output.unwrap_or("phone");
 
     // Communicate target output to penumbra-comp compositor via runtime file

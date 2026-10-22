@@ -1,10 +1,11 @@
 import { Theme } from "theme.slint";
+import { Icon } from "icon.slint";
 
 export struct TileData {
     id: string,
     title: string,
     subtitle: string,
-    icon-text: string,
+    icon-name: string,
     active: bool,
     enabled: bool,
 }
@@ -42,12 +43,12 @@ component TileView inherits Rectangle {
         y: (parent.height - self.height) / 2;
         border-radius: 18px;
         background: root.data.active ? Theme.on-primary : Theme.surface-highest;
-        Text {
-            text: root.data.icon-text;
-            font-size: 16px;
-            color: root.data.active ? Theme.primary : Theme.on-surface;
-            horizontal-alignment: center;
-            vertical-alignment: center;
+        Icon {
+            name: root.data.icon-name;
+            icon-size: 18px;
+            icon-color: root.data.active ? Theme.primary : Theme.on-surface;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
         }
     }
 
@@ -77,7 +78,7 @@ component TileView inherits Rectangle {
 
 component SliderPill inherits Rectangle {
     in-out property <float> value: 0.75;
-    in property <string> icon-text: "☀";
+    in property <string> icon-name: "brightness";
     in property <string> label: "Brightness";
     callback changed(float);
 
@@ -114,12 +115,15 @@ component SliderPill inherits Rectangle {
         padding-left: 16px;
         padding-right: 16px;
         spacing: 10px;
-        Text {
-            text: root.icon-text;
-            font-size: 16px;
-            color: root.value > 0.1 ? Theme.on-primary : Theme.on-surface;
+        Rectangle {
             horizontal-stretch: 0;
-            vertical-alignment: center;
+            width: 20px;
+            Icon {
+                name: root.icon-name;
+                icon-size: 18px;
+                icon-color: root.value > 0.1 ? Theme.on-primary : Theme.on-surface;
+                y: (parent.height - self.height) / 2;
+            }
         }
         Text {
             horizontal-stretch: 1;
@@ -135,6 +139,7 @@ component SliderPill inherits Rectangle {
 
 component SmallButton inherits Rectangle {
     in property <string> label;
+    in property <string> icon;
     in property <bool> accent: false;
     in property <length> button-width: 30px;
     callback clicked();
@@ -142,7 +147,14 @@ component SmallButton inherits Rectangle {
     height: 30px;
     border-radius: 15px;
     background: root.accent ? Theme.primary : Theme.surface-highest;
-    Text {
+    if root.icon != "": Icon {
+        name: root.icon;
+        icon-size: 16px;
+        icon-color: root.accent ? Theme.on-primary : Theme.on-surface;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+    }
+    if root.icon == "": Text {
         text: root.label;
         font-size: 12px;
         font-weight: 700;
@@ -309,13 +321,13 @@ export component QuickSettingsSlider inherits Rectangle {
             spacing: 6px;
             alignment: end;
             if root.morph > 0.5 || root.edit-mode: SmallButton {
-                label: "✎";
+                icon: "edit";
                 button-width: 34px;
                 accent: root.edit-mode;
                 clicked => { if (root.edit-mode) { root.exit-edit-mode(); } else { root.enter-edit-mode(); } }
             }
-            SmallButton { label: "⚙"; button-width: 34px; clicked => { root.settings-action(); } }
-            SmallButton { label: "⏻"; button-width: 34px; clicked => { root.power-action(); } }
+            SmallButton { icon: "settings"; button-width: 34px; clicked => { root.settings-action(); } }
+            SmallButton { icon: "power"; button-width: 34px; clicked => { root.power-action(); } }
         }
 
         // ---- Normal mode ----
@@ -353,14 +365,14 @@ export component QuickSettingsSlider inherits Rectangle {
                 SliderPill {
                     y: 0px;
                     value <=> root.brightness;
-                    icon-text: "☀";
+                    icon-name: "brightness";
                     label: "Brightness";
                     changed(v) => { root.brightness-changed(v); }
                 }
                 SliderPill {
                     y: 56px;
                     value <=> root.volume;
-                    icon-text: "♪";
+                    icon-name: "volume";
                     label: "Media volume";
                     changed(v) => { root.volume-changed(v); }
                 }
@@ -379,7 +391,7 @@ export component QuickSettingsSlider inherits Rectangle {
                             height: 48px;
                             border-radius: 12px;
                             background: Theme.primary-container;
-                            Text { text: "♫"; font-size: 20px; color: Theme.primary; horizontal-alignment: center; vertical-alignment: center; }
+                            Icon { name: "music"; icon-size: 22px; icon-color: Theme.primary; x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; }
                         }
                         VerticalLayout {
                             alignment: center;
@@ -430,7 +442,7 @@ export component QuickSettingsSlider inherits Rectangle {
             Text {
                 x: root.pad;
                 y: 88px;
-                text: "Reorder with ◀ ▶, remove with ✕";
+                text: "Reorder with arrows, remove with close";
                 font-size: 12px;
                 font-weight: 600;
                 color: Theme.on-surface-variant;
@@ -444,15 +456,15 @@ export component QuickSettingsSlider inherits Rectangle {
                 background: Theme.surface-high;
                 border-width: 1px;
                 border-color: Theme.specular-rim;
-                Text { x: 12px; width: parent.width - 108px; text: "\{tile.icon-text}  \{tile.title}"; font-size: 12px; font-weight: 600; color: Theme.on-surface; vertical-alignment: center; overflow: elide; }
+                Text { x: 12px; width: parent.width - 108px; text: tile.title; font-size: 12px; font-weight: 600; color: Theme.on-surface; vertical-alignment: center; overflow: elide; }
                 HorizontalLayout {
                     x: parent.width - 96px;
                     y: 13px;
                     width: 90px;
                     spacing: 3px;
-                    SmallButton { label: "◀"; button-width: 28px; clicked => { root.reorder-tiles(i, i - 1); } }
-                    SmallButton { label: "▶"; button-width: 28px; clicked => { root.reorder-tiles(i, i + 1); } }
-                    SmallButton { label: "✕"; button-width: 28px; clicked => { root.remove-tile(tile.id); } }
+                    SmallButton { icon: "chevron-left"; button-width: 28px; clicked => { root.reorder-tiles(i, i - 1); } }
+                    SmallButton { icon: "chevron-right"; button-width: 28px; clicked => { root.reorder-tiles(i, i + 1); } }
+                    SmallButton { icon: "close"; button-width: 28px; clicked => { root.remove-tile(tile.id); } }
                 }
             }
 
@@ -480,11 +492,11 @@ export component QuickSettingsSlider inherits Rectangle {
                 background: Theme.surface-low;
                 border-width: 1px;
                 border-color: Theme.specular-rim;
-                Text { x: 12px; width: parent.width - 52px; text: "\{tile.icon-text}  \{tile.title}"; font-size: 12px; color: Theme.on-surface; vertical-alignment: center; overflow: elide; }
+                Text { x: 12px; width: parent.width - 52px; text: tile.title; font-size: 12px; color: Theme.on-surface; vertical-alignment: center; overflow: elide; }
                 SmallButton {
                     x: parent.width - 40px;
                     y: 13px;
-                    label: "+";
+                    icon: "plus";
                     accent: true;
                     clicked => { root.add-tile(tile.id); }
                 }

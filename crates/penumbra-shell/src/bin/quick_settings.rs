@@ -1,8 +1,8 @@
-//! Standalone Penumbra Quick Settings & Notification Shade binary.
-//!
-//! A dedicated system control panel and notification center for Penumbra Mobile DE,
-//! built with Slint and `layer-shell-slint` on Wayland `zwlr_layer_shell_v1`
-//! (`Layer::Overlay`, `exclusive_zone: 0`, `size: 412x915`).
+// Standalone Penumbra Quick Settings & Notification Shade binary.
+//
+// A dedicated system control panel and notification center for Penumbra Mobile DE,
+// built with Slint and `layer-shell-slint` on Wayland `zwlr_layer_shell_v1`
+// (`Layer::Overlay`, `exclusive_zone: 0`, `size: 412x915`).
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -16,25 +16,10 @@ use tracing_subscriber::FmtSubscriber;
 use layer_shell_slint::{Anchor, KeyboardInteractivity, Layer, LayerConfig};
 use penumbra_gestures::Spring;
 use penumbra_services::{BatteryService, NetworkService};
+use penumbra_shell::display::apply_backlight_ratio;
 use penumbra_shell::ipc::ShellState;
 use penumbra_shell::quick_settings::{tile, QuickSettingsConfig, TileDefinition, TileState};
 use slint::{ModelRc, VecModel};
-
-fn icon_glyph(name: &str) -> &'static str {
-    match name {
-        "wifi" => "📶",
-        "bluetooth" => "ᛒ",
-        "flashlight" => "🔦",
-        "dnd" => "⛔",
-        "rotation" => "⟳",
-        "battery" => "🔋",
-        "airplane" => "✈",
-        "hotspot" => "📡",
-        "night" => "🌙",
-        "recorder" => "⏺",
-        _ => "●",
-    }
-}
 
 slint::include_modules!();
 
@@ -74,7 +59,7 @@ fn release_target(y_current: f64, v_y: f64) -> f64 {
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+pub(crate) fn main() -> Result<(), Box<dyn std::error::Error>> {
     let subscriber = FmtSubscriber::builder()
         .with_max_level(Level::INFO)
         .finish();
@@ -82,18 +67,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Initializing Penumbra Quick Settings via layer-shell-slint...");
 
-    // 1. Configure Wayland Layer Shell Platform backend
+    // 1. Configure Wayland Layer Shell Platform backend.
+    let (logical_w, logical_h, _scale) = layer_shell_slint::mobile_output_geometry();
     let config = LayerConfig::default()
         .with_namespace("penumbra-quick-settings")
         .with_layer(Layer::Overlay)
         .with_anchor(Anchor::Top | Anchor::Left | Anchor::Right)
-        .with_size(412, 915)
+        .with_size(logical_w, logical_h)
         .with_exclusive_zone(0)
         .with_keyboard_interactivity(KeyboardInteractivity::None);
 
     layer_shell_slint::init(config)?;
 
-    // 2. Instantiate Slint QuickSettingsWindow component
+    // 2. Instantiate Slint QuickSettingsWindow component.
+    // The final surface size is determined by the layer-shell geometry passed to the client.
     let qs = QuickSettingsWindow::new()?;
     let ui_weak = qs.as_weak();
 
@@ -197,9 +184,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .enable_all()
         .build()?;
 
-    let network_service = rt.block_on(async {
-        NetworkService::new().await
-    });
+    let network_service = rt.block_on(async { NetworkService::new().await });
 
     // Tile engine: registry (live tile state) + persisted order/visibility.
     let registry: Rc<RefCell<Vec<TileDefinition>>> = Rc::new(RefCell::new(tile::registry()));
@@ -241,9 +226,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             });
         }
-        if let Some(t) = registry.borrow_mut().iter_mut().find(|t| t.id == "internet") {
-            t.state = if net_info.is_connected { TileState::Active } else { TileState::Inactive };
-            t.subtitle = if net_info.is_connected { net_info.ssid.clone() } else { "Off".into() };
+        if let Some(t) = registry
+            .borrow_mut()
+            .iter_mut()
+            .find(|t| t.id == "internet")
+        {
+            t.state = if net_info.is_connected {
+                TileState::Active
+            } else {
+                TileState::Inactive
+            };
+            t.subtitle = if net_info.is_connected {
+                net_info.ssid.clone()
+            } else {
+                "Off".into()
+            };
         }
     }
 
@@ -259,7 +256,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     id: t.id.clone().into(),
                     title: t.title.clone().into(),
                     subtitle: t.subtitle.clone().into(),
-                    icon_text: icon_glyph(&t.icon_name).into(),
+                    icon_name: t.icon_name.as_str().into(),
                     active: t.state == TileState::Active,
                     enabled: t.is_enabled && t.state != TileState::Unavailable,
                 })
@@ -276,17 +273,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Notification stack. The org.freedesktop.Notifications D-Bus server is not wired yet,
     // so only the system status card is shown.
-    qs.set_notifications(ModelRc::from(Rc::new(VecModel::from(vec![NotificationData {
-        app: "Penumbra".into(),
-        title: "Penumbra Core • Wayland Ready".into(),
-        body: "Wayland convergence active: DSI phone shell ready".into(),
-    }]))));
+    qs.set_notifications(ModelRc::from(Rc::new(VecModel::from(vec![
+        NotificationData {
+            app: "Penumbra".into(),
+            title: "Penumbra Core • Wayland Ready".into(),
+            body: "Wayland convergence active: DSI phone shell ready".into(),
+        },
+    ]))));
 
     {
         let registry = Rc::clone(&registry);
         let refresh = Rc::clone(&refresh_tiles);
         qs.on_tile_clicked(move |id| {
-            if let Some(t) = registry.borrow_mut().iter_mut().find(|t| t.id == id.as_str()) {
+            if let Some(t) = registry
+                .borrow_mut()
+                .iter_mut()
+                .find(|t| t.id == id.as_str())
+            {
                 t.toggle();
             }
             refresh();
@@ -380,6 +383,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     qs.on_brightness_changed(|val| {
         info!("Quick Settings: Brightness set to {:.2}", val);
+        if let Err(error) = apply_backlight_ratio(val as f64) {
+            tracing::warn!(?error, "Failed to apply system backlight level");
+        }
     });
 
     qs.on_volume_changed(|val| {
@@ -417,7 +423,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     new_touch
                 } else {
                     320.0 + (new_touch - 320.0) * 0.85
-                }.clamp(0.0, 915.0);
+                }
+                .clamp(0.0, 915.0);
 
                 let new_y = new_disp - 915.0; // [-915.0, 0.0]
 
@@ -465,87 +472,86 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let last_pull_at = Rc::new(RefCell::new(Instant::now()));
         let ui_weak = ui_weak.clone();
 
-        ipc_timer.start(
-            TimerMode::Repeated,
-            Duration::from_millis(16),
-            move || {
-                let state = ShellState::load();
-                let mut last_open = last_known_open.borrow_mut();
-                let mut last_pull = last_known_pull_dy.borrow_mut();
-                let mut was_dragging = last_dragging.borrow_mut();
-                let mut vel = pull_vel.borrow_mut();
-                let mut last_at = last_pull_at.borrow_mut();
+        ipc_timer.start(TimerMode::Repeated, Duration::from_millis(16), move || {
+            let state = ShellState::load();
+            let mut last_open = last_known_open.borrow_mut();
+            let mut last_pull = last_known_pull_dy.borrow_mut();
+            let mut was_dragging = last_dragging.borrow_mut();
+            let mut vel = pull_vel.borrow_mut();
+            let mut last_at = last_pull_at.borrow_mut();
 
-                // Live finger tracking handed over from the Top Bar
-                if state.drawer_dragging && state.drawer_pull_dy != *last_pull {
-                    let pull = state.drawer_pull_dy;
-                    if !*was_dragging {
-                        // Take over: stop any running settle spring
-                        spring_timer.borrow().stop();
-                        *vel = 0.0;
-                    } else {
-                        let dt = last_at.elapsed().as_secs_f64().clamp(0.004, 0.1);
-                        *vel = *vel * 0.6 + ((pull - *last_pull) / dt) * 0.4;
-                    }
-                    *last_at = Instant::now();
-                    *last_pull = pull;
-
-                    let shade_disp = if pull <= 320.0 {
-                        pull
-                    } else {
-                        320.0 + (pull - 320.0) * 0.85
-                    }
-                    .clamp(0.0, 915.0);
-                    let new_y = shade_disp - 915.0;
-
-                    if let Some(ui) = ui_weak.upgrade() {
-                        ui.set_slide_offset_y(new_y as f32);
-                        ui.set_expansion_progress((shade_disp / 915.0).clamp(0.0, 1.0) as f32);
-                    }
-                    let mut sp = spring_state.borrow_mut();
-                    sp.position = new_y;
-                    sp.velocity = 0.0;
-                } else if !state.drawer_dragging {
-                    *last_pull = state.drawer_pull_dy;
-                }
-
-                // Release: explicit flag drop, or stale drag (release event lost)
-                let stale = state.drawer_dragging
-                    && *was_dragging
-                    && last_at.elapsed() > Duration::from_millis(500);
-                if (*was_dragging && !state.drawer_dragging) || stale {
-                    let y_current = spring_state.borrow().position + 915.0;
-                    let v = if stale { 0.0 } else { *vel };
-                    let target = release_target(y_current, v);
-                    info!("Top-bar handoff released: y={:.1} v={:.1} -> {:.1}", y_current, v, target);
-                    if stale {
-                        let mut s = ShellState::load();
-                        s.drawer_dragging = false;
-                        let _ = s.save();
-                    }
+            // Live finger tracking handed over from the Top Bar
+            if state.drawer_dragging && state.drawer_pull_dy != *last_pull {
+                let pull = state.drawer_pull_dy;
+                if !*was_dragging {
+                    // Take over: stop any running settle spring
+                    spring_timer.borrow().stop();
                     *vel = 0.0;
-                    animate_to(target, v);
+                } else {
+                    let dt = last_at.elapsed().as_secs_f64().clamp(0.004, 0.1);
+                    *vel = *vel * 0.6 + ((pull - *last_pull) / dt) * 0.4;
                 }
-                *was_dragging = state.drawer_dragging && !stale;
+                *last_at = Instant::now();
+                *last_pull = pull;
 
-                // Open/close toggles from other components (never while a finger is down)
-                if state.drawer_open != *last_open {
-                    *last_open = state.drawer_open;
-                    if !state.drawer_dragging {
-                        let cur_target = spring_state.borrow().target;
-                        if state.drawer_open {
-                            if cur_target < -570.0 {
-                                info!("External trigger: opening Quick Settings shade (compact)");
-                                animate_to(-565.0, 400.0);
-                            }
-                        } else if cur_target > -900.0 {
-                            info!("External trigger: closing Quick Settings shade");
-                            animate_to(-915.0, -400.0);
+                let shade_disp = if pull <= 320.0 {
+                    pull
+                } else {
+                    320.0 + (pull - 320.0) * 0.85
+                }
+                .clamp(0.0, 915.0);
+                let new_y = shade_disp - 915.0;
+
+                if let Some(ui) = ui_weak.upgrade() {
+                    ui.set_slide_offset_y(new_y as f32);
+                    ui.set_expansion_progress((shade_disp / 915.0).clamp(0.0, 1.0) as f32);
+                }
+                let mut sp = spring_state.borrow_mut();
+                sp.position = new_y;
+                sp.velocity = 0.0;
+            } else if !state.drawer_dragging {
+                *last_pull = state.drawer_pull_dy;
+            }
+
+            // Release: explicit flag drop, or stale drag (release event lost)
+            let stale = state.drawer_dragging
+                && *was_dragging
+                && last_at.elapsed() > Duration::from_millis(500);
+            if (*was_dragging && !state.drawer_dragging) || stale {
+                let y_current = spring_state.borrow().position + 915.0;
+                let v = if stale { 0.0 } else { *vel };
+                let target = release_target(y_current, v);
+                info!(
+                    "Top-bar handoff released: y={:.1} v={:.1} -> {:.1}",
+                    y_current, v, target
+                );
+                if stale {
+                    let mut s = ShellState::load();
+                    s.drawer_dragging = false;
+                    let _ = s.save();
+                }
+                *vel = 0.0;
+                animate_to(target, v);
+            }
+            *was_dragging = state.drawer_dragging && !stale;
+
+            // Open/close toggles from other components (never while a finger is down)
+            if state.drawer_open != *last_open {
+                *last_open = state.drawer_open;
+                if !state.drawer_dragging {
+                    let cur_target = spring_state.borrow().target;
+                    if state.drawer_open {
+                        if cur_target < -570.0 {
+                            info!("External trigger: opening Quick Settings shade (compact)");
+                            animate_to(-565.0, 400.0);
                         }
+                    } else if cur_target > -900.0 {
+                        info!("External trigger: closing Quick Settings shade");
+                        animate_to(-915.0, -400.0);
                     }
                 }
-            },
-        );
+            }
+        });
     }
 
     info!("Penumbra Quick Settings running event loop.");

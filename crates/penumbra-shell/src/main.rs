@@ -278,7 +278,11 @@ fn send_shell_cmd(cmd: &str) {
     let runtime_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
     let path = std::path::Path::new(&runtime_dir).join("penumbra-shell-cmd");
     use std::io::Write;
-    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
         let _ = writeln!(file, "{}", cmd);
     }
 }
@@ -418,7 +422,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let t_models = Instant::now();
     update_layout_models();
-    info!("update_layout_models completed in {:.2?}", t_models.elapsed());
+    info!(
+        "update_layout_models completed in {:.2?}",
+        t_models.elapsed()
+    );
 
     // Helper to refresh Slint running-tasks model from compositor IPC
     let refresh_running_tasks = {
@@ -734,7 +741,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let tasks = load_running_tasks();
                         if tasks.len() >= 2 {
                             let next_task = &tasks[1];
-                            info!("Switching to next app: {} (id: {})", next_task.title, next_task.id);
+                            info!(
+                                "Switching to next app: {} (id: {})",
+                                next_task.title, next_task.id
+                            );
                             send_shell_cmd(&format!("focus {}", next_task.id));
                             let target_name = if !next_task.title.is_empty() {
                                 next_task.title.clone()
@@ -752,7 +762,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let tasks = load_running_tasks();
                         if tasks.len() >= 2 {
                             let prev_task = tasks.last().unwrap();
-                            info!("Switching to prev app: {} (id: {})", prev_task.title, prev_task.id);
+                            info!(
+                                "Switching to prev app: {} (id: {})",
+                                prev_task.title, prev_task.id
+                            );
                             send_shell_cmd(&format!("focus {}", prev_task.id));
                             let target_name = if !prev_task.title.is_empty() {
                                 prev_task.title.clone()
@@ -779,7 +792,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui.on_nav_bar_down(move |x, y| {
             let now = Instant::now();
             nav_start.set(now);
-            nav_rec.borrow_mut().on_down(x as f64, y as f64, Duration::ZERO);
+            nav_rec
+                .borrow_mut()
+                .on_down(x as f64, y as f64, Duration::ZERO);
 
             let nav_rec = nav_rec.clone();
             let nav_start = nav_start.clone();
@@ -821,70 +836,79 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
-fn spawn_real_app(app: &str, target: &str) {
-    info!(
-        "Shell launching real Wayland application '{}' on target '{}'",
-        app, target
-    );
+    fn spawn_real_app(app: &str, target: &str) {
+        info!(
+            "Shell launching real Wayland application '{}' on target '{}'",
+            app, target
+        );
 
-    // Communicate target output to penumbra-comp compositor via runtime file
-    let runtime_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
-    let target_file = std::path::Path::new(&runtime_dir).join("penumbra-target-output");
-    let _ = std::fs::write(&target_file, target);
+        // Communicate target output to penumbra-comp compositor via runtime file
+        let runtime_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
+        let target_file = std::path::Path::new(&runtime_dir).join("penumbra-target-output");
+        let _ = std::fs::write(&target_file, target);
 
-    let wayland_display = std::env::var("WAYLAND_DISPLAY")
-        .unwrap_or_else(|_| "wayland-penumbra-0".to_string());
+        let wayland_display =
+            std::env::var("WAYLAND_DISPLAY").unwrap_or_else(|_| "wayland-penumbra-0".to_string());
 
-    let candidates: &[&str] = match app {
-        "terminal" | "org.gnome.Console" | "foot" => &["foot", "alacritty", "kgx", "kitty", "xterm", "gnome-terminal"],
-        "files" | "org.gnome.Nautilus" => &["nautilus", "nemo", "thunar", "pcmanfm"],
-        "calc" | "org.gnome.Calculator" => &["gnome-calculator", "kcalc"],
-        "browser" | "org.gnome.Epiphany" | "epiphany" => &["epiphany", "firefox", "chromium", "google-chrome"],
-        "notes" | "editor" | "org.gnome.TextEditor" => &["gnome-text-editor", "gedit", "kate"],
-        "calls" | "org.gnome.Calls" => &["calls", "gnome-calls"],
-        "chatty" | "sm.puri.Chatty" => &["chatty", "puri-chatty"],
-        "camera" | "org.gnome.Camera" | "snapshot" => &["snapshot", "gnome-camera", "cheese"],
-        "settings" => &["gnome-control-center"],
-        custom => &[custom],
-    };
+        let candidates: &[&str] = match app {
+            "terminal" | "org.gnome.Console" | "foot" => &[
+                "foot",
+                "alacritty",
+                "kgx",
+                "kitty",
+                "xterm",
+                "gnome-terminal",
+            ],
+            "files" | "org.gnome.Nautilus" => &["nautilus", "nemo", "thunar", "pcmanfm"],
+            "calc" | "org.gnome.Calculator" => &["gnome-calculator", "kcalc"],
+            "browser" | "org.gnome.Epiphany" | "epiphany" => {
+                &["epiphany", "firefox", "chromium", "google-chrome"]
+            }
+            "notes" | "editor" | "org.gnome.TextEditor" => &["gnome-text-editor", "gedit", "kate"],
+            "calls" | "org.gnome.Calls" => &["calls", "gnome-calls"],
+            "chatty" | "sm.puri.Chatty" => &["chatty", "puri-chatty"],
+            "camera" | "org.gnome.Camera" | "snapshot" => &["snapshot", "gnome-camera", "cheese"],
+            "settings" => &["gnome-control-center"],
+            custom => &[custom],
+        };
 
-    let mut spawned = false;
-    for bin in candidates {
-        if is_binary_available(bin) {
-            info!(
-                "Spawning real binary '{}' with WAYLAND_DISPLAY={} for target {}",
-                bin, wayland_display, target
-            );
-            match std::process::Command::new(bin)
-                .env("WAYLAND_DISPLAY", &wayland_display)
-                .env("GDK_BACKEND", "wayland")
-                .env("QT_QPA_PLATFORM", "wayland")
-                .spawn()
-            {
-                Ok(child) => {
-                    info!(
-                        "Successfully spawned '{}' (PID: {}) on target {}",
-                        bin,
-                        child.id(),
-                        target
-                    );
-                    spawned = true;
-                    break;
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to spawn '{}': {}", bin, e);
+        let mut spawned = false;
+        for bin in candidates {
+            if is_binary_available(bin) {
+                info!(
+                    "Spawning real binary '{}' with WAYLAND_DISPLAY={} for target {}",
+                    bin, wayland_display, target
+                );
+                match std::process::Command::new(bin)
+                    .env("WAYLAND_DISPLAY", &wayland_display)
+                    .env("GDK_BACKEND", "wayland")
+                    .env("QT_QPA_PLATFORM", "wayland")
+                    .spawn()
+                {
+                    Ok(child) => {
+                        info!(
+                            "Successfully spawned '{}' (PID: {}) on target {}",
+                            bin,
+                            child.id(),
+                            target
+                        );
+                        spawned = true;
+                        break;
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to spawn '{}': {}", bin, e);
+                    }
                 }
             }
         }
-    }
 
-    if !spawned {
-        tracing::warn!(
-            "No available candidate binary found in PATH for app '{}'",
-            app
-        );
+        if !spawned {
+            tracing::warn!(
+                "No available candidate binary found in PATH for app '{}'",
+                app
+            );
+        }
     }
-}
 
     // 5. In-Shell Application Engine (Phone Screen Output A)
     {
@@ -894,8 +918,11 @@ fn spawn_real_app(app: &str, target: &str) {
             let id_str = app_id_or_name.as_str();
             let target_app_opt = {
                 let apps = apps_lookup.read().unwrap();
-                apps.iter().find(|a| a.id == id_str || a.name.eq_ignore_ascii_case(id_str)).cloned()
-            }.or_else(|| find_single_app(id_str));
+                apps.iter()
+                    .find(|a| a.id == id_str || a.name.eq_ignore_ascii_case(id_str))
+                    .cloned()
+            }
+            .or_else(|| find_single_app(id_str));
 
             let app_name = target_app_opt
                 .as_ref()
@@ -925,12 +952,19 @@ fn spawn_real_app(app: &str, target: &str) {
             let id_str = app_id_or_name.as_str();
             let target_app_opt = {
                 let apps = apps_lookup.read().unwrap();
-                apps.iter().find(|a| a.id == id_str || a.name.eq_ignore_ascii_case(id_str)).cloned()
-            }.or_else(|| find_single_app(id_str));
+                apps.iter()
+                    .find(|a| a.id == id_str || a.name.eq_ignore_ascii_case(id_str))
+                    .cloned()
+            }
+            .or_else(|| find_single_app(id_str));
 
             if let Some(ref target_app) = target_app_opt {
                 if let Err(e) = launch_app(target_app, Some("desktop")) {
-                    tracing::warn!("Failed to launch XDG app '{}' on desktop: {}", target_app.name, e);
+                    tracing::warn!(
+                        "Failed to launch XDG app '{}' on desktop: {}",
+                        target_app.name,
+                        e
+                    );
                 }
             } else {
                 spawn_real_app(id_str, "desktop");
@@ -965,7 +999,9 @@ fn spawn_real_app(app: &str, target: &str) {
                             exact_prefix.push(resolve_app_item(&app.id, &apps));
                         } else if name_lower.contains(&query) {
                             name_matches.push(resolve_app_item(&app.id, &apps));
-                        } else if id_lower.contains(&query) || app.exec.to_lowercase().contains(&query) {
+                        } else if id_lower.contains(&query)
+                            || app.exec.to_lowercase().contains(&query)
+                        {
                             other_matches.push(resolve_app_item(&app.id, &apps));
                         }
                     }
@@ -991,18 +1027,24 @@ fn spawn_real_app(app: &str, target: &str) {
             }
             if let Some(ui) = ui_weak.upgrade() {
                 let apps = apps_list.read().unwrap();
-                let first_match = apps.iter().find(|app| {
-                    let name_lower = app.name.to_lowercase();
-                    let id_lower = app.id.to_lowercase();
-                    name_lower.starts_with(&query)
-                        || name_lower.contains(&query)
-                        || id_lower.contains(&query)
-                }).cloned();
+                let first_match = apps
+                    .iter()
+                    .find(|app| {
+                        let name_lower = app.name.to_lowercase();
+                        let id_lower = app.id.to_lowercase();
+                        name_lower.starts_with(&query)
+                            || name_lower.contains(&query)
+                            || id_lower.contains(&query)
+                    })
+                    .cloned();
 
                 if let Some(target_app) = first_match {
                     let id_str = target_app.id.clone();
                     let name_str = target_app.name.clone();
-                    info!("App search enter: launching top result '{}' (id: {})", name_str, id_str);
+                    info!(
+                        "App search enter: launching top result '{}' (id: {})",
+                        name_str, id_str
+                    );
                     if let Err(e) = launch_app(&target_app, Some("phone")) {
                         tracing::warn!("Failed to launch XDG app '{}': {}", target_app.name, e);
                     }
@@ -1180,7 +1222,11 @@ fn spawn_real_app(app: &str, target: &str) {
                         if cur_idx >= tasks.len() as i32 {
                             ui.set_overview_index((tasks.len() - 1) as i32);
                         }
-                        sync_shell_state("overview", ui.get_drawer_open(), ui.get_overview_index() as usize);
+                        sync_shell_state(
+                            "overview",
+                            ui.get_drawer_open(),
+                            ui.get_overview_index() as usize,
+                        );
                     }
                 }
             });
@@ -1245,16 +1291,23 @@ fn spawn_real_app(app: &str, target: &str) {
             let app_id = app_id_slint.as_str().to_string();
             let mut cfg = layout_config.borrow_mut();
             if cfg.dock_apps.len() >= 4 {
-                info!("Bottom Dock is full (max 4 slots)! Rejecting pin for '{}'", app_id);
+                info!(
+                    "Bottom Dock is full (max 4 slots)! Rejecting pin for '{}'",
+                    app_id
+                );
                 if let Some(ui) = ui_weak.upgrade() {
                     ui.set_reject_dock_drop(true);
                     let ui_weak = ui_weak.clone();
                     let reject_timer = reject_timer.clone();
-                    reject_timer.start(TimerMode::SingleShot, Duration::from_millis(600), move || {
-                        if let Some(ui) = ui_weak.upgrade() {
-                            ui.set_reject_dock_drop(false);
-                        }
-                    });
+                    reject_timer.start(
+                        TimerMode::SingleShot,
+                        Duration::from_millis(600),
+                        move || {
+                            if let Some(ui) = ui_weak.upgrade() {
+                                ui.set_reject_dock_drop(false);
+                            }
+                        },
+                    );
                 }
             } else {
                 if !cfg.dock_apps.contains(&app_id) {
@@ -1285,16 +1338,33 @@ fn spawn_real_app(app: &str, target: &str) {
             let origin_y = if page == 0 { 152.0 } else { 86.0 };
             let row = (((sy - origin_y) / 105.0).round() as i32).clamp(0, 3);
 
-            let existing_folder = cfg.folders.iter().find(|f| f.page == page && f.x == col && f.y == row).cloned();
-            let existing_app = cfg.homescreen_apps.iter().find(|e| e.page == page && e.x == col && e.y == row).cloned();
+            let existing_folder = cfg
+                .folders
+                .iter()
+                .find(|f| f.page == page && f.x == col && f.y == row)
+                .cloned();
+            let existing_app = cfg
+                .homescreen_apps
+                .iter()
+                .find(|e| e.page == page && e.x == col && e.y == row)
+                .cloned();
             let is_folder = cfg.folders.iter().any(|f| f.id == app_id);
 
             if is_folder {
-                info!("Moving folder '{}' to page={}, cell=({}, {})", app_id, page, col, row);
+                info!(
+                    "Moving folder '{}' to page={}, cell=({}, {})",
+                    app_id, page, col, row
+                );
                 if let Some(target_folder) = existing_folder {
                     if target_folder.id != app_id {
-                        let source_apps = cfg.folders.iter().find(|f| f.id == app_id).map(|f| f.app_ids.clone()).unwrap_or_default();
-                        if let Some(tf) = cfg.folders.iter_mut().find(|f| f.id == target_folder.id) {
+                        let source_apps = cfg
+                            .folders
+                            .iter()
+                            .find(|f| f.id == app_id)
+                            .map(|f| f.app_ids.clone())
+                            .unwrap_or_default();
+                        if let Some(tf) = cfg.folders.iter_mut().find(|f| f.id == target_folder.id)
+                        {
                             for aid in source_apps {
                                 if !tf.app_ids.contains(&aid) {
                                     tf.app_ids.push(aid);
@@ -1318,7 +1388,10 @@ fn spawn_real_app(app: &str, target: &str) {
                 }
             } else {
                 if let Some(folder) = existing_folder {
-                    info!("Dropping app '{}' into existing folder '{}'", app_id, folder.id);
+                    info!(
+                        "Dropping app '{}' into existing folder '{}'",
+                        app_id, folder.id
+                    );
                     cfg.add_to_folder(&folder.id, &app_id);
                 } else if let Some(target) = existing_app {
                     if target.id != app_id {
@@ -1483,6 +1556,9 @@ fn spawn_real_app(app: &str, target: &str) {
     // Sliders feedback callbacks
     ui.on_brightness_changed(|val| {
         info!("Display brightness updated: {:.0}%", val * 100.0);
+        if let Err(error) = penumbra_shell::display::apply_backlight_ratio(val as f64) {
+            tracing::warn!(?error, "Failed to apply shell brightness to system backlight");
+        }
     });
 
     ui.on_volume_changed(|val| {
@@ -1511,7 +1587,8 @@ fn spawn_real_app(app: &str, target: &str) {
             if let Some(ui) = ui_weak.upgrade() {
                 let folders_model = Rc::new(VecModel::default());
                 for f in &folders {
-                    let is_custom = !f.starts_with("/usr/share/backgrounds") && !f.starts_with("/usr/share/wallpapers");
+                    let is_custom = !f.starts_with("/usr/share/backgrounds")
+                        && !f.starts_with("/usr/share/wallpapers");
                     folders_model.push(FolderItem {
                         path: f.clone().into(),
                         is_custom,
@@ -1523,7 +1600,11 @@ fn spawn_real_app(app: &str, target: &str) {
             let ui_weak = ui_weak.clone();
             std::thread::spawn(move || {
                 let scanned_paths = scan_wallpaper_paths_from_folders(&folders);
-                info!("Scanned {} wallpaper paths from {:?}", scanned_paths.len(), folders);
+                info!(
+                    "Scanned {} wallpaper paths from {:?}",
+                    scanned_paths.len(),
+                    folders
+                );
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = ui_weak.upgrade() {
                         let mut items = Vec::with_capacity(scanned_paths.len());
@@ -1544,13 +1625,15 @@ fn spawn_real_app(app: &str, target: &str) {
         })
     };
 
-fn load_image_buffer_background(path: &std::path::Path) -> Option<slint::SharedPixelBuffer<slint::Rgb8Pixel>> {
-    let dyn_img = image::open(path).ok()?;
-    let rgb = dyn_img.into_rgb8();
-    let (width, height) = rgb.dimensions();
-    let raw = rgb.into_raw();
-    Some(slint::SharedPixelBuffer::<slint::Rgb8Pixel>::clone_from_slice(&raw, width, height))
-}
+    fn load_image_buffer_background(
+        path: &std::path::Path,
+    ) -> Option<slint::SharedPixelBuffer<slint::Rgb8Pixel>> {
+        let dyn_img = image::open(path).ok()?;
+        let rgb = dyn_img.into_rgb8();
+        let (width, height) = rgb.dimensions();
+        let raw = rgb.into_raw();
+        Some(slint::SharedPixelBuffer::<slint::Rgb8Pixel>::clone_from_slice(&raw, width, height))
+    }
 
     // Initialize wallpaper from layout config asynchronously
     {
@@ -1563,7 +1646,10 @@ fn load_image_buffer_background(path: &std::path::Path) -> Option<slint::SharedP
                 if wp_path.exists() {
                     let t_wp = Instant::now();
                     if let Some(buf) = load_image_buffer_background(wp_path) {
-                        info!("Background wallpaper decode completed in {:.2?}", t_wp.elapsed());
+                        info!(
+                            "Background wallpaper decode completed in {:.2?}",
+                            t_wp.elapsed()
+                        );
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Some(ui) = ui_weak.upgrade() {
                                 let img = slint::Image::from_rgb8(buf);
@@ -1670,7 +1756,10 @@ fn load_image_buffer_background(path: &std::path::Path) -> Option<slint::SharedP
                     .map(|s| s.to_string_lossy().to_lowercase())
                     .unwrap_or_default();
                 if folder_name_lower == "screenshots" || folder_name_lower == "screenshot" {
-                    warn!("Refusing to add screenshots folder to wallpaper scanner: {}", folder_str);
+                    warn!(
+                        "Refusing to add screenshots folder to wallpaper scanner: {}",
+                        folder_str
+                    );
                     return;
                 }
                 let mut cfg = layout_config.borrow_mut();
@@ -1870,7 +1959,8 @@ mod tests {
     fn test_shared_pixel_buffer_send() {
         fn assert_send<T: Send>() {}
         assert_send::<slint::SharedPixelBuffer<slint::Rgb8Pixel>>();
-        let buffer = slint::SharedPixelBuffer::<slint::Rgb8Pixel>::clone_from_slice(&[255, 0, 0], 1, 1);
+        let buffer =
+            slint::SharedPixelBuffer::<slint::Rgb8Pixel>::clone_from_slice(&[255, 0, 0], 1, 1);
         let _img = slint::Image::from_rgb8(buffer);
     }
 
@@ -1921,7 +2011,13 @@ mod tests {
 
     #[test]
     fn test_scan_wallpapers_excludes_screenshots() {
-        let temp_dir = std::env::temp_dir().join(format!("penumbra_wp_test_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()));
+        let temp_dir = std::env::temp_dir().join(format!(
+            "penumbra_wp_test_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
+        ));
         let screenshots_dir = temp_dir.join("Screenshots");
         std::fs::create_dir_all(&screenshots_dir).unwrap();
 
@@ -1942,8 +2038,16 @@ mod tests {
 
         for item in &scanned {
             let path_str = item.path.as_str().to_lowercase();
-            assert!(!path_str.contains("screenshots"), "Should not contain screenshots folder: {}", path_str);
-            assert!(!path_str.contains("screenshot"), "Should not contain screenshot file: {}", path_str);
+            assert!(
+                !path_str.contains("screenshots"),
+                "Should not contain screenshots folder: {}",
+                path_str
+            );
+            assert!(
+                !path_str.contains("screenshot"),
+                "Should not contain screenshot file: {}",
+                path_str
+            );
         }
 
         let _ = std::fs::remove_dir_all(&temp_dir);
@@ -1952,10 +2056,30 @@ mod tests {
     #[test]
     fn test_app_drawer_search_filtering() {
         let all_apps = vec![
-            AppItem { id: "org.gnome.Calculator".into(), name: "Calculator".into(), has_icon: false, icon: slint::Image::default() },
-            AppItem { id: "org.gnome.Calendar".into(), name: "Calendar".into(), has_icon: false, icon: slint::Image::default() },
-            AppItem { id: "foot".into(), name: "Terminal".into(), has_icon: false, icon: slint::Image::default() },
-            AppItem { id: "firefox".into(), name: "Web Browser".into(), has_icon: false, icon: slint::Image::default() },
+            AppItem {
+                id: "org.gnome.Calculator".into(),
+                name: "Calculator".into(),
+                has_icon: false,
+                icon: slint::Image::default(),
+            },
+            AppItem {
+                id: "org.gnome.Calendar".into(),
+                name: "Calendar".into(),
+                has_icon: false,
+                icon: slint::Image::default(),
+            },
+            AppItem {
+                id: "foot".into(),
+                name: "Terminal".into(),
+                has_icon: false,
+                icon: slint::Image::default(),
+            },
+            AppItem {
+                id: "firefox".into(),
+                name: "Web Browser".into(),
+                has_icon: false,
+                icon: slint::Image::default(),
+            },
         ];
 
         // Search "cal": should match Calculator and Calendar

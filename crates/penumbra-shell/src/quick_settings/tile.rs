@@ -29,7 +29,11 @@ impl TileDefinition {
             title: title.into(),
             subtitle: if active { on } else { off }.into(),
             icon_name: icon.into(),
-            state: if active { TileState::Active } else { TileState::Inactive },
+            state: if active {
+                TileState::Active
+            } else {
+                TileState::Inactive
+            },
             is_enabled: true,
         }
     }
@@ -73,19 +77,54 @@ pub fn registry() -> Vec<TileDefinition> {
         TileDefinition::new("internet", "Internet", "wifi", "Connected", "Off", true),
         TileDefinition::new("bluetooth", "Bluetooth", "bluetooth", "On", "Off", true),
         TileDefinition::new("flashlight", "Flashlight", "flashlight", "On", "Off", false),
-        TileDefinition::new("dnd", "Do Not Disturb", "dnd", "Priority only", "Off", false),
-        TileDefinition::new("rotation", "Auto-rotate", "rotation", "Auto-rotate", "Portrait", true),
-        TileDefinition::new("battery_saver", "Battery Saver", "battery", "On", "Off", false),
+        TileDefinition::new(
+            "dnd",
+            "Do Not Disturb",
+            "dnd",
+            "Priority only",
+            "Off",
+            false,
+        ),
+        TileDefinition::new(
+            "rotation",
+            "Auto-rotate",
+            "rotation",
+            "Auto-rotate",
+            "Portrait",
+            true,
+        ),
+        TileDefinition::new(
+            "battery_saver",
+            "Battery Saver",
+            "battery",
+            "On",
+            "Off",
+            false,
+        ),
         TileDefinition::new("airplane", "Airplane mode", "airplane", "On", "Off", false),
         TileDefinition::new("hotspot", "Hotspot", "hotspot", "Sharing", "Off", false),
         TileDefinition::new("night_light", "Night Light", "night", "On", "Off", false),
-        TileDefinition::new("recorder", "Screen recorder", "recorder", "Recording", "Tap to start", false),
+        TileDefinition::new(
+            "recorder",
+            "Screen recorder",
+            "recorder",
+            "Recording",
+            "Tap to start",
+            false,
+        ),
     ]
 }
 
 pub fn default_active_ids() -> Vec<String> {
-    ["internet", "bluetooth", "flashlight", "dnd", "rotation", "battery_saver"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect()
+    [
+        "internet",
+        "bluetooth",
+        "flashlight",
+        "dnd",
+        "rotation",
+        "battery_saver",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
 }

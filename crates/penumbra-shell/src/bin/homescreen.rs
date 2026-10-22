@@ -16,13 +16,9 @@ use tracing_subscriber::FmtSubscriber;
 use layer_shell_slint::{Anchor, KeyboardInteractivity, Layer, LayerConfig};
 use penumbra_gestures::Spring;
 use penumbra_shell::apps::{discover_installed_apps, find_single_app, launch_app, InstalledApp};
-use penumbra_shell::config::{
-    load_layout_config, save_layout_config,
-};
+use penumbra_shell::config::{load_layout_config, save_layout_config};
 use penumbra_shell::ipc::{read_windows, send_command, PhoneMode, ShellState};
-use penumbra_shell::wallpaper::{
-    read_file_browser_entries, scan_wallpaper_paths_from_folders,
-};
+use penumbra_shell::wallpaper::{read_file_browser_entries, scan_wallpaper_paths_from_folders};
 
 slint::include_modules!();
 
@@ -77,18 +73,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Initializing Penumbra Homescreen via layer-shell-slint on Layer::Background...");
 
-    // 1. Initialize Wayland Layer Shell Platform backend on Background layer
+    // 1. Initialize Wayland Layer Shell Platform backend on Background layer.
+    // Keep the logical shell layout separate from the physical output size,
+    // so it scales correctly on a real mobile panel instead of assuming a nested window.
+    let (logical_w, logical_h, _scale) = layer_shell_slint::mobile_output_geometry();
     let config = LayerConfig::default()
         .with_namespace("penumbra-homescreen")
         .with_layer(Layer::Background)
         .with_anchor(Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right)
-        .with_size(412, 915)
+        .with_size(logical_w, logical_h)
         .with_exclusive_zone(-1)
         .with_keyboard_interactivity(KeyboardInteractivity::None);
 
     layer_shell_slint::init(config)?;
 
-    // 2. Instantiate Slint Homescreen UI
+    // 2. Instantiate Slint Homescreen UI.
+    // The actual native surface sizing is done by the layer-shell geometry we pass in
+    // `LayerConfig::with_size(...)`, not by mutating the generated Slint Window object.
     let ui = HomescreenWindow::new()?;
     let ui_weak = ui.as_weak();
 
@@ -228,7 +229,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                         let wp_models = Rc::new(VecModel::default());
                         for p in scanned_paths {
-                            if let Ok(img) = slint::Image::load_from_path(std::path::Path::new(&p.path)) {
+                            if let Ok(img) =
+                                slint::Image::load_from_path(std::path::Path::new(&p.path))
+                            {
                                 wp_models.push(WallpaperItem {
                                     path: p.path.into(),
                                     name: p.name.into(),
@@ -306,8 +309,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             info!("Launching application from homescreen: '{}'", app_id);
             let app_opt = {
                 let apps = apps_list.read().unwrap();
-                apps.iter().find(|a| a.id.eq_ignore_ascii_case(app_id) || a.name.eq_ignore_ascii_case(app_id)).cloned()
-            }.or_else(|| find_single_app(app_id));
+                apps.iter()
+                    .find(|a| {
+                        a.id.eq_ignore_ascii_case(app_id) || a.name.eq_ignore_ascii_case(app_id)
+                    })
+                    .cloned()
+            }
+            .or_else(|| find_single_app(app_id));
 
             if let Some(ref target_app) = app_opt {
                 if let Err(e) = launch_app(target_app, Some("phone")) {
@@ -331,7 +339,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         state.drawer_dragging = true;
         state.drawer_pull_dy = dy as f64;
         let _ = state.save();
-        info!("Homescreen pulled down (dy={:.1}) -> signaling Quick Settings overlay transfer", dy);
+        info!(
+            "Homescreen pulled down (dy={:.1}) -> signaling Quick Settings overlay transfer",
+            dy
+        );
     });
 
     ui.on_homescreen_pull_released(move || {
@@ -357,11 +368,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ui.set_reject_dock_drop(true);
                     let ui_weak = ui_weak.clone();
                     let reject_timer = reject_timer.clone();
-                    reject_timer.start(TimerMode::SingleShot, Duration::from_millis(600), move || {
-                        if let Some(ui) = ui_weak.upgrade() {
-                            ui.set_reject_dock_drop(false);
-                        }
-                    });
+                    reject_timer.start(
+                        TimerMode::SingleShot,
+                        Duration::from_millis(600),
+                        move || {
+                            if let Some(ui) = ui_weak.upgrade() {
+                                ui.set_reject_dock_drop(false);
+                            }
+                        },
+                    );
                 }
             } else if !cfg.dock_apps.contains(&app_id) {
                 info!("Pinning app '{}' to bottom dock", app_id);
@@ -389,17 +404,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let origin_y = if page == 0 { 152.0 } else { 86.0 };
             let row = (((sy - origin_y) / 105.0).round() as i32).clamp(0, 3);
 
-            let existing_folder = cfg.folders.iter().find(|f| f.page == page && f.x == col && f.y == row).cloned();
-            let existing_app = cfg.homescreen_apps.iter().find(|e| e.page == page && e.x == col && e.y == row).cloned();
+            let existing_folder = cfg
+                .folders
+                .iter()
+                .find(|f| f.page == page && f.x == col && f.y == row)
+                .cloned();
+            let existing_app = cfg
+                .homescreen_apps
+                .iter()
+                .find(|e| e.page == page && e.x == col && e.y == row)
+                .cloned();
             let is_folder = cfg.folders.iter().any(|f| f.id == app_id);
 
             if is_folder {
-                info!("Moving folder '{}' to page={}, cell=({}, {})", app_id, page, col, row);
+                info!(
+                    "Moving folder '{}' to page={}, cell=({}, {})",
+                    app_id, page, col, row
+                );
                 if let Some(target_folder) = existing_folder {
                     if target_folder.id != app_id {
                         // Merging into another folder: transfer app_ids and remove dragged folder
-                        let source_apps = cfg.folders.iter().find(|f| f.id == app_id).map(|f| f.app_ids.clone()).unwrap_or_default();
-                        if let Some(tf) = cfg.folders.iter_mut().find(|f| f.id == target_folder.id) {
+                        let source_apps = cfg
+                            .folders
+                            .iter()
+                            .find(|f| f.id == app_id)
+                            .map(|f| f.app_ids.clone())
+                            .unwrap_or_default();
+                        if let Some(tf) = cfg.folders.iter_mut().find(|f| f.id == target_folder.id)
+                        {
                             for aid in source_apps {
                                 if !tf.app_ids.contains(&aid) {
                                     tf.app_ids.push(aid);
@@ -430,7 +462,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     cfg.add_to_folder(&folder.id, &app_id);
                 } else if let Some(target_app) = existing_app {
                     if target_app.id != app_id {
-                        info!("Merging apps '{}' and '{}' into new folder", target_app.id, app_id);
+                        info!(
+                            "Merging apps '{}' and '{}' into new folder",
+                            target_app.id, app_id
+                        );
                         cfg.merge_into_folder(&target_app.id, &app_id, page, col, row);
                     } else {
                         cfg.place_or_move_app(&app_id, page, col, row);
@@ -587,7 +622,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let apps = apps_list.read().unwrap();
                 let filtered: Vec<AppItem> = apps
                     .iter()
-                    .filter(|a| query.is_empty() || a.name.to_lowercase().contains(&query) || a.id.to_lowercase().contains(&query))
+                    .filter(|a| {
+                        query.is_empty()
+                            || a.name.to_lowercase().contains(&query)
+                            || a.id.to_lowercase().contains(&query)
+                    })
                     .map(|app| {
                         let (has_icon, img) = if let Some(ref path) = app.icon_path {
                             match slint::Image::load_from_path(path) {
@@ -619,7 +658,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             let app_opt = {
                 let apps = apps_list.read().unwrap();
-                apps.iter().find(|a| a.name.to_lowercase().starts_with(&query) || a.id.to_lowercase().contains(&query)).cloned()
+                apps.iter()
+                    .find(|a| {
+                        a.name.to_lowercase().starts_with(&query)
+                            || a.id.to_lowercase().contains(&query)
+                    })
+                    .cloned()
             };
             if let Some(target) = app_opt {
                 info!("Launching search match '{}'", target.name);
@@ -915,78 +959,80 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let ui_weak = ui_weak.clone();
         let apps_list = Arc::clone(&apps_list);
         let spring_state = Rc::clone(&spring_state);
-        task_timer.start(
-            TimerMode::Repeated,
-            Duration::from_millis(50),
-            move || {
-                let state = ShellState::load();
-                if let Some(ui) = ui_weak.upgrade() {
-                    let current_mode = ui.get_active_mode();
-                    let target_mode = match state.mode {
-                        PhoneMode::Home => {
-                            if current_mode == 2 {
-                                2 // preserve local app drawer open
-                            } else {
-                                0
-                            }
+        task_timer.start(TimerMode::Repeated, Duration::from_millis(50), move || {
+            let state = ShellState::load();
+            if let Some(ui) = ui_weak.upgrade() {
+                let current_mode = ui.get_active_mode();
+                let target_mode = match state.mode {
+                    PhoneMode::Home => {
+                        if current_mode == 2 {
+                            2 // preserve local app drawer open
+                        } else {
+                            0
                         }
-                        PhoneMode::Overview => 1,
-                        PhoneMode::App => 3,
+                    }
+                    PhoneMode::Overview => 1,
+                    PhoneMode::App => 3,
+                };
+
+                if current_mode != target_mode {
+                    info!(
+                        "Homescreen sync active_mode: {} -> {}",
+                        current_mode, target_mode
+                    );
+                    ui.set_active_mode(target_mode);
+                }
+
+                if state.mode == PhoneMode::Overview {
+                    if !ui.get_is_dragging_carousel() {
+                        let cur_scroll = ui.get_overview_scroll() as f64;
+                        let target_scroll = state.overview_index as f64;
+                        if (cur_scroll - target_scroll).abs() > 0.05
+                            && spring_state.borrow().is_settled(0.01, 0.05)
+                        {
+                            ui.set_overview_index(state.overview_index as i32);
+                            ui.set_overview_scroll(state.overview_index as f32);
+                        }
+                    }
+                }
+
+                let windows = read_windows();
+                let apps = apps_list.read().unwrap();
+                let tasks_model = Rc::new(VecModel::default());
+                for win in windows {
+                    let (name, has_icon, icon) = if let Some(app) = apps.iter().find(|a| {
+                        a.id.eq_ignore_ascii_case(&win.app_id)
+                            || a.name.eq_ignore_ascii_case(&win.app_id)
+                    }) {
+                        let (has_icon, img) = if let Some(ref path) = app.icon_path {
+                            match slint::Image::load_from_path(path) {
+                                Ok(img) => (true, img),
+                                Err(_) => (false, slint::Image::default()),
+                            }
+                        } else {
+                            (false, slint::Image::default())
+                        };
+                        (app.name.clone(), has_icon, img)
+                    } else {
+                        let display = if !win.title.is_empty() {
+                            win.title.clone()
+                        } else {
+                            win.app_id.clone()
+                        };
+                        (display, false, slint::Image::default())
                     };
 
-                    if current_mode != target_mode {
-                        info!("Homescreen sync active_mode: {} -> {}", current_mode, target_mode);
-                        ui.set_active_mode(target_mode);
-                    }
-
-                    if state.mode == PhoneMode::Overview {
-                        if !ui.get_is_dragging_carousel() {
-                            let cur_scroll = ui.get_overview_scroll() as f64;
-                            let target_scroll = state.overview_index as f64;
-                            if (cur_scroll - target_scroll).abs() > 0.05 && spring_state.borrow().is_settled(0.01, 0.05) {
-                                ui.set_overview_index(state.overview_index as i32);
-                                ui.set_overview_scroll(state.overview_index as f32);
-                            }
-                        }
-                    }
-
-                    let windows = read_windows();
-                    let apps = apps_list.read().unwrap();
-                    let tasks_model = Rc::new(VecModel::default());
-                    for win in windows {
-                        let (name, has_icon, icon) = if let Some(app) = apps.iter().find(|a| {
-                            a.id.eq_ignore_ascii_case(&win.app_id) || a.name.eq_ignore_ascii_case(&win.app_id)
-                        }) {
-                            let (has_icon, img) = if let Some(ref path) = app.icon_path {
-                                match slint::Image::load_from_path(path) {
-                                    Ok(img) => (true, img),
-                                    Err(_) => (false, slint::Image::default()),
-                                }
-                            } else {
-                                (false, slint::Image::default())
-                            };
-                            (app.name.clone(), has_icon, img)
-                        } else {
-                            let display = if !win.title.is_empty() {
-                                win.title.clone()
-                            } else {
-                                win.app_id.clone()
-                            };
-                            (display, false, slint::Image::default())
-                        };
-
-                        tasks_model.push(AppCardData {
-                            id: win.id as i32,
-                            app_id: win.app_id.into(),
-                            name: name.into(),
-                            has_icon,
-                            icon,
-                        });
-                    }
-                    ui.set_running_tasks(ModelRc::from(tasks_model));
+                    tasks_model.push(AppCardData {
+                        id: win.id as i32,
+                        app_id: win.app_id.into(),
+                        name: name.into(),
+                        has_icon,
+                        icon,
+                    });
                 }
-            },
-        );
+                ui.set_running_tasks(ModelRc::from(tasks_model));
+            }
+        });
     }
 
     info!("Penumbra Homescreen running event loop on Layer::Background...");

@@ -1,5 +1,6 @@
 import { Theme } from "theme.slint";
 import { AppItem, HomescreenItem } from "app_item.slint";
+import { Icon } from "icon.slint";
 
 export component ShortcutTile inherits Rectangle {
     in property <AppItem> app;
@@ -100,11 +101,12 @@ export component ShortcutTile inherits Rectangle {
                         y: 8px;
                     }
 
-                    if !root.tile-has-icon: Text {
-                        text: "📱";
-                        font-size: 24px;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
+                    if !root.tile-has-icon: Icon {
+                        name: "app";
+                        icon-size: 28px;
+                        icon-color: Theme.on-surface;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
                     }
                 }
 
@@ -256,13 +258,12 @@ export component ShortcutTile inherits Rectangle {
         border-color: #ffffff;
         z: 200;
 
-        Text {
-            text: "✕";
-            font-size: 11px;
-            font-weight: 800;
-            color: #ffffff;
-            horizontal-alignment: center;
-            vertical-alignment: center;
+        Icon {
+            name: "close";
+            icon-size: 12px;
+            icon-color: #ffffff;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
         }
 
         badge-ta := TouchArea {

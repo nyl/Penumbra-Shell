@@ -46,7 +46,10 @@ pub fn default_wallpaper_folders() -> Vec<String> {
                 folders.push(p_pic.to_string_lossy().to_string());
             }
         }
-        let p_bg = PathBuf::from(&home).join(".local").join("share").join("backgrounds");
+        let p_bg = PathBuf::from(&home)
+            .join(".local")
+            .join("share")
+            .join("backgrounds");
         if p_bg.exists() && !folders.contains(&p_bg.to_string_lossy().to_string()) {
             folders.push(p_bg.to_string_lossy().to_string());
         }
@@ -137,16 +140,22 @@ impl ShellLayoutConfig {
         y: i32,
     ) -> String {
         // Remove both apps from standalone homescreen list
-        self.homescreen_apps.retain(|e| e.id != target_app_id && e.id != new_app_id);
+        self.homescreen_apps
+            .retain(|e| e.id != target_app_id && e.id != new_app_id);
         for folder in self.folders.iter_mut() {
-            folder.app_ids.retain(|id| id != target_app_id && id != new_app_id);
+            folder
+                .app_ids
+                .retain(|id| id != target_app_id && id != new_app_id);
         }
         self.folders.retain(|f| !f.app_ids.is_empty());
 
-        let folder_id = format!("folder_{}", std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis());
+        let folder_id = format!(
+            "folder_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis()
+        );
 
         let folder = FolderEntry {
             id: folder_id.clone(),
@@ -184,7 +193,10 @@ impl ShellLayoutConfig {
     /// Reorders an app inside a folder from from_idx to to_idx.
     pub fn reorder_folder_apps(&mut self, folder_id: &str, from_idx: usize, to_idx: usize) -> bool {
         if let Some(folder) = self.folders.iter_mut().find(|f| f.id == folder_id) {
-            if from_idx < folder.app_ids.len() && to_idx < folder.app_ids.len() && from_idx != to_idx {
+            if from_idx < folder.app_ids.len()
+                && to_idx < folder.app_ids.len()
+                && from_idx != to_idx
+            {
                 let item = folder.app_ids.remove(from_idx);
                 folder.app_ids.insert(to_idx, item);
                 return true;
@@ -294,7 +306,10 @@ pub fn load_layout_config(available_app_ids: &[String]) -> ShellLayoutConfig {
                 config.sanitize();
                 return config;
             } else {
-                warn!("Failed to parse layout config at {:?}, falling back to default", path);
+                warn!(
+                    "Failed to parse layout config at {:?}, falling back to default",
+                    path
+                );
             }
         }
     }
@@ -309,8 +324,21 @@ pub fn create_default_layout(available_app_ids: &[String]) -> ShellLayoutConfig 
     let preferred_slots = [
         &["org.gnome.Calls", "calls", "dialer"][..],
         &["sm.puri.Chatty", "chatty", "org.gnome.Polari"][..],
-        &["org.gnome.Epiphany", "epiphany", "firefox", "chromium", "google-chrome"][..],
-        &["org.gnome.Console", "foot", "org.gnome.Terminal", "alacritty", "kitty", "org.gnome.Camera"][..],
+        &[
+            "org.gnome.Epiphany",
+            "epiphany",
+            "firefox",
+            "chromium",
+            "google-chrome",
+        ][..],
+        &[
+            "org.gnome.Console",
+            "foot",
+            "org.gnome.Terminal",
+            "alacritty",
+            "kitty",
+            "org.gnome.Camera",
+        ][..],
     ];
 
     for candidates in preferred_slots.iter() {
@@ -391,23 +419,22 @@ mod tests {
                     y: 0,
                 },
             ],
-            folders: vec![
-                FolderEntry {
-                    id: "f1".to_string(),
-                    name: "Utilities".to_string(),
-                    page: 0,
-                    x: 2,
-                    y: 0,
-                    app_ids: vec!["calc".to_string(), "terminal".to_string()],
-                }
-            ],
+            folders: vec![FolderEntry {
+                id: "f1".to_string(),
+                name: "Utilities".to_string(),
+                page: 0,
+                x: 2,
+                y: 0,
+                app_ids: vec!["calc".to_string(), "terminal".to_string()],
+            }],
             num_pages: 2,
             wallpaper_path: "/usr/share/backgrounds/gnome/adwaita-d.jxl".to_string(),
             wallpaper_folders: vec!["/usr/share/backgrounds".to_string()],
         };
 
         let json = serde_json::to_string_pretty(&cfg).expect("Serialization failed");
-        let deserialized: ShellLayoutConfig = serde_json::from_str(&json).expect("Deserialization failed");
+        let deserialized: ShellLayoutConfig =
+            serde_json::from_str(&json).expect("Deserialization failed");
         assert_eq!(deserialized.dock_apps.len(), 2);
         assert_eq!(deserialized.homescreen_apps.len(), 2);
         assert_eq!(deserialized.homescreen_apps[0].id, "firefox");
@@ -416,8 +443,14 @@ mod tests {
         assert_eq!(deserialized.folders.len(), 1);
         assert_eq!(deserialized.folders[0].name, "Utilities");
         assert_eq!(deserialized.num_pages, 2);
-        assert_eq!(deserialized.wallpaper_path, "/usr/share/backgrounds/gnome/adwaita-d.jxl");
-        assert_eq!(deserialized.wallpaper_folders, vec!["/usr/share/backgrounds".to_string()]);
+        assert_eq!(
+            deserialized.wallpaper_path,
+            "/usr/share/backgrounds/gnome/adwaita-d.jxl"
+        );
+        assert_eq!(
+            deserialized.wallpaper_folders,
+            vec!["/usr/share/backgrounds".to_string()]
+        );
     }
 
     #[test]
@@ -471,8 +504,16 @@ mod tests {
         let folders = default_wallpaper_folders();
         for f in &folders {
             let lower = f.to_lowercase();
-            assert!(!lower.ends_with("/screenshots"), "Folder should not be screenshots: {}", f);
-            assert!(!lower.ends_with("/screenshot"), "Folder should not be screenshot: {}", f);
+            assert!(
+                !lower.ends_with("/screenshots"),
+                "Folder should not be screenshots: {}",
+                f
+            );
+            assert!(
+                !lower.ends_with("/screenshot"),
+                "Folder should not be screenshot: {}",
+                f
+            );
         }
     }
 }

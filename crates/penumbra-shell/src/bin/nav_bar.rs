@@ -1,12 +1,12 @@
-//! Standalone Penumbra Navigation Bar binary.
-//!
-//! A dedicated gesture navigation bar for Penumbra Mobile DE, built with Slint and
-//! `layer-shell-slint` on Wayland `zwlr_layer_shell_v1` (`Layer::Top`, `exclusive_zone: 32`, `height: 32px`).
-//!
-//! Provides Android/iOS-style pill gestures:
-//! - Tap or flick up: Return to Homescreen
-//! - Swipe up & hold: Open Task Switcher / Overview
-//! - Swipe left/right: Cycle running tasks
+// Standalone Penumbra Navigation Bar binary.
+//
+// A dedicated gesture navigation bar for Penumbra Mobile DE, built with Slint and
+// `layer-shell-slint` on Wayland `zwlr_layer_shell_v1` (`Layer::Top`, `exclusive_zone: 32`, `height: 32px`).
+//
+// Provides Android/iOS-style pill gestures:
+// - Tap or flick up: Return to Homescreen
+// - Swipe up & hold: Open Task Switcher / Overview
+// - Swipe left/right: Cycle running tasks
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -22,7 +22,7 @@ use penumbra_shell::ipc::{read_windows, send_command, PhoneMode, ShellState};
 
 slint::include_modules!();
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+pub(crate) fn main() -> Result<(), Box<dyn std::error::Error>> {
     let subscriber = FmtSubscriber::builder()
         .with_max_level(Level::INFO)
         .finish();
@@ -30,18 +30,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Initializing Penumbra Navigation Bar via layer-shell-slint...");
 
-    // 1. Configure Wayland Layer Shell Platform backend
+    // 1. Configure Wayland Layer Shell Platform backend.
+    let (logical_w, _logical_h, _scale) = layer_shell_slint::mobile_output_geometry();
     let config = LayerConfig::default()
         .with_namespace("penumbra-nav-bar")
         .with_layer(Layer::Top)
         .with_anchor(Anchor::Bottom | Anchor::Left | Anchor::Right)
-        .with_size(412, 32)
+        .with_size(logical_w, 32)
         .with_exclusive_zone(32)
         .with_keyboard_interactivity(KeyboardInteractivity::None);
 
     layer_shell_slint::init(config)?;
 
-    // 2. Instantiate Slint NavBarWindow component
+    // 2. Instantiate Slint NavBarWindow component.
+    // The surface geometry is controlled by the layer-shell config created above.
     let bar = NavBarWindow::new()?;
     let ui_weak = bar.as_weak();
 
@@ -57,43 +59,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let nav_start = Rc::new(Cell::new(Instant::now()));
     let poll_timer = Rc::new(Timer::default());
 
-    let handle_gesture = Rc::new(|gesture: NavGesture| {
-        match gesture {
-            NavGesture::GoHome => {
-                info!("Navigation: Home requested (Fast flick up or tap)");
+    let handle_gesture = Rc::new(|gesture: NavGesture| match gesture {
+        NavGesture::GoHome => {
+            info!("Navigation: Home requested (Fast flick up or tap)");
+            let mut state = ShellState::load();
+            state.mode = PhoneMode::Home;
+            state.drawer_open = false;
+            let _ = state.save();
+        }
+        NavGesture::OpenOverview => {
+            info!("Navigation: Overview / Recents requested (Slow pull up & hold)");
+            let mut state = ShellState::load();
+            state.mode = PhoneMode::Overview;
+            state.drawer_open = false;
+            state.overview_index = 0;
+            let _ = state.save();
+        }
+        NavGesture::SwitchNextApp => {
+            let windows = read_windows();
+            if windows.len() > 1 {
+                let target = windows[1].id;
+                info!("Navigation: Switching to next app ({})", target);
+                let _ = send_command(&format!("focus {}", target));
                 let mut state = ShellState::load();
-                state.mode = PhoneMode::Home;
-                state.drawer_open = false;
+                state.mode = PhoneMode::App;
                 let _ = state.save();
             }
-            NavGesture::OpenOverview => {
-                info!("Navigation: Overview / Recents requested (Slow pull up & hold)");
+        }
+        NavGesture::SwitchPrevApp => {
+            let windows = read_windows();
+            if let Some(last) = windows.last() {
+                info!("Navigation: Switching to previous app ({})", last.id);
+                let _ = send_command(&format!("focus {}", last.id));
                 let mut state = ShellState::load();
-                state.mode = PhoneMode::Overview;
-                state.drawer_open = false;
-                state.overview_index = 0;
+                state.mode = PhoneMode::App;
                 let _ = state.save();
-            }
-            NavGesture::SwitchNextApp => {
-                let windows = read_windows();
-                if windows.len() > 1 {
-                    let target = windows[1].id;
-                    info!("Navigation: Switching to next app ({})", target);
-                    let _ = send_command(&format!("focus {}", target));
-                    let mut state = ShellState::load();
-                    state.mode = PhoneMode::App;
-                    let _ = state.save();
-                }
-            }
-            NavGesture::SwitchPrevApp => {
-                let windows = read_windows();
-                if let Some(last) = windows.last() {
-                    info!("Navigation: Switching to previous app ({})", last.id);
-                    let _ = send_command(&format!("focus {}", last.id));
-                    let mut state = ShellState::load();
-                    state.mode = PhoneMode::App;
-                    let _ = state.save();
-                }
             }
         }
     });
@@ -157,7 +157,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let (gesture, is_tap) = {
                 let mut rec = nav_rec.borrow_mut();
                 let g = rec.on_up(x as f64, y as f64, elapsed);
-                let tap = g.is_none() && rec.upward_distance() < 20.0 && rec.horizontal_distance().abs() < 25.0;
+                let tap = g.is_none()
+                    && rec.upward_distance() < 20.0
+                    && rec.horizontal_distance().abs() < 25.0;
                 (g, tap)
             };
 
@@ -203,19 +205,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state_timer = Timer::default();
     {
         let ui_weak = ui_weak.clone();
-        state_timer.start(
-            TimerMode::Repeated,
-            Duration::from_millis(100),
-            move || {
-                let state = ShellState::load();
-                if let Some(ui) = ui_weak.upgrade() {
-                    let should_be_solid = state.mode == PhoneMode::App;
-                    if ui.get_solid() != should_be_solid {
-                        ui.set_solid(should_be_solid);
-                    }
+        state_timer.start(TimerMode::Repeated, Duration::from_millis(100), move || {
+            let state = ShellState::load();
+            if let Some(ui) = ui_weak.upgrade() {
+                let should_be_solid = state.mode == PhoneMode::App;
+                if ui.get_solid() != should_be_solid {
+                    ui.set_solid(should_be_solid);
                 }
-            },
-        );
+            }
+        });
     }
 
     info!("Penumbra Navigation Bar running event loop.");

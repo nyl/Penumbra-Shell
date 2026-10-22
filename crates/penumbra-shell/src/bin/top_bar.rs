@@ -1,7 +1,7 @@
 //! Standalone Penumbra Top Status Bar binary.
 //!
 //! A dedicated system status bar for Penumbra Mobile DE, built with Slint and
-//! `layer-shell-slint` on Wayland `zwlr_layer_shell_v1` (`Layer::Top`, `exclusive_zone: 38`, `height: 38px`).
+//! `layer-shell-slint` on Wayland `zwlr_layer_shell_v1` (`Layer::Top`, `exclusive_zone: 42`, `height: 42px`).
 
 use std::time::Duration;
 
@@ -28,8 +28,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_namespace("penumbra-top-bar")
         .with_layer(Layer::Top)
         .with_anchor(Anchor::Top | Anchor::Left | Anchor::Right)
-        .with_size(0, 38)
-        .with_exclusive_zone(38)
+        .with_size(0, 42)
+        .with_exclusive_zone(42)
         .with_keyboard_interactivity(KeyboardInteractivity::None);
 
     layer_shell_slint::init(config)?;
@@ -45,7 +45,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             state.drawer_dragging = true;
             state.drawer_pull_dy = dy as f64;
             let _ = state.save();
-            info!("Top Bar pulled down (dy={:.1}) -> signaling Quick Settings overlay transfer", dy);
+            info!(
+                "Top Bar pulled down (dy={:.1}) -> signaling Quick Settings overlay transfer",
+                dy
+            );
         }
     });
 

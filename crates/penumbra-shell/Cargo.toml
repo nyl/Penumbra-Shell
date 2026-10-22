@@ -29,11 +29,21 @@ path = "src/bin/nav_bar.rs"
 name = "penumbra-quick-settings"
 path = "src/bin/quick_settings.rs"
 
+[[bin]]
+name = "penumbra-quicksettings"
+path = "src/bin/quicksettings.rs"
+
+[[bin]]
+name = "penumbra-nav-pill"
+path = "src/bin/nav_pill.rs"
+
 [dependencies]
 layer-shell-slint = { path = "../layer-shell-slint" }
 penumbra-gestures = { path = "../penumbra-gestures" }
 penumbra-services = { path = "../penumbra-services" }
-slint = "1.18"
+slint = { version = "1.18", default-features = false, features = ["compat-1-2", "image-default-formats", "renderer-software", "std"] }
+i-slint-core = { version = "1.18", features = ["image-decoders", "image-default-formats", "svg"] }
+i-slint-common = { version = "1.18", features = ["fontconfig-dlopen"] }
 chrono = "0.4"
 tokio = { version = "1.38", features = ["rt", "rt-multi-thread", "sync", "time"] }
 tracing = "0.1"

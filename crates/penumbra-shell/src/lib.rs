@@ -5,6 +5,7 @@
 
 pub mod apps;
 pub mod config;
+pub mod display;
 pub mod ipc;
 pub mod quick_settings;
 pub mod wallpaper;
