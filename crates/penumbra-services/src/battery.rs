@@ -169,17 +169,28 @@ impl BatteryService {
                     .ok()
                     .and_then(|s| s.trim().parse::<f64>().ok())
                     .unwrap_or(100.0);
-                let state = match std::fs::read_to_string(p.join("status")).unwrap_or_default().trim() {
+                let state = match std::fs::read_to_string(p.join("status"))
+                    .unwrap_or_default()
+                    .trim()
+                {
                     "Charging" => BatteryState::Charging,
                     "Discharging" => BatteryState::Discharging,
                     "Full" => BatteryState::FullyCharged,
                     "Not charging" => BatteryState::PendingCharge,
                     _ => BatteryState::Unknown,
                 };
-                return BatteryInfo { percentage: pct, is_charging: state.is_charging(), state };
+                return BatteryInfo {
+                    percentage: pct,
+                    is_charging: state.is_charging(),
+                    state,
+                };
             }
         }
-        BatteryInfo { percentage: 100.0, state: BatteryState::FullyCharged, is_charging: false }
+        BatteryInfo {
+            percentage: 100.0,
+            state: BatteryState::FullyCharged,
+            is_charging: false,
+        }
     }
 
     async fn run_mock_simulator(tx: watch::Sender<BatteryInfo>) {

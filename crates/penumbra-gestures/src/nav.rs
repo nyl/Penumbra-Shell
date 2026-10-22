@@ -279,7 +279,10 @@ mod tests {
         r.on_down(200.0, 900.0, ms(0));
         assert_eq!(r.on_move(160.0, 898.0, ms(30)), None);
         assert_eq!(r.on_move(120.0, 896.0, ms(60)), None);
-        assert_eq!(r.on_up(110.0, 895.0, ms(90)), Some(NavGesture::SwitchNextApp));
+        assert_eq!(
+            r.on_up(110.0, 895.0, ms(90)),
+            Some(NavGesture::SwitchNextApp)
+        );
     }
 
     #[test]
@@ -288,6 +291,9 @@ mod tests {
         r.on_down(200.0, 900.0, ms(0));
         assert_eq!(r.on_move(240.0, 898.0, ms(30)), None);
         assert_eq!(r.on_move(280.0, 896.0, ms(60)), None);
-        assert_eq!(r.on_up(290.0, 895.0, ms(90)), Some(NavGesture::SwitchPrevApp));
+        assert_eq!(
+            r.on_up(290.0, 895.0, ms(90)),
+            Some(NavGesture::SwitchPrevApp)
+        );
     }
 }

@@ -200,9 +200,23 @@ impl NetworkService {
         NetworkInfo {
             is_connected: up_iface,
             is_wifi_enabled: wifi_enabled,
-            ssid: if up_iface && ssid.is_empty() && !wifi_iface { "Ethernet".into() } else { ssid },
-            signal_strength: if wifi_iface { signal } else if up_iface { 100 } else { 0 },
-            connectivity: if up_iface { ConnectivityState::Full } else { ConnectivityState::None },
+            ssid: if up_iface && ssid.is_empty() && !wifi_iface {
+                "Ethernet".into()
+            } else {
+                ssid
+            },
+            signal_strength: if wifi_iface {
+                signal
+            } else if up_iface {
+                100
+            } else {
+                0
+            },
+            connectivity: if up_iface {
+                ConnectivityState::Full
+            } else {
+                ConnectivityState::None
+            },
         }
     }
 

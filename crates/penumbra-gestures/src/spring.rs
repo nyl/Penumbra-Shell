@@ -57,7 +57,10 @@ impl Spring {
     ///   zeta = c / (2 * sqrt(k * m))
     pub fn from_physics(stiffness: f64, damping_coeff: f64, mass: f64) -> Self {
         assert!(stiffness > 0.0, "Stiffness must be positive");
-        assert!(damping_coeff >= 0.0, "Damping coefficient cannot be negative");
+        assert!(
+            damping_coeff >= 0.0,
+            "Damping coefficient cannot be negative"
+        );
         assert!(mass > 0.0, "Mass must be positive");
         let damping_ratio = damping_coeff / (2.0 * (stiffness * mass).sqrt());
         Self::new(stiffness, damping_ratio, mass)
