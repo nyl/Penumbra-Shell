@@ -12,6 +12,6 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-authors = ["Penumbra Mobile DE Team <dev@penumbra.org>"]
+authors = ["Nitescu Ion Laurentiu <me@nyl.ro>"]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/penumbra-de/penumbra"
+repository = "https://github.com/nyl/Penumbra-Shell"
