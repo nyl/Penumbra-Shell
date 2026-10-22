@@ -55,3 +55,6 @@ scratch/
 device rootfs/
 *.orig
 *.rej
+
+# Machine-local cargo config (sysroot paths)
+.cargo/
