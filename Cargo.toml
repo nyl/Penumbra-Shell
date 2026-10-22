@@ -6,6 +6,7 @@ members = [
     "crates/penumbra-shell",
     "crates/penumbra-comp",
     "crates/layer-shell-slint",
+    "crates/penumbra-greeter",
 ]
 
 [workspace.package]

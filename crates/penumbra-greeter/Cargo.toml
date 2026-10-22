@@ -1,0 +1,15 @@
+[package]
+name = "penumbra-greeter"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Penumbra's mobile-oriented greetd login frontend"
+
+[[bin]]
+name = "penumbra-greeter"
+path = "src/main.rs"
+
+[dependencies]
+greetd_ipc = { version = "0.10.3", features = ["sync-codec"] }
+libc = "0.2"
