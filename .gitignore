@@ -20,6 +20,16 @@ wayland-penumbra-*
 .agents/
 .gemini/
 
+# AI agent instructions and tooling (kept local, not pushed)
+AGENT_RULES.md
+AGENTS.md
+CLAUDE.md
+.cursorrules
+.cursor/
+.claude/
+.copilot/
+.github/copilot-instructions.md
+
 # OS specific files
 .DS_Store
 Thumbs.db
@@ -27,3 +37,8 @@ Thumbs.db
 # Logs and scratch
 *.log
 scratch/
+
+# Local device rootfs snapshots and patch leftovers
+device rootfs/
+*.orig
+*.rej
