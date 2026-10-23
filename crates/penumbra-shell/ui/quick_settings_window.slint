@@ -1,6 +1,7 @@
 import { QuickSettingsSlider, TileData, NotificationData } from "quick_settings_slider.slint";
+import { PowerDialog } from "power_dialog.slint";
 
-export { TileData, NotificationData }
+export { TileData, NotificationData, PowerDialog }
 
 export component QuickSettingsWindow inherits Window {
     title: "Penumbra Quick Settings";
@@ -12,6 +13,7 @@ export component QuickSettingsWindow inherits Window {
     in-out property <length> slide-offset-y: -915px;
     in-out property <float> expansion-progress: 0.0;
     in-out property <bool> edit-mode: false;
+    in-out property <bool> show-power-dialog: false;
 
     in-out property <float> brightness: 0.75;
     in-out property <float> volume: 0.60;
@@ -26,10 +28,15 @@ export component QuickSettingsWindow inherits Window {
 
     callback close-requested();
     callback power-action();
+    callback power-off();
+    callback reboot();
+    callback logout();
+    callback dismiss-power-dialog();
     callback settings-action();
     callback brightness-changed(float);
     callback volume-changed(float);
     callback tile-clicked(string);
+    callback tile-long-pressed(string);
     callback enter-edit-mode();
     callback exit-edit-mode();
     callback reset-tiles();
@@ -62,6 +69,7 @@ export component QuickSettingsWindow inherits Window {
         brightness-changed(v) => { root.brightness-changed(v); }
         volume-changed(v) => { root.volume-changed(v); }
         tile-clicked(id) => { root.tile-clicked(id); }
+        tile-long-pressed(id) => { root.tile-long-pressed(id); }
         enter-edit-mode => { root.enter-edit-mode(); }
         exit-edit-mode => { root.exit-edit-mode(); }
         reset-tiles => { root.reset-tiles(); }
@@ -71,5 +79,16 @@ export component QuickSettingsWindow inherits Window {
         drag-delta(dy) => { root.drag-delta(dy); }
         drag-released(cur_y, vel) => { root.drag-released(cur_y, vel); }
         fast-pull-up => { root.fast-pull-up(); }
+    }
+
+    power-dialog := PowerDialog {
+        open <=> root.show-power-dialog;
+        power-off => { root.power-off(); }
+        reboot => { root.reboot(); }
+        logout => { root.logout(); }
+        cancel => {
+            root.show-power-dialog = false;
+            root.dismiss-power-dialog();
+        }
     }
 }

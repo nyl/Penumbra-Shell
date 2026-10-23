@@ -30,6 +30,9 @@ fn default_pages() -> i32 {
 
 pub fn default_wallpaper_folders() -> Vec<String> {
     let mut folders = Vec::new();
+    if PathBuf::from("/usr/share/penumbra/assets").exists() {
+        folders.push("/usr/share/penumbra/assets".to_string());
+    }
     if PathBuf::from("/usr/share/backgrounds").exists() {
         folders.push("/usr/share/backgrounds".to_string());
     }

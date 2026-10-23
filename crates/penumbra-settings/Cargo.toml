@@ -1,0 +1,27 @@
+[package]
+name = "penumbra-settings"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Material 3 Expressive standalone Settings application for Penumbra Mobile DE"
+
+[[bin]]
+name = "penumbra-settings"
+path = "src/main.rs"
+
+[dependencies]
+penumbra-services = { path = "../penumbra-services" }
+slint = { version = "1.18", default-features = false, features = ["backend-winit", "compat-1-2", "image-default-formats", "renderer-software", "std"] }
+i-slint-core = { version = "1.18", features = ["image-decoders", "image-default-formats", "svg"] }
+i-slint-common = { version = "1.18", features = ["fontconfig-dlopen"] }
+tokio = { version = "1.38", features = ["rt", "rt-multi-thread", "sync", "time", "macros"] }
+zbus = { version = "5.5", default-features = false, features = ["async-io", "blocking-api"] }
+clap = { version = "4.5", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+futures-util = "0.3"
+libc = "0.2"
+
+[build-dependencies]
+slint-build = "1.18"

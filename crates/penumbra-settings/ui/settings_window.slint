@@ -1,0 +1,337 @@
+import { Theme } from "theme.slint";
+import { Icon } from "icon.slint";
+import { TopBarNav } from "components/top_bar_nav.slint";
+import { PageMain, SearchResultData } from "pages/page_main.slint";
+import { PageWifi, WifiApData } from "pages/page_wifi.slint";
+import { PageBluetooth, BtDeviceData } from "pages/page_bluetooth.slint";
+import { PageDisplay } from "pages/page_display.slint";
+import { PageBattery } from "pages/page_battery.slint";
+import { PageSound } from "pages/page_sound.slint";
+import { PageAbout } from "pages/page_about.slint";
+
+export { WifiApData, BtDeviceData, SearchResultData }
+
+// ==============================================================================
+// Component: SettingsWindow
+// ==============================================================================
+// Top-level application window for Penumbra Settings.
+//
+// Form Factor & Screen Geometry:
+// - Designed for handheld touch devices at 412x915 portrait geometry (standard
+//   Android / postmarketOS modern phone aspect ratio 20:9).
+// - Pitch black OLED base surface (`Theme.base-surface = #0D0B10`) minimizes power
+//   consumption on battery-powered mobile devices.
+//
+// Navigation Architecture:
+// 1. Two-Tier Viewport Stack:
+//    - Root level: `PageMain` catalog containing category cards and search banner.
+//    - Subpage level: Dedicated configuration views (`PageWifi`, `PageBluetooth`,
+//      `PageDisplay`, `PageBattery`, `PageSound`, `PageAbout`).
+// 2. Coordinated Horizontal Sliding Animation:
+//    - Driven by the normalized `subpage-slide` property (0.0 = Main, 1.0 = Subpage).
+//    - Duration: 250ms with an `ease-out` timing curve.
+//    - Parallax Depth: When entering a subpage, `PageMain` shifts left by -80px and
+//      its opacity fades to 0.3 (`1.0 - subpage-slide * 0.7`). Simultaneously, the
+//      incoming subpage slides smoothly from `+parent.width` to `0px`.
+// 3. Morphing App Bar:
+//    - `TopBarNav` dynamically morphs height and typography while updating the
+//      displayed title reactively from `active-page`.
+export component SettingsWindow inherits Window {
+    title: "Penumbra Settings";
+    width: 412px;
+    height: 915px;
+    background: Theme.base-surface;
+    default-font-family: "Droid Sans";
+
+    // --------------------------------------------------------------------------
+    // Navigation State
+    // --------------------------------------------------------------------------
+    // Identifier of the currently active page ("main", "wifi", "bluetooth", etc.).
+    in-out property <string> active-page: "main";
+    // Helper boolean indicating if the active view is a subpage (enables back button & subpage layout).
+    property <bool> is-subpage: root.active-page != "main";
+
+    // --------------------------------------------------------------------------
+    // Reactive Hardware Properties - Wi-Fi (NetworkManager)
+    // --------------------------------------------------------------------------
+    // Whether the Wi-Fi wireless radio is powered on.
+    in-out property <bool> wifi-enabled: true;
+    // SSID of the active wireless connection, or empty if disconnected.
+    in property <string> connected-ssid: "";
+    // Signal percentage (0-100) of the active connection.
+    in property <int> signal-strength: 0;
+    // Scanned Wi-Fi access point entries populated reactively by NetworkManagerBackend.
+    in property <[WifiApData]> wifi-access-points: [];
+
+    // --------------------------------------------------------------------------
+    // Reactive Hardware Properties - Bluetooth (BlueZ)
+    // --------------------------------------------------------------------------
+    // Whether the host Bluetooth radio adapter is powered on.
+    in-out property <bool> bt-enabled: true;
+    // Friendly broadcast name of the host Bluetooth adapter.
+    in property <string> adapter-name: "Bluetooth";
+    // Whether device discovery / inquiry scanning is actively executing.
+    in property <bool> is-discovering: false;
+    // List of paired, saved, and discovered Bluetooth accessories.
+    in property <[BtDeviceData]> bt-devices: [];
+
+    // --------------------------------------------------------------------------
+    // Reactive Hardware Properties - Display & Backlight
+    // --------------------------------------------------------------------------
+    // Display backlight luminance level clamped between 0.05 and 1.0.
+    in-out property <float> brightness: 0.75;
+    // Whether ambient light sensor automatically adjusts display brightness.
+    in-out property <bool> adaptive-brightness: true;
+    // Whether pitch-black dark theme is active across the system.
+    in-out property <bool> dark-theme: true;
+    // Inactivity timeout period string (e.g. "2 minutes").
+    in-out property <string> screen-timeout: "2 minutes";
+
+    // --------------------------------------------------------------------------
+    // Reactive Hardware Properties - Battery & Power (UPower)
+    // --------------------------------------------------------------------------
+    // Battery state of charge percentage (0 to 100).
+    in property <int> battery-pct: 86;
+    // Whether external power source (AC/USB) is actively supplying energy.
+    in property <bool> is-charging: false;
+    // Dynamic battery time remaining or charging status message.
+    in property <string> battery-state-text: "About 14 hr left";
+    // Whether the system power-saver throttle profile is active.
+    in-out property <bool> battery-saver: false;
+
+    // --------------------------------------------------------------------------
+    // Reactive Hardware Properties - Audio & Sound (PipeWire)
+    // --------------------------------------------------------------------------
+    // Media playback volume channel level (0.0 to 1.0).
+    in-out property <float> media-volume: 0.65;
+    // Voice call volume channel level (0.0 to 1.0).
+    in-out property <float> call-volume: 0.80;
+    // Ringer and notification alerts volume level (0.0 to 1.0).
+    in-out property <float> ring-volume: 0.70;
+    // Whether Do Not Disturb notification suppression is enabled.
+    in-out property <bool> dnd-enabled: false;
+
+    // --------------------------------------------------------------------------
+    // Search State & Query Callbacks
+    // --------------------------------------------------------------------------
+    in property <[SearchResultData]> search-results: [];
+    callback search-query-changed(string);
+
+    // --------------------------------------------------------------------------
+    // Real Hardware & System Telemetry Properties
+    // --------------------------------------------------------------------------
+    in property <string> device-name: "Linux Device";
+    in property <string> device-model: "Standard Hardware";
+    in property <string> os-version: "Linux OS";
+    in property <string> kernel-version: "Linux";
+    in property <string> cpu-model: "Processor";
+    in property <string> memory-info: "System RAM";
+    in property <string> storage-info: "Internal Storage";
+    in property <string> uptime-info: "Active";
+    in property <string> compositor-info: "Penumbra Shell (Smithay Wayland)";
+    in property <string> wifi-mac: "Hardware MAC";
+    in property <string> bluetooth-mac: "5C:87:9C:27:10:A4";
+    in property <string> display-resolution: "1920 × 1080 Display";
+    in property <string> battery-health: "Normal";
+    in property <string> battery-model: "Li-ion Battery";
+
+    // --------------------------------------------------------------------------
+    // Navigation Callbacks
+    // --------------------------------------------------------------------------
+    // Dispatched to Rust when user navigates forward into a subpage.
+    callback navigate-to(string);
+    // Dispatched to Rust when user navigates backward toward the root catalog.
+    callback navigate-back();
+
+    // --------------------------------------------------------------------------
+    // Hardware Action Callbacks (Dispatched to Tokio D-Bus Tasks)
+    // --------------------------------------------------------------------------
+    // Wi-Fi hardware toggle action callback.
+    callback toggle-wifi(bool);
+    // Wi-Fi connection trigger with target SSID parameter.
+    callback connect-ap(string);
+    // Trigger immediate wireless beacon rescan.
+    callback refresh-wifi-scan();
+    // Bluetooth adapter power toggle action callback.
+    callback toggle-bt(bool);
+    // Connect or disconnect target Bluetooth device address.
+    callback toggle-bt-device(string);
+    // Start Bluetooth peripheral discovery scan.
+    callback start-bt-discovery();
+    // Backlight brightness adjustment event callback.
+    callback brightness-changed(float);
+    // Adaptive brightness toggle event callback.
+    callback toggle-adaptive-brightness(bool);
+    // Dark theme toggle event callback.
+    callback toggle-dark-theme(bool);
+    // Battery saver power profile toggle event callback.
+    callback toggle-battery-saver(bool);
+    // Media volume adjustment event callback.
+    callback media-volume-changed(float);
+    // Voice call volume adjustment event callback.
+    callback call-volume-changed(float);
+    // Ringer volume adjustment event callback.
+    callback ring-volume-changed(float);
+    // Do Not Disturb toggle event callback.
+    callback toggle-dnd(bool);
+
+    // Dynamic Title Computation based on active subpage ID.
+    property <string> current-title: root.active-page == "wifi" ? "Network & internet"
+        : root.active-page == "bluetooth" ? "Connected devices"
+        : root.active-page == "display" ? "Display"
+        : root.active-page == "battery" ? "Battery"
+        : root.active-page == "sound" ? "Sound & vibration"
+        : root.active-page == "about" ? "About phone"
+        : "Settings";
+
+    // Animated sliding transition progress (0.0 = Main catalog, 1.0 = Subpage).
+    property <float> subpage-slide: root.is-subpage ? 1.0 : 0.0;
+    animate subpage-slide { duration: 250ms; easing: ease-out; }
+
+    forward-focus: fs;
+    fs := FocusScope {
+        key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                if (root.is-subpage) {
+                    root.active-page = "main";
+                    root.navigate-back();
+                    return accept;
+                }
+            }
+            return reject;
+        }
+    }
+
+    VerticalLayout {
+        spacing: 0px;
+
+        // Top App Bar
+        TopBarNav {
+            title: root.current-title;
+            is-subpage: root.is-subpage;
+            back-clicked => {
+                root.active-page = "main";
+                root.navigate-back();
+            }
+        }
+
+        // Viewport stack hosting Main and Subpages
+        Rectangle {
+            vertical-stretch: 1;
+            clip: true;
+
+            // Main Catalog View
+            Rectangle {
+                x: -root.subpage-slide * 80px;
+                y: 0px;
+                width: parent.width;
+                height: parent.height;
+                opacity: 1.0 - root.subpage-slide * 0.7;
+                visible: root.subpage-slide < 0.99;
+
+                PageMain {
+                    width: 100%;
+                    height: 100%;
+                    wifi-status: root.wifi-enabled ? (root.connected-ssid != "" ? root.connected-ssid : (root.wifi-access-points.length > 0 ? (root.wifi-access-points.length + " networks available") : "Scanning...")) : "Disabled";
+                    bt-status: root.bt-enabled ? (root.bt-devices.length > 0 ? (root.bt-devices.length + " devices found") : "No devices") : "Disabled";
+                    battery-status: root.battery-pct + "% • " + root.battery-state-text;
+                    device-summary: root.device-model + " • " + root.os-version;
+                    search-results: root.search-results;
+                    search-query-changed(q) => { root.search-query-changed(q); }
+                    navigate-to(page) => {
+                        root.active-page = page;
+                        root.navigate-to(page);
+                    }
+                }
+            }
+
+            // Sliding Subpage Container
+            Rectangle {
+                x: (1.0 - root.subpage-slide) * parent.width;
+                y: 0px;
+                width: parent.width;
+                height: parent.height;
+                opacity: root.subpage-slide > 0.01 ? 1.0 : 0.0;
+                visible: root.subpage-slide > 0.01;
+
+                if root.active-page == "wifi": PageWifi {
+                    width: 100%;
+                    height: 100%;
+                    wifi-enabled <=> root.wifi-enabled;
+                    connected-ssid: root.connected-ssid;
+                    signal-strength: root.signal-strength;
+                    wifi-mac: root.wifi-mac;
+                    access-points: root.wifi-access-points;
+                    toggle-wifi(val) => { root.toggle-wifi(val); }
+                    connect-ap(ssid) => { root.connect-ap(ssid); }
+                    scan-requested => { root.refresh-wifi-scan(); }
+                }
+
+                if root.active-page == "bluetooth": PageBluetooth {
+                    width: 100%;
+                    height: 100%;
+                    bt-enabled <=> root.bt-enabled;
+                    adapter-name: root.adapter-name;
+                    bluetooth-mac: root.bluetooth-mac;
+                    is-discovering: root.is-discovering;
+                    devices: root.bt-devices;
+                    toggle-bt(val) => { root.toggle-bt(val); }
+                    toggle-device(addr) => { root.toggle-bt-device(addr); }
+                    start-discovery => { root.start-bt-discovery(); }
+                }
+
+                if root.active-page == "display": PageDisplay {
+                    width: 100%;
+                    height: 100%;
+                    brightness <=> root.brightness;
+                    adaptive-brightness <=> root.adaptive-brightness;
+                    dark-theme <=> root.dark-theme;
+                    screen-timeout <=> root.screen-timeout;
+                    display-resolution: root.display-resolution;
+                    brightness-changed(v) => { root.brightness-changed(v); }
+                    toggle-adaptive-brightness(v) => { root.toggle-adaptive-brightness(v); }
+                    toggle-dark-theme(v) => { root.toggle-dark-theme(v); }
+                }
+
+                if root.active-page == "battery": PageBattery {
+                    width: 100%;
+                    height: 100%;
+                    battery-pct: root.battery-pct;
+                    is-charging: root.is-charging;
+                    state-text: root.battery-state-text;
+                    battery-health: root.battery-health;
+                    battery-model: root.battery-model;
+                    battery-saver <=> root.battery-saver;
+                    toggle-battery-saver(v) => { root.toggle-battery-saver(v); }
+                }
+
+                if root.active-page == "sound": PageSound {
+                    width: 100%;
+                    height: 100%;
+                    media-volume <=> root.media-volume;
+                    call-volume <=> root.call-volume;
+                    ring-volume <=> root.ring-volume;
+                    dnd-enabled <=> root.dnd-enabled;
+                    media-volume-changed(v) => { root.media-volume-changed(v); }
+                    call-volume-changed(v) => { root.call-volume-changed(v); }
+                    ring-volume-changed(v) => { root.ring-volume-changed(v); }
+                    toggle-dnd(v) => { root.toggle-dnd(v); }
+                }
+
+                if root.active-page == "about": PageAbout {
+                    width: 100%;
+                    height: 100%;
+                    device-name: root.device-name;
+                    device-model: root.device-model;
+                    os-version: root.os-version;
+                    kernel-version: root.kernel-version;
+                    cpu-model: root.cpu-model;
+                    memory-info: root.memory-info;
+                    storage-info: root.storage-info;
+                    uptime-info: root.uptime-info;
+                    compositor-info: root.compositor-info;
+                }
+            }
+        }
+    }
+}

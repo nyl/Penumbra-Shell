@@ -1,0 +1,39 @@
+import { Theme } from "../theme.slint";
+
+// ==============================================================================
+// Component: SettingsSectionCard
+// ==============================================================================
+// Grouped category container designed according to Android 17 Material You guidelines.
+// Encloses a vertical list of related setting items with continuous 26px rounded corners
+// and a deep warm surface background (#1d1f24).
+export component SettingsSectionCard inherits Rectangle {
+    border-radius: Theme.radius-card;
+    background: Theme.surface-low;
+    clip: true;
+}
+
+// ==============================================================================
+// Component: SettingsSectionHeader
+// ==============================================================================
+// Android 17 section header label displayed directly above grouped settings cards.
+//
+// Typography & Layout:
+// - Left-anchored with 8px inset to line up naturally with card interior content.
+// - Authentic accent blue color (#a8c7fa).
+// - Font size: 14px, font-weight: 500.
+export component SettingsSectionHeader inherits HorizontalLayout {
+    // Header title displayed above the settings card.
+    in property <string> title: "";
+
+    padding-left: 8px;
+    padding-bottom: 6px;
+    padding-top: 10px;
+
+    Text {
+        text: root.title;
+        font-size: 14px;
+        font-weight: 500;
+        color: #a8c7fa;
+        horizontal-alignment: left;
+    }
+}

@@ -1,0 +1,107 @@
+// ==============================================================================
+// Penumbra Settings: Design System & Theming Tokens
+// ==============================================================================
+// Implements the Material 3 Expressive design token system tailored specifically
+// for mobile form factors and deep OLED pitch-black power savings.
+//
+// Architectural Choices:
+// 1. OLED Pitch Black Base: Base surface is set to #0D0B10 to maximize battery life
+//    on mobile OLED/AMOLED panels while maintaining subtle contrast against cards.
+// 2. High Contrast Elevation: Rather than relying on drop shadows (which can be GPU
+//    intensive on mobile embedded Wayland compositors), elevation is expressed via
+//    chromatic luminance steps (`surface-low`, `surface-high`, `surface-highest`)
+//    and a delicate 1px specular rim border (`specular-rim`).
+// 3. Continuous Squircle-like Radii: 20px card radii and pill shapes follow modern
+//    handheld ergonomic guidelines for comfortable thumb interaction.
+// ==============================================================================
+
+export global Theme {
+    // --------------------------------------------------------------------------
+    // Surface & Background Roles (Android 17 Deep Night Palette)
+    // --------------------------------------------------------------------------
+    // Root window background: Deep dark night base matching Pixel screenshots.
+    out property <color> base-surface: #111318;
+    // Lowest elevation recessed surface.
+    out property <color> surface-lowest: #0b0d11;
+    // Group container cards (Surface Low - soft, dark warm grey).
+    out property <color> surface-low: #1d1f24;
+    // Interactive hover/press highlight layer.
+    out property <color> surface-high: #282a30;
+    // Elevated search bar and capsule buttons (Surface Container High).
+    out property <color> surface-container-high: #1e2025;
+    // Highest elevation chips and switches.
+    out property <color> surface-highest: #33363f;
+    // Inactive track and disabled surface tone.
+    out property <color> surface-variant: #44474f;
+
+    // --------------------------------------------------------------------------
+    // Accent & Semantic Roles (Material You Dynamic Palette)
+    // --------------------------------------------------------------------------
+    // Primary accent hue used for active toggles, highlights, and focus states.
+    out property <color> primary: #d0bcff;
+    // High-contrast text/icon color layered over `primary`.
+    out property <color> on-primary: #381e72;
+    // Muted accent container for badges and active card backgrounds.
+    out property <color> primary-container: #4f378b;
+    // High-contrast text/icon color layered over `primary-container`.
+    out property <color> on-primary-container: #eaddff;
+    // Secondary neutral accent.
+    out property <color> secondary: #ccc2dc;
+    // High-contrast text/icon color layered over `secondary`.
+    out property <color> on-secondary: #332d41;
+
+    // --------------------------------------------------------------------------
+    // Content & Typography Colors
+    // --------------------------------------------------------------------------
+    // Primary text: soft white/cream with natural luminance.
+    out property <color> on-surface: #e6e0e9;
+    // Secondary text & subtitles: warm lavender/grey.
+    out property <color> on-surface-variant: #938f99;
+    // Group subheaders: soft, muted pastel purple.
+    out property <color> subheader: #a8c7fa;
+    // Subtle border outline color.
+    out property <color> outline: #3b3d45;
+    // Hairline divider color.
+    out property <color> outline-variant: #44474f;
+
+    // --------------------------------------------------------------------------
+    // Hardware & Status Indicators
+    // --------------------------------------------------------------------------
+    // Positive state (connected Wi-Fi, paired Bluetooth, good battery health).
+    out property <color> success: #48E885;
+    // Alert / advisory state (battery saver active, charging caution).
+    out property <color> warning: #F5B041;
+    // Critical state (disconnected, hardware error, critical battery).
+    out property <color> danger: #E74C3C;
+
+    // --------------------------------------------------------------------------
+    // Hairlines & Dividers
+    // --------------------------------------------------------------------------
+    out property <color> specular-rim: transparent;
+    out property <color> specular-rim-active: #ffffff1f;
+    out property <color> divider: #ffffff0a;
+
+    // --------------------------------------------------------------------------
+    // Corner Radii Scale (Android 17 Standard: 26px Base)
+    // --------------------------------------------------------------------------
+    // Base 26px border radius used for capsule search bar and container cards.
+    out property <length> radius-pill: 26px;
+    out property <length> radius-card: 26px;
+    out property <length> radius-tile: 18px;
+    out property <length> radius-small: 14px;
+    out property <length> radius-badge: 20px;
+
+    // --------------------------------------------------------------------------
+    // Typography Scale (Google Sans / M3 Expressive)
+    // --------------------------------------------------------------------------
+    // Asymmetrical top headline on main start screen.
+    out property <length> font-headline: 32px;
+    // Subpage app-bar title.
+    out property <length> font-title: 22px;
+    // Settings item title.
+    out property <length> font-subtitle: 16px;
+    // Default body and search input font size.
+    out property <length> font-body: 15px;
+    // Subtitle, helper text, and secondary metadata font size.
+    out property <length> font-caption: 13px;
+}

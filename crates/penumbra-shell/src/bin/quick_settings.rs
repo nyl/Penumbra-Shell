@@ -15,8 +15,10 @@ use tracing_subscriber::FmtSubscriber;
 
 use layer_shell_slint::{Anchor, KeyboardInteractivity, Layer, LayerConfig};
 use penumbra_gestures::Spring;
-use penumbra_services::{BatteryService, NetworkService};
-use penumbra_shell::display::apply_backlight_ratio;
+use penumbra_services::{
+    apply_backlight_ratio, apply_volume_ratio, read_backlight_ratio, read_volume_ratio,
+    BatteryService, NetworkService,
+};
 use penumbra_shell::ipc::ShellState;
 use penumbra_shell::quick_settings::{tile, QuickSettingsConfig, TileDefinition, TileState};
 use slint::{ModelRc, VecModel};
@@ -87,6 +89,12 @@ pub(crate) fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initially retracted off-screen: y = -915px
     qs.set_slide_offset_y(-915.0);
     qs.set_expansion_progress(0.0);
+
+    // Initial hardware telemetry for sliders
+    let init_brightness = read_backlight_ratio().unwrap_or(0.75);
+    qs.set_brightness(init_brightness as f32);
+    let init_volume = read_volume_ratio();
+    qs.set_volume(init_volume as f32);
 
     // 3. Underdamped Spring Physics Engine for slider deployment
     // Formula: F = -k * (y - y_target) - c * v with stiffness: 300.0, damping: 26.0
@@ -297,6 +305,24 @@ pub(crate) fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     {
         let animate_to = Rc::clone(&animate_to);
+        qs.on_tile_long_pressed(move |id| {
+            info!("Quick Settings: Tile long-pressed: {id}");
+            let page = match id.as_str() {
+                "internet" => "wifi",
+                "bluetooth" => "bluetooth",
+                "flashlight" | "brightness" => "display",
+                "battery_saver" => "battery",
+                _ => "main",
+            };
+            animate_to(-915.0, 0.0);
+            let _ = std::process::Command::new("penumbra-settings")
+                .arg("--page")
+                .arg(page)
+                .spawn();
+        });
+    }
+    {
+        let animate_to = Rc::clone(&animate_to);
         let ui_weak = ui_weak.clone();
         qs.on_enter_edit_mode(move || {
             if let Some(ui) = ui_weak.upgrade() {
@@ -369,15 +395,63 @@ pub(crate) fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
-    qs.on_power_action(|| {
-        info!("Quick Settings: Power button tapped");
+    {
+        let ui_weak = ui_weak.clone();
+        qs.on_power_action(move || {
+            info!("Quick Settings: Power button tapped -> showing Power Dialog");
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_show_power_dialog(true);
+            }
+            let mut s = ShellState::load();
+            s.power_dialog_open = true;
+            let _ = s.save();
+        });
+    }
+
+    qs.on_power_off(|| {
+        info!("Power Dialog: Turn OFF requested");
+        let _ = std::process::Command::new("systemctl").arg("poweroff").spawn();
     });
+
+    qs.on_reboot(|| {
+        info!("Power Dialog: Reboot requested");
+        let _ = std::process::Command::new("systemctl").arg("reboot").spawn();
+    });
+
+    qs.on_logout(|| {
+        info!("Power Dialog: Logout requested");
+        if let Ok(user) = std::env::var("USER") {
+            let _ = std::process::Command::new("loginctl")
+                .args(["terminate-user", &user])
+                .spawn();
+        }
+        let _ = std::process::Command::new("pkill")
+            .args(["-u", &format!("{}", unsafe { libc::getuid() })])
+            .spawn();
+    });
+
+    {
+        let ui_weak = ui_weak.clone();
+        qs.on_dismiss_power_dialog(move || {
+            info!("Power Dialog dismissed");
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_show_power_dialog(false);
+            }
+            let mut s = ShellState::load();
+            s.power_dialog_open = false;
+            let _ = s.save();
+        });
+    }
 
     {
         let animate_to = Rc::clone(&animate_to);
         qs.on_settings_action(move || {
-            info!("Quick Settings: Settings button tapped -> retracting");
+            info!("Quick Settings: Settings button tapped -> retracting & launching penumbra-settings");
             animate_to(-915.0, 0.0);
+            let _ = std::process::Command::new("penumbra-settings")
+                .arg("--page")
+                .arg("main")
+                .spawn();
         });
     }
 
@@ -390,6 +464,7 @@ pub(crate) fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     qs.on_volume_changed(|val| {
         info!("Quick Settings: Volume set to {:.2}", val);
+        apply_volume_ratio(val as f64);
     });
 
     // Android 17 Kinetic Tracking Model:
@@ -466,6 +541,7 @@ pub(crate) fn main() -> Result<(), Box<dyn std::error::Error>> {
         let spring_state = Rc::clone(&spring_state);
         let spring_timer = Rc::clone(&spring_timer);
         let last_known_open = Rc::new(RefCell::new(false));
+        let last_known_power_dialog = Rc::new(RefCell::new(false));
         let last_known_pull_dy = Rc::new(RefCell::new(0.0f64));
         let last_dragging = Rc::new(RefCell::new(false));
         let pull_vel = Rc::new(RefCell::new(0.0f64));
@@ -549,6 +625,15 @@ pub(crate) fn main() -> Result<(), Box<dyn std::error::Error>> {
                         info!("External trigger: closing Quick Settings shade");
                         animate_to(-915.0, -400.0);
                     }
+                }
+            }
+
+            // Power Dialog sync
+            let mut last_power = last_known_power_dialog.borrow_mut();
+            if state.power_dialog_open != *last_power {
+                *last_power = state.power_dialog_open;
+                if let Some(ui) = ui_weak.upgrade() {
+                    ui.set_show_power_dialog(state.power_dialog_open);
                 }
             }
         });

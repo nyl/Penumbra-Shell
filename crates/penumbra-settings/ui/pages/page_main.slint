@@ -1,0 +1,485 @@
+import { Theme } from "../theme.slint";
+import { Icon } from "../icon.slint";
+import { SettingsTile } from "../components/settings_tile.slint";
+import { SettingsSectionCard } from "../components/settings_section.slint";
+
+// ==============================================================================
+// Data Structure: SearchResultData
+// ==============================================================================
+// Representation of a filtered settings query result item.
+export struct SearchResultData {
+    category: string,
+    show-category-header: bool,
+    title: string,
+    breadcrumb: string,
+    target-page: string,
+}
+
+// ==============================================================================
+// Component: PageMain
+// ==============================================================================
+// Root overview catalog and dynamic settings search experience for Penumbra Settings.
+// Adheres strictly to Android 17 / Pixel Material You design philosophy:
+// 1. Clean top-aligned search capsule — no giant "Settings" text.
+// 2. Strict left alignment for all icon badges, titles, and breadcrumbs.
+// 3. No category headers outside the cards — the 26px cards themselves group items.
+// 4. No chevrons on main list tiles.
+// 5. Circular 40px pastel badges with high-contrast dark icons.
+// 6. Dynamic live search across all UI sections with category groupings.
+export component PageMain inherits Rectangle {
+    // Current active Wi-Fi status summary (e.g. "Penumbra-Mesh-5G" or "Disabled").
+    in property <string> wifi-status: "Penumbra-Mesh-5G";
+    // Current Bluetooth connection summary (e.g. "1 active device" or "No devices").
+    in property <string> bt-status: "1 active device";
+    // Current battery status summary (e.g. "86% • About 14 hr left").
+    in property <string> battery-status: "86% • About 14 hr left";
+    // Current device model & OS summary for About phone tile.
+    in property <string> device-summary: "Linux Device";
+
+    // --------------------------------------------------------------------------
+    // Search State
+    // --------------------------------------------------------------------------
+    // Whether the user is currently in search mode.
+    in-out property <bool> is-searching: false;
+    // Current search query typed by the user.
+    in-out property <string> search-query: "";
+    // Filtered search results populated by Rust search engine.
+    in property <[SearchResultData]> search-results: [];
+
+    // Emitted when the user selects a setting or search result to navigate to.
+    callback navigate-to(string);
+    // Emitted when the user edits the search text.
+    callback search-query-changed(string);
+
+    background: Theme.base-surface;
+
+    VerticalLayout {
+        padding: 0px;
+        spacing: 0px;
+
+        // ======================================================================
+        // Top Bar: Morphs between Search Pill (Root) and Active Search Header
+        // ======================================================================
+        Rectangle {
+            height: root.is-searching ? 64px : 68px;
+            background: Theme.base-surface;
+
+            // Mode A: Search Top Bar when user is actively searching
+            if root.is-searching: HorizontalLayout {
+                padding-left: 8px;
+                padding-right: 12px;
+                spacing: 8px;
+
+                // Android Back Button (<-)
+                Rectangle {
+                    width: 44px;
+                    height: 44px;
+                    border-radius: 22px;
+                    y: (parent.height - self.height) / 2;
+                    background: back-touch.pressed ? #282a30 : transparent;
+
+                    Icon {
+                        name: "chevron-left";
+                        icon-size: 22px;
+                        icon-color: Theme.on-surface;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                    }
+
+                    back-touch := TouchArea {
+                        clicked => {
+                            root.is-searching = false;
+                            root.search-query = "";
+                            root.search-query-changed("");
+                        }
+                    }
+                }
+
+                // Search Text Input
+                search-input := TextInput {
+                    horizontal-stretch: 1;
+                    text <=> root.search-query;
+                    font-size: 18px;
+                    color: Theme.on-surface;
+                    vertical-alignment: center;
+                    single-line: true;
+                    selection-background-color: #a8c7fa.with-alpha(0.35);
+
+                    edited => {
+                        root.search-query-changed(self.text);
+                    }
+                }
+
+                // Clear Query Button (X)
+                if root.search-query != "": Rectangle {
+                    width: 40px;
+                    height: 40px;
+                    border-radius: 20px;
+                    y: (parent.height - self.height) / 2;
+                    background: clear-touch.pressed ? #282a30 : transparent;
+
+                    Icon {
+                        name: "close";
+                        icon-size: 18px;
+                        icon-color: Theme.on-surface-variant;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                    }
+
+                    clear-touch := TouchArea {
+                        clicked => {
+                            root.search-query = "";
+                            root.search-query-changed("");
+                            search-input.focus();
+                        }
+                    }
+                }
+            }
+
+            // Mode B: Search Capsule Pill on Root Overview
+            if !root.is-searching: HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                padding-top: 10px;
+                padding-bottom: 6px;
+
+                search-pill := Rectangle {
+                    height: 52px;
+                    background: #1e2025;
+                    border-radius: 26px;
+
+                    HorizontalLayout {
+                        padding-left: 18px;
+                        padding-right: 18px;
+                        spacing: 14px;
+
+                        Icon {
+                            name: "search";
+                            icon-size: 20px;
+                            icon-color: #c9c5d0;
+                            y: (parent.height - self.height) / 2;
+                        }
+
+                        Text {
+                            text: "Search settings...";
+                            font-size: 16px;
+                            color: #938f99;
+                            vertical-alignment: center;
+                            horizontal-alignment: left;
+                            horizontal-stretch: 1;
+                        }
+                    }
+
+                    TouchArea {
+                        clicked => {
+                            root.is-searching = true;
+                            root.search-query-changed(root.search-query);
+                        }
+                    }
+                }
+            }
+
+            // Hairline separator below top bar when in search mode
+            if root.is-searching: Rectangle {
+                x: 0px;
+                y: parent.height - 1px;
+                width: parent.width;
+                height: 1px;
+                background: #ffffff0e;
+            }
+        }
+
+        // ======================================================================
+        // Body: Viewport Content
+        // ======================================================================
+        // View 1: Search Results List
+        if root.is-searching: Flickable {
+            vertical-stretch: 1;
+
+            VerticalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                padding-top: 8px;
+                padding-bottom: 32px;
+                spacing: 8px;
+
+                for result[idx] in root.search-results: VerticalLayout {
+                    spacing: 4px;
+
+                    // Category header in accent blue (#a8c7fa)
+                    if result.show-category-header: HorizontalLayout {
+                        padding-left: 8px;
+                        padding-top: idx == 0 ? 4px : 14px;
+                        padding-bottom: 2px;
+
+                        Text {
+                            text: result.category;
+                            font-size: 14px;
+                            font-weight: 500;
+                            color: #a8c7fa;
+                            horizontal-alignment: left;
+                        }
+                    }
+
+                    // Result card item
+                    res-card := Rectangle {
+                        min-height: 64px;
+                        border-radius: 18px;
+                        background: res-touch.pressed ? #282a30 : #1e2025;
+
+                        animate background { duration: 120ms; easing: ease-out; }
+
+                        VerticalLayout {
+                            padding-left: 18px;
+                            padding-right: 18px;
+                            padding-top: 12px;
+                            padding-bottom: 12px;
+                            spacing: 3px;
+
+                            Text {
+                                text: result.title;
+                                font-size: 16px;
+                                font-weight: 500;
+                                color: Theme.on-surface;
+                                horizontal-alignment: left;
+                            }
+
+                            Text {
+                                text: result.breadcrumb;
+                                font-size: 13px;
+                                font-weight: 400;
+                                color: Theme.on-surface-variant;
+                                overflow: elide;
+                                horizontal-alignment: left;
+                            }
+                        }
+
+                        res-touch := TouchArea {
+                            clicked => {
+                                root.navigate-to(result.target-page);
+                            }
+                        }
+                    }
+                }
+
+                // Empty state when search query yields no matches
+                if root.search-results.length == 0 && root.search-query != "": VerticalLayout {
+                    padding-top: 60px;
+                    alignment: center;
+
+                    Text {
+                        text: "No results for \"" + root.search-query + "\"";
+                        font-size: 15px;
+                        color: Theme.on-surface-variant;
+                        horizontal-alignment: center;
+                    }
+                }
+            }
+        }
+
+        // View 2: Android 17 Root Overview (Image 4 Replica)
+        if !root.is-searching: Flickable {
+            vertical-stretch: 1;
+
+            VerticalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                padding-top: 6px;
+                padding-bottom: 32px;
+                spacing: 12px;
+
+                // --------------------------------------------------------------
+                // Card Group 1: Network & Connected devices
+                // --------------------------------------------------------------
+                SettingsSectionCard {
+                    VerticalLayout {
+                        padding-top: 4px;
+                        padding-bottom: 4px;
+
+                        SettingsTile {
+                            icon-name: "wifi";
+                            icon-bg: #7dd8fc; // pastel sky blue
+                            icon-tint: #00354e; // deep navy
+                            title: "Network & internet";
+                            subtitle: root.wifi-status;
+                            show-chevron: false;
+                            is-first: true;
+                            is-last: false;
+                            clicked => { root.navigate-to("wifi"); }
+                        }
+
+                        SettingsTile {
+                            icon-name: "devices";
+                            icon-bg: #7dd8fc; // pastel cyan
+                            icon-tint: #00354e; // deep navy
+                            title: "Connected devices";
+                            subtitle: root.bt-status;
+                            show-chevron: false;
+                            is-first: false;
+                            is-last: true;
+                            clicked => { root.navigate-to("bluetooth"); }
+                        }
+                    }
+                }
+
+                // --------------------------------------------------------------
+                // Card Group 2: Apps & Notifications
+                // --------------------------------------------------------------
+                SettingsSectionCard {
+                    VerticalLayout {
+                        padding-top: 4px;
+                        padding-bottom: 4px;
+
+                        SettingsTile {
+                            icon-name: "apps";
+                            icon-bg: #a8c7fa; // pastel periwinkle
+                            icon-tint: #042b59; // deep navy
+                            title: "Apps";
+                            subtitle: "Assistant, recent apps, default apps";
+                            show-chevron: false;
+                            is-first: true;
+                            is-last: false;
+                            clicked => { root.navigate-to("about"); }
+                        }
+
+                        SettingsTile {
+                            icon-name: "notifications";
+                            icon-bg: #ffb3ba; // pastel rose
+                            icon-tint: #491019; // deep wine
+                            title: "Notifications";
+                            subtitle: "Notification history, conversations";
+                            show-chevron: false;
+                            is-first: false;
+                            is-last: true;
+                            clicked => { root.navigate-to("sound"); }
+                        }
+                    }
+                }
+
+                // --------------------------------------------------------------
+                // Card Group 3: Sound & Modes
+                // --------------------------------------------------------------
+                SettingsSectionCard {
+                    VerticalLayout {
+                        padding-top: 4px;
+                        padding-bottom: 4px;
+
+                        SettingsTile {
+                            icon-name: "sound";
+                            icon-bg: #ffb3ba; // pastel coral/rose
+                            icon-tint: #551422; // deep wine
+                            title: "Sound & vibration";
+                            subtitle: "Volume, haptics, Do Not Disturb";
+                            show-chevron: false;
+                            is-first: true;
+                            is-last: false;
+                            clicked => { root.navigate-to("sound"); }
+                        }
+
+                        SettingsTile {
+                            icon-name: "dnd";
+                            icon-bg: #e8b4cb; // pastel mauve
+                            icon-tint: #3b1424; // deep plum
+                            title: "Modes";
+                            subtitle: "Do Not Disturb, Bedtime, Driving";
+                            show-chevron: false;
+                            is-first: false;
+                            is-last: true;
+                            clicked => { root.navigate-to("sound"); }
+                        }
+                    }
+                }
+
+                // --------------------------------------------------------------
+                // Card Group 4: Display & Wallpaper
+                // --------------------------------------------------------------
+                SettingsSectionCard {
+                    VerticalLayout {
+                        padding-top: 4px;
+                        padding-bottom: 4px;
+
+                        SettingsTile {
+                            icon-name: "brightness";
+                            icon-bg: #ffcc80; // pastel amber
+                            icon-tint: #4e2600; // deep bronze
+                            title: "Display";
+                            subtitle: "Dark theme, font size, touch controls";
+                            show-chevron: false;
+                            is-first: true;
+                            is-last: false;
+                            clicked => { root.navigate-to("display"); }
+                        }
+
+                        SettingsTile {
+                            icon-name: "palette";
+                            icon-bg: #e2bc9d; // pastel caramel
+                            icon-tint: #3c1e05; // deep brown
+                            title: "Wallpaper & style";
+                            subtitle: "Colors, themed icons, app grid";
+                            show-chevron: false;
+                            is-first: false;
+                            is-last: true;
+                            clicked => { root.navigate-to("display"); }
+                        }
+                    }
+                }
+
+                // --------------------------------------------------------------
+                // Card Group 5: Storage & Battery
+                // --------------------------------------------------------------
+                SettingsSectionCard {
+                    VerticalLayout {
+                        padding-top: 4px;
+                        padding-bottom: 4px;
+
+                        SettingsTile {
+                            icon-name: "storage";
+                            icon-bg: #f9d868; // pastel yellow
+                            icon-tint: #3b2e00; // deep amber/brown
+                            title: "Storage";
+                            subtitle: "Internal storage, system memory";
+                            show-chevron: false;
+                            is-first: true;
+                            is-last: false;
+                            clicked => { root.navigate-to("battery"); }
+                        }
+
+                        SettingsTile {
+                            icon-name: "battery";
+                            icon-bg: #a3e8b0; // pastel mint green
+                            icon-tint: #073919; // deep pine green
+                            title: "Battery";
+                            subtitle: root.battery-status;
+                            show-chevron: false;
+                            is-first: false;
+                            is-last: true;
+                            clicked => { root.navigate-to("battery"); }
+                        }
+                    }
+                }
+
+                // --------------------------------------------------------------
+                // Card Group 6: About Phone
+                // --------------------------------------------------------------
+                SettingsSectionCard {
+                    VerticalLayout {
+                        padding-top: 4px;
+                        padding-bottom: 4px;
+
+                        SettingsTile {
+                            icon-name: "info";
+                            icon-bg: #d0bcff; // pastel lavender
+                            icon-tint: #381e72; // deep violet
+                            title: "About phone";
+                            subtitle: root.device-summary;
+                            show-chevron: false;
+                            is-first: true;
+                            is-last: true;
+                            clicked => { root.navigate-to("about"); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

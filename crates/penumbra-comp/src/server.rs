@@ -10,7 +10,7 @@ use tracing::{debug, info};
 use smithay::{
     backend::{
         input::{
-            AbsolutePositionEvent, Axis, InputEvent, KeyboardKeyEvent, PointerAxisEvent,
+            AbsolutePositionEvent, Axis, InputEvent, Keycode, KeyboardKeyEvent, PointerAxisEvent,
             PointerButtonEvent,
         },
         renderer::{
@@ -128,6 +128,8 @@ pub struct PenumbraServerState {
     pub last_tasks_published: String,
     /// Logical canvas for Output A; layer surfaces are sized to this, not the raw mode.
     pub phone_logical_size: (i32, i32),
+    pub screen_blanked: bool,
+    pub saved_brightness: u32,
 }
 
 /// A Wayland toplevel living on the phone output.
@@ -166,8 +168,8 @@ impl PenumbraServerState {
     ) -> Option<(WlSurface, Point<f64, smithay::utils::Logical>)> {
         let map_a = layer_map_for_output(&self.output_a);
 
-        // 1. Overlay layer (highest priority - active when drawer is open)
-        if self.shell_state.drawer_open {
+        // 1. Overlay layer (highest priority - active when drawer or power dialog is open)
+        if self.shell_state.drawer_open || self.shell_state.power_dialog_open {
             if let Some(l) = map_a.layer_under(Layer::Overlay, pos) {
                 let geo = map_a.layer_geometry(l).unwrap_or_default();
                 return Some((
@@ -188,7 +190,11 @@ impl PenumbraServerState {
 
         // 3. Normal window (running phone app in the inset)
         let in_app_inset = pos.y >= APP_Y as f64 && pos.y < NAV_BAR_Y as f64;
-        if self.phone_app_visible() && !self.shell_state.drawer_open && in_app_inset {
+        if self.phone_app_visible()
+            && !self.shell_state.drawer_open
+            && !self.shell_state.power_dialog_open
+            && in_app_inset
+        {
             if let Some(surface) = self.active_phone_surface() {
                 return Some((surface, (0.0, APP_Y as f64).into()));
             }
@@ -314,6 +320,104 @@ impl PenumbraServerState {
                     }
                 }
             }
+            ShellCommand::Back => {
+                self.trigger_back();
+            }
+            ShellCommand::PowerDialog => {
+                self.show_power_dialog();
+            }
+            ShellCommand::ScreenToggle => {
+                self.toggle_screen_blanking();
+            }
+        }
+    }
+
+    pub fn trigger_back(&mut self) {
+        info!("Executing system-wide back action");
+        if self.shell_state.power_dialog_open {
+            self.shell_state.power_dialog_open = false;
+            let _ = write_atomic(
+                &runtime_path(phone::SHELL_STATE_FILE),
+                &self.shell_state.serialize(),
+            );
+            return;
+        }
+
+        if self.shell_state.drawer_open {
+            self.shell_state.drawer_open = false;
+            let _ = write_atomic(
+                &runtime_path(phone::SHELL_STATE_FILE),
+                &self.shell_state.serialize(),
+            );
+            return;
+        }
+
+        if self.shell_state.mode == PhoneMode::Overview {
+            self.shell_state.mode = PhoneMode::Home;
+            let _ = write_atomic(
+                &runtime_path(phone::SHELL_STATE_FILE),
+                &self.shell_state.serialize(),
+            );
+            return;
+        }
+
+        if self.shell_state.mode == PhoneMode::App {
+            self.send_escape_to_active();
+        }
+    }
+
+    pub fn send_escape_to_active(&mut self) {
+        if let Some(keyboard) = self.seat.get_keyboard() {
+            if let Some(_focus) = keyboard.current_focus() {
+                let serial: Serial = 1u32.into();
+                let time = 0;
+                // Evdev 1 is KEY_ESC
+                keyboard.input::<(), _>(
+                    self,
+                    Keycode::new(1),
+                    smithay::backend::input::KeyState::Pressed,
+                    serial,
+                    time,
+                    |_, _, _| FilterResult::Forward,
+                );
+                keyboard.input::<(), _>(
+                    self,
+                    Keycode::new(1),
+                    smithay::backend::input::KeyState::Released,
+                    serial,
+                    time + 10,
+                    |_, _, _| FilterResult::Forward,
+                );
+            }
+        }
+    }
+
+    pub fn show_power_dialog(&mut self) {
+        info!("Showing system Power Dialog");
+        self.shell_state.power_dialog_open = true;
+        let _ = write_atomic(
+            &runtime_path(phone::SHELL_STATE_FILE),
+            &self.shell_state.serialize(),
+        );
+    }
+
+    pub fn toggle_screen_blanking(&mut self) {
+        let backlight_file = "/sys/class/backlight/backlight/brightness";
+        if self.screen_blanked {
+            info!("Unblanking screen, restoring brightness to {}", self.saved_brightness);
+            let _ = std::fs::write(backlight_file, self.saved_brightness.to_string());
+            self.screen_blanked = false;
+        } else {
+            if let Ok(cur_str) = std::fs::read_to_string(backlight_file) {
+                if let Ok(cur) = cur_str.trim().parse::<u32>() {
+                    if cur > 0 {
+                        self.saved_brightness = cur;
+                    }
+                }
+            }
+            info!("Blanking screen (turning off backlight)");
+            let _ = std::fs::write(backlight_file, "0");
+            self.screen_blanked = true;
         }
     }
 }
@@ -845,6 +949,8 @@ impl PenumbraCompositor {
             overview_scroll: 0.0,
             last_tasks_published: String::from("\u{0}"),
             phone_logical_size: (mode_a.size.w, mode_a.size.h),
+            screen_blanked: false,
+            saved_brightness: 2500,
         };
 
         // Reset IPC files from any previous session.

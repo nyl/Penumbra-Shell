@@ -1,0 +1,205 @@
+import { Icon } from "icon.slint";
+
+export component PowerDialog inherits Rectangle {
+    in-out property <bool> open: false;
+    callback power-off();
+    callback reboot();
+    callback logout();
+    callback cancel();
+
+    visible: root.open;
+    width: 100%;
+    height: 100%;
+    background: transparent;
+
+    // Scrim overlay
+    TouchArea {
+        width: 100%;
+        height: 100%;
+        clicked => { root.cancel(); }
+        Rectangle {
+            width: 100%;
+            height: 100%;
+            background: #000000b0;
+        }
+    }
+
+    // Centered Material 3 Expressive Power Card
+    Rectangle {
+        width: 320px;
+        height: 380px;
+        background: #1c1b22;
+        border-radius: 28px;
+        border-width: 1px;
+        border-color: #ffffff20;
+        clip: true;
+
+        VerticalLayout {
+            padding-top: 24px;
+            padding-bottom: 20px;
+            padding-left: 20px;
+            padding-right: 20px;
+            spacing: 12px;
+
+            // Title
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: center;
+                Text {
+                    text: "Device Options";
+                    color: #f3f4f6;
+                    font-size: 20px;
+                    font-weight: 700;
+                }
+            }
+
+            // Power off Button
+            Rectangle {
+                height: 58px;
+                background: power-touch.pressed ? #ef444445 : #ef444420;
+                border-radius: 16px;
+                border-width: 1px;
+                border-color: #ef444440;
+                power-touch := TouchArea {
+                    clicked => { root.power-off(); }
+                }
+                HorizontalLayout {
+                    padding-left: 16px;
+                    padding-right: 16px;
+                    spacing: 14px;
+                    alignment: start;
+                    Rectangle {
+                        width: 38px;
+                        height: 38px;
+                        border-radius: 19px;
+                        background: #ef4444;
+                        Icon {
+                            name: "power";
+                            icon-color: #ffffff;
+                            icon-size: 20px;
+                        }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        Text {
+                            text: "Turn OFF";
+                            color: #fca5a5;
+                            font-size: 15px;
+                            font-weight: 600;
+                        }
+                        Text {
+                            text: "Shut down device";
+                            color: #9ca3af;
+                            font-size: 11px;
+                        }
+                    }
+                }
+            }
+
+            // Reboot Button
+            Rectangle {
+                height: 58px;
+                background: reboot-touch.pressed ? #f59e0b45 : #f59e0b20;
+                border-radius: 16px;
+                border-width: 1px;
+                border-color: #f59e0b40;
+                reboot-touch := TouchArea {
+                    clicked => { root.reboot(); }
+                }
+                HorizontalLayout {
+                    padding-left: 16px;
+                    padding-right: 16px;
+                    spacing: 14px;
+                    alignment: start;
+                    Rectangle {
+                        width: 38px;
+                        height: 38px;
+                        border-radius: 19px;
+                        background: #f59e0b;
+                        Icon {
+                            name: "restart";
+                            icon-color: #ffffff;
+                            icon-size: 20px;
+                        }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        Text {
+                            text: "Reboot";
+                            color: #fde68a;
+                            font-size: 15px;
+                            font-weight: 600;
+                        }
+                        Text {
+                            text: "Restart system";
+                            color: #9ca3af;
+                            font-size: 11px;
+                        }
+                    }
+                }
+            }
+
+            // Logout Button
+            Rectangle {
+                height: 58px;
+                background: logout-touch.pressed ? #0284c745 : #0284c720;
+                border-radius: 16px;
+                border-width: 1px;
+                border-color: #0284c740;
+                logout-touch := TouchArea {
+                    clicked => { root.logout(); }
+                }
+                HorizontalLayout {
+                    padding-left: 16px;
+                    padding-right: 16px;
+                    spacing: 14px;
+                    alignment: start;
+                    Rectangle {
+                        width: 38px;
+                        height: 38px;
+                        border-radius: 19px;
+                        background: #0284c7;
+                        Icon {
+                            name: "logout";
+                            icon-color: #ffffff;
+                            icon-size: 20px;
+                        }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        Text {
+                            text: "Logout";
+                            color: #bae6fd;
+                            font-size: 15px;
+                            font-weight: 600;
+                        }
+                        Text {
+                            text: "End current session";
+                            color: #9ca3af;
+                            font-size: 11px;
+                        }
+                    }
+                }
+            }
+
+            // Cancel Button
+            Rectangle {
+                height: 44px;
+                background: cancel-touch.pressed ? #ffffff25 : #ffffff14;
+                border-radius: 22px;
+                cancel-touch := TouchArea {
+                    clicked => { root.cancel(); }
+                }
+                HorizontalLayout {
+                    alignment: center;
+                    Text {
+                        text: "Cancel";
+                        color: #e5e7eb;
+                        font-size: 14px;
+                        font-weight: 500;
+                    }
+                }
+            }
+        }
+    }
+}

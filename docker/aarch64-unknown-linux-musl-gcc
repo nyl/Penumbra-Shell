@@ -20,4 +20,4 @@ done
 
 # shellcheck disable=SC2086
 set -- $filtered_args
-exec zig cc -target aarch64-linux-musl "$@"
+exec zig cc -target aarch64-linux-musl -dynamic "$@"

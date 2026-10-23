@@ -1,0 +1,190 @@
+import { Theme } from "../theme.slint";
+import { Icon } from "../icon.slint";
+import { SettingsTile } from "../components/settings_tile.slint";
+import { SettingsSectionCard } from "../components/settings_section.slint";
+
+// ==============================================================================
+// Component: PageAbout
+// ==============================================================================
+// Hardware and software specifications subpage presenting genuine system telemetry.
+// Strictly adheres to Android 17 Material You layout and left-aligned geometry.
+export component PageAbout inherits Flickable {
+    // Machine host or model identifier (e.g. "Lenovo Legion Y740").
+    in property <string> device-name: "Linux Device";
+    // Detailed hardware model (e.g. "Lenovo Legion Y740-17IRHg").
+    in property <string> device-model: "Standard Hardware";
+    // Operating system distribution release (e.g. "Arch Linux").
+    in property <string> os-version: "Linux OS";
+    // Kernel version string and architecture (e.g. "Linux 7.2.9-arch1-1 (x86_64)").
+    in property <string> kernel-version: "Linux";
+    // Processor description (e.g. "Intel Core i7-9750H @ 2.60GHz").
+    in property <string> cpu-model: "Processor";
+    // Total physical RAM installed (e.g. "15.5 GB RAM").
+    in property <string> memory-info: "System RAM";
+    // Storage capacity and available free space (e.g. "922 GB (160 GB free)").
+    in property <string> storage-info: "Internal Storage";
+    // System uptime elapsed since last boot (e.g. "3h 12m").
+    in property <string> uptime-info: "Active";
+    // Running Wayland compositor session description.
+    in property <string> compositor-info: "Penumbra Shell (Smithay Wayland)";
+
+    content := VerticalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        padding-top: 12px;
+        padding-bottom: 32px;
+        spacing: 12px;
+
+        // Device Hero Card
+        Rectangle {
+            height: 84px;
+            border-radius: Theme.radius-card;
+            background: Theme.surface-low;
+
+            HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                spacing: 16px;
+
+                Rectangle {
+                    width: 44px;
+                    height: 44px;
+                    border-radius: 22px;
+                    background: #d0bcff;
+                    y: (parent.height - self.height) / 2;
+
+                    Icon {
+                        name: "devices";
+                        icon-size: 22px;
+                        icon-color: #381e72;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                    }
+                }
+
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    alignment: center;
+                    spacing: 2px;
+
+                    Text {
+                        text: root.device-name;
+                        font-size: 18px;
+                        font-weight: 500;
+                        color: Theme.on-surface;
+                        horizontal-alignment: left;
+                        overflow: elide;
+                    }
+
+                    Text {
+                        text: root.device-model;
+                        font-size: 13px;
+                        color: Theme.on-surface-variant;
+                        horizontal-alignment: left;
+                        overflow: elide;
+                    }
+                }
+            }
+        }
+
+        // Hardware Specifications Card Group
+        SettingsSectionCard {
+            VerticalLayout {
+                padding-top: 4px;
+                padding-bottom: 4px;
+
+                SettingsTile {
+                    icon-name: "settings";
+                    icon-bg: #7dd8fc;
+                    icon-tint: #00354e;
+                    title: "Processor";
+                    subtitle: root.cpu-model;
+                    show-chevron: false;
+                    is-first: true;
+                    is-last: false;
+                    show-divider: true;
+                }
+
+                SettingsTile {
+                    icon-name: "devices";
+                    icon-bg: #a8c7fa;
+                    icon-tint: #042b59;
+                    title: "Memory";
+                    subtitle: root.memory-info;
+                    show-chevron: false;
+                    is-first: false;
+                    is-last: false;
+                    show-divider: true;
+                }
+
+                SettingsTile {
+                    icon-name: "storage";
+                    icon-bg: #f9d868;
+                    icon-tint: #3b2e00;
+                    title: "Internal storage";
+                    subtitle: root.storage-info;
+                    show-chevron: false;
+                    is-first: false;
+                    is-last: true;
+                    show-divider: false;
+                }
+            }
+        }
+
+        // Software Specifications Card Group
+        SettingsSectionCard {
+            VerticalLayout {
+                padding-top: 4px;
+                padding-bottom: 4px;
+
+                SettingsTile {
+                    icon-name: "info";
+                    icon-bg: #d0bcff;
+                    icon-tint: #381e72;
+                    title: "OS Version";
+                    subtitle: root.os-version;
+                    show-chevron: false;
+                    is-first: true;
+                    is-last: false;
+                    show-divider: true;
+                }
+
+                SettingsTile {
+                    icon-name: "power";
+                    icon-bg: #a3e8b0;
+                    icon-tint: #073919;
+                    title: "Linux kernel";
+                    subtitle: root.kernel-version;
+                    show-chevron: false;
+                    is-first: false;
+                    is-last: false;
+                    show-divider: true;
+                }
+
+                SettingsTile {
+                    icon-name: "brightness";
+                    icon-bg: #ffcc80;
+                    icon-tint: #4e2600;
+                    title: "Compositor & Shell";
+                    subtitle: root.compositor-info;
+                    show-chevron: false;
+                    is-first: false;
+                    is-last: false;
+                    show-divider: true;
+                }
+
+                SettingsTile {
+                    icon-name: "refresh";
+                    icon-bg: #ffb3ba;
+                    icon-tint: #491019;
+                    title: "System uptime";
+                    subtitle: root.uptime-info;
+                    show-chevron: false;
+                    is-first: false;
+                    is-last: true;
+                    show-divider: false;
+                }
+            }
+        }
+    }
+}

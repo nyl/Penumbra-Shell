@@ -1,0 +1,160 @@
+import { Theme } from "../theme.slint";
+import { Icon } from "../icon.slint";
+import { SettingsTile } from "../components/settings_tile.slint";
+import { SettingsSectionCard, SettingsSectionHeader } from "../components/settings_section.slint";
+
+// ==============================================================================
+// Component: PageBattery
+// ==============================================================================
+// Battery status, health telemetry, and power management subpage adhering to Android 17.
+export component PageBattery inherits Flickable {
+    // Current battery percentage (0 to 100).
+    in property <int> battery-pct: 86;
+    // Whether external AC power is supplying charge.
+    in property <bool> is-charging: false;
+    // Human-readable status description (e.g. "About 14 hr left", "Charging rapidly").
+    in property <string> state-text: "About 14 hr left";
+    // Real battery health capacity and cycle count.
+    in property <string> battery-health: "86.2% capacity • 40 cycles";
+    // Real battery hardware model and chemistry.
+    in property <string> battery-model: "L17C4PG2 (Li-ion)";
+    // Whether aggressive power saver mode is actively enforced.
+    in-out property <bool> battery-saver: false;
+
+    // Emitted when the user toggles the Battery Saver switch.
+    callback toggle-battery-saver(bool);
+
+    content := VerticalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        padding-top: 12px;
+        padding-bottom: 32px;
+        spacing: 12px;
+
+        // Battery Hero Card
+        Rectangle {
+            height: 84px;
+            border-radius: Theme.radius-card;
+            background: Theme.surface-low;
+
+            HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                spacing: 16px;
+
+                // Battery Icon circular container (Android 17 Pastel Mint)
+                Rectangle {
+                    width: 44px;
+                    height: 44px;
+                    border-radius: 22px;
+                    background: #a3e8b0;
+                    y: (parent.height - self.height) / 2;
+
+                    Icon {
+                        name: "battery";
+                        icon-size: 22px;
+                        icon-color: #073919;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                    }
+                }
+
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    alignment: center;
+                    spacing: 2px;
+
+                    Text {
+                        text: root.battery-pct + "%";
+                        font-size: 24px;
+                        font-weight: 500;
+                        color: Theme.on-surface;
+                        horizontal-alignment: left;
+                    }
+
+                    Text {
+                        text: root.is-charging ? "Charging" : root.state-text;
+                        font-size: 13px;
+                        color: Theme.on-surface-variant;
+                        horizontal-alignment: left;
+                    }
+                }
+            }
+        }
+
+        // Battery Saver Toggle
+        VerticalLayout {
+            spacing: 8px;
+            SettingsSectionHeader { title: "Power management"; }
+            SettingsSectionCard {
+                VerticalLayout {
+                    padding-top: 4px;
+                    padding-bottom: 4px;
+
+                    SettingsTile {
+                        icon-name: "power";
+                        icon-bg: #ffcc80;
+                        icon-tint: #4e2600;
+                        title: "Battery Saver";
+                        subtitle: "Extends battery life by restricting background activity";
+                        is-switch: true;
+                        switch-checked: root.battery-saver;
+                        is-first: true;
+                        is-last: false;
+                        show-divider: true;
+                        toggled(val) => { root.toggle-battery-saver(val); }
+                    }
+
+                    SettingsTile {
+                        icon-name: "refresh";
+                        icon-bg: #7dd8fc;
+                        icon-tint: #00354e;
+                        title: "Adaptive Charging";
+                        subtitle: "Protects battery health during prolonged plug-in";
+                        is-switch: true;
+                        switch-checked: true;
+                        is-first: false;
+                        is-last: true;
+                        show-divider: false;
+                    }
+                }
+            }
+        }
+
+        // Battery Diagnostics
+        VerticalLayout {
+            spacing: 8px;
+            SettingsSectionHeader { title: "Diagnostics & health"; }
+            SettingsSectionCard {
+                VerticalLayout {
+                    padding-top: 4px;
+                    padding-bottom: 4px;
+
+                    SettingsTile {
+                        icon-name: "info";
+                        icon-bg: #a3e8b0;
+                        icon-tint: #073919;
+                        title: "Battery health";
+                        subtitle: root.battery-health;
+                        show-chevron: false;
+                        is-first: true;
+                        is-last: false;
+                        show-divider: true;
+                    }
+
+                    SettingsTile {
+                        icon-name: "battery";
+                        icon-bg: #d0bcff;
+                        icon-tint: #381e72;
+                        title: "Battery hardware";
+                        subtitle: root.battery-model;
+                        show-chevron: false;
+                        is-first: false;
+                        is-last: true;
+                        show-divider: false;
+                    }
+                }
+            }
+        }
+    }
+}

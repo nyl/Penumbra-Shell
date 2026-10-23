@@ -1,0 +1,191 @@
+import { Theme } from "../theme.slint";
+import { Icon } from "../icon.slint";
+import { SettingsTile } from "../components/settings_tile.slint";
+import { SettingsSectionCard, SettingsSectionHeader } from "../components/settings_section.slint";
+
+// ==============================================================================
+// Component: VolumeSliderCard
+// ==============================================================================
+// Touch-scrubbing volume level controller for mobile audio output channels.
+component VolumeSliderCard inherits Rectangle {
+    // Channel descriptor label (e.g. "Media volume", "Call volume").
+    in property <string> label: "Media volume";
+    // Semantic icon rendered on the left badge (e.g. "sound").
+    in property <string> icon: "sound";
+    // Current normalized volume level (0.0 to 1.0).
+    in-out property <float> value: 0.65;
+    // Emitted continuously as the volume slider is scrubbed.
+    callback changed(float);
+
+    height: 72px;
+    border-radius: Theme.radius-card;
+    background: Theme.surface-low;
+    clip: true;
+
+    // Fill track
+    Rectangle {
+        x: 0px;
+        y: 0px;
+        width: parent.width * Math.clamp(root.value, 0.0, 1.0);
+        height: parent.height;
+        background: #ffb3ba.with-alpha(0.32);
+
+        animate width { duration: 60ms; easing: ease-out; }
+    }
+
+    touch := TouchArea {
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.down) {
+                root.value = Math.clamp(touch.mouse-x / root.width, 0.0, 1.0);
+                root.changed(root.value);
+            }
+        }
+        moved => {
+            if (touch.pressed) {
+                root.value = Math.clamp(touch.mouse-x / root.width, 0.0, 1.0);
+                root.changed(root.value);
+            }
+        }
+    }
+
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        spacing: 16px;
+
+        // Visual Icon Badge (40px Circle)
+        Rectangle {
+            width: 40px;
+            height: 40px;
+            border-radius: 20px;
+            background: #ffb3ba;
+            y: (parent.height - self.height) / 2;
+
+            Icon {
+                name: root.icon;
+                icon-size: 22px;
+                icon-color: #551422;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+            }
+        }
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 2px;
+
+            Text {
+                text: root.label;
+                font-size: 16px;
+                font-weight: 500;
+                color: Theme.on-surface;
+                horizontal-alignment: left;
+            }
+
+            Text {
+                text: Math.round(root.value * 100.0) + "%";
+                font-size: 13px;
+                color: Theme.on-surface-variant;
+                horizontal-alignment: left;
+            }
+        }
+    }
+}
+
+// ==============================================================================
+// Component: PageSound
+// ==============================================================================
+// Audio mixer, notification preferences, and haptic feedback subpage.
+export component PageSound inherits Flickable {
+    // Current normalized media playback volume (0.0 to 1.0).
+    in-out property <float> media-volume: 0.65;
+    // Current normalized voice call volume (0.0 to 1.0).
+    in-out property <float> call-volume: 0.80;
+    // Current normalized ringer and notification volume (0.0 to 1.0).
+    in-out property <float> ring-volume: 0.70;
+    // Whether Do Not Disturb mode is actively suppressing notifications.
+    in-out property <bool> dnd-enabled: false;
+
+    // Emitted when the media volume slider is scrubbed.
+    callback media-volume-changed(float);
+    // Emitted when the voice call volume slider is scrubbed.
+    callback call-volume-changed(float);
+    // Emitted when the ringer volume slider is scrubbed.
+    callback ring-volume-changed(float);
+    // Emitted when the user toggles Do Not Disturb mode.
+    callback toggle-dnd(bool);
+
+    content := VerticalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        padding-top: 12px;
+        padding-bottom: 32px;
+        spacing: 12px;
+
+        // Volume Sliders
+        VerticalLayout {
+            spacing: 8px;
+            SettingsSectionHeader { title: "Volume channels"; }
+            VerticalLayout {
+                spacing: 8px;
+                VolumeSliderCard {
+                    label: "Media volume";
+                    icon: "sound";
+                    value <=> root.media-volume;
+                    changed(v) => { root.media-volume-changed(v); }
+                }
+                VolumeSliderCard {
+                    label: "Call volume";
+                    icon: "sound";
+                    value <=> root.call-volume;
+                    changed(v) => { root.call-volume-changed(v); }
+                }
+                VolumeSliderCard {
+                    label: "Ring & notifications";
+                    icon: "sound";
+                    value <=> root.ring-volume;
+                    changed(v) => { root.ring-volume-changed(v); }
+                }
+            }
+        }
+
+        // Do Not Disturb & Vibration
+        VerticalLayout {
+            spacing: 8px;
+            SettingsSectionHeader { title: "Modes & feedback"; }
+            SettingsSectionCard {
+                VerticalLayout {
+                    padding-top: 4px;
+                    padding-bottom: 4px;
+
+                    SettingsTile {
+                        icon-name: "dnd";
+                        icon-bg: #e8b4cb;
+                        icon-tint: #3b1424;
+                        title: "Do Not Disturb";
+                        subtitle: root.dnd-enabled ? "On" : "Off";
+                        is-switch: true;
+                        switch-checked: root.dnd-enabled;
+                        is-first: true;
+                        is-last: false;
+                        show-divider: true;
+                        toggled(v) => { root.toggle-dnd(v); }
+                    }
+                    SettingsTile {
+                        icon-name: "sound";
+                        icon-bg: #ffcc80;
+                        icon-tint: #4e2600;
+                        title: "Vibrate for calls";
+                        subtitle: "Always vibrate";
+                        is-switch: true;
+                        switch-checked: true;
+                        is-first: false;
+                        is-last: true;
+                        show-divider: false;
+                    }
+                }
+            }
+        }
+    }
+}

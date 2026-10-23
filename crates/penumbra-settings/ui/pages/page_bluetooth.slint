@@ -1,0 +1,166 @@
+import { Theme } from "../theme.slint";
+import { Icon } from "../icon.slint";
+import { SettingsTile } from "../components/settings_tile.slint";
+import { SettingsSectionCard, SettingsSectionHeader } from "../components/settings_section.slint";
+
+// ==============================================================================
+// Data Structure: BtDeviceData
+// ==============================================================================
+// Represents a remote Bluetooth device discovered or managed via BlueZ.
+export struct BtDeviceData {
+    // Advertised friendly name or fallback hardware address of the device.
+    name: string,
+    // Unique Bluetooth hardware MAC address (e.g. "AA:BB:CC:DD:EE:FF").
+    address: string,
+    // Whether an active ACL/profile connection currently exists to this device.
+    connected: bool,
+    // Whether the device is paired and stored in the adapter's key store.
+    paired: bool,
+    // Reported battery percentage (0 to 100), or -1 if the device lacks battery reporting.
+    battery: int,
+}
+
+// ==============================================================================
+// Component: PageBluetooth
+// ==============================================================================
+// Bluetooth adapter and peripheral management subpage adhering strictly to Android 17 design.
+export component PageBluetooth inherits Flickable {
+    // Current Bluetooth adapter power state.
+    in-out property <bool> bt-enabled: true;
+    // Human-readable broadcast name of the host adapter (e.g. "arch-legion").
+    in property <string> adapter-name: "Bluetooth";
+    // Real Bluetooth hardware MAC address.
+    in property <string> bluetooth-mac: "5C:87:9C:27:10:A4";
+    // Whether the adapter is actively running an LE or Classic discovery cycle.
+    in property <bool> is-discovering: false;
+    // List of paired and discovered Bluetooth accessories.
+    in property <[BtDeviceData]> devices: [];
+
+    // Emitted when the user toggles the master Bluetooth power switch.
+    callback toggle-bt(bool);
+    // Emitted when the user taps a device row to toggle connect/disconnect.
+    callback toggle-device(string);
+    // Emitted when the user taps "Pair new device" to begin discovery scanning.
+    callback start-discovery();
+
+    content := VerticalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        padding-top: 12px;
+        padding-bottom: 32px;
+        spacing: 12px;
+
+        // Master Bluetooth Switch Card
+        SettingsSectionCard {
+            SettingsTile {
+                icon-name: "bluetooth";
+                icon-bg: root.bt-enabled ? #7dd8fc : #36343b;
+                icon-tint: root.bt-enabled ? #00354e : #938f99;
+                title: "Use Bluetooth";
+                subtitle: root.bt-enabled ? ("On • Visible as " + root.adapter-name) : "Off";
+                is-switch: true;
+                switch-checked: root.bt-enabled;
+                show-divider: false;
+                is-first: true;
+                is-last: true;
+                toggled(val) => { root.toggle-bt(val); }
+            }
+        }
+
+        if root.bt-enabled: VerticalLayout {
+            spacing: 12px;
+
+            // Pair New Device Action
+            SettingsSectionCard {
+                SettingsTile {
+                    icon-name: "refresh";
+                    icon-bg: #a8c7fa;
+                    icon-tint: #042b59;
+                    title: root.is-discovering ? "Scanning for devices..." : "Pair new device";
+                    subtitle: root.is-discovering ? "Discovery active on " + root.adapter-name : "Scan for nearby Bluetooth accessories";
+                    show-chevron: true;
+                    show-divider: false;
+                    is-first: true;
+                    is-last: true;
+                    clicked => { root.start-discovery(); }
+                }
+            }
+
+            // Saved / Discovered Devices
+            VerticalLayout {
+                spacing: 8px;
+                SettingsSectionHeader { title: "Devices"; }
+                SettingsSectionCard {
+                    VerticalLayout {
+                        padding-top: 4px;
+                        padding-bottom: 4px;
+
+                        if root.devices.length == 0: SettingsTile {
+                            icon-name: "devices";
+                            icon-bg: #282a30;
+                            icon-tint: #938f99;
+                            title: root.is-discovering ? "Scanning for nearby devices..." : "No Bluetooth devices found";
+                            subtitle: root.is-discovering ? "Make sure your accessory is in pairing mode" : "Tap Pair new device to search";
+                            show-chevron: false;
+                            is-first: true;
+                            is-last: true;
+                            show-divider: false;
+                        }
+
+                        for dev[idx] in root.devices: SettingsTile {
+                            icon-name: "devices";
+                            icon-bg: dev.connected ? #a3e8b0 : #282a30;
+                            icon-tint: dev.connected ? #073919 : #e6e0e9;
+                            title: dev.name;
+                            subtitle: dev.connected
+                                ? (dev.battery >= 0 ? "Connected • " + dev.battery + "% battery" : "Connected")
+                                : (dev.paired ? "Saved" : "Available to pair");
+                            trailing-text: dev.connected ? "Active" : "";
+                            show-chevron: !dev.connected;
+                            is-first: idx == 0;
+                            is-last: idx == root.devices.length - 1;
+                            show-divider: idx < root.devices.length - 1;
+                            clicked => { root.toggle-device(dev.address); }
+                        }
+                    }
+                }
+            }
+
+            // Device Preferences
+            VerticalLayout {
+                spacing: 8px;
+                SettingsSectionHeader { title: "Connection preferences"; }
+                SettingsSectionCard {
+                    VerticalLayout {
+                        padding-top: 4px;
+                        padding-bottom: 4px;
+
+                        SettingsTile {
+                            icon-name: "settings";
+                            icon-bg: #7dd8fc;
+                            icon-tint: #00354e;
+                            title: "Device name";
+                            subtitle: root.adapter-name;
+                            show-chevron: true;
+                            is-first: true;
+                            is-last: false;
+                            show-divider: true;
+                        }
+
+                        SettingsTile {
+                            icon-name: "network";
+                            icon-bg: #d0bcff;
+                            icon-tint: #381e72;
+                            title: "Bluetooth address";
+                            subtitle: root.bluetooth-mac;
+                            show-chevron: false;
+                            is-first: false;
+                            is-last: true;
+                            show-divider: false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -21,6 +21,24 @@ component TileView inherits Rectangle {
     in property <float> morph: 1.0;
     in property <TileData> data;
     callback clicked();
+    callback long-pressed();
+
+    property <float> touch-start-x: 0.0;
+    property <float> touch-start-y: 0.0;
+    property <bool> is-down: false;
+    property <bool> did-long-press: false;
+
+    lp-timer := Timer {
+        interval: 400ms;
+        running: false;
+        triggered => {
+            self.running = false;
+            if (root.is-down) {
+                root.did-long-press = true;
+                root.long-pressed();
+            }
+        }
+    }
 
     border-radius: 18px + 4px * root.morph;
     background: !root.data.enabled ? Theme.surface-low : (root.data.active ? Theme.primary : Theme.surface-high);
@@ -32,7 +50,34 @@ component TileView inherits Rectangle {
     animate background { duration: 160ms; easing: ease-out; }
 
     TouchArea {
-        clicked => { if (root.data.enabled) { root.clicked(); } }
+        pointer-event(event) => {
+            if (!root.data.enabled) { return; }
+            if (event.kind == PointerEventKind.down) {
+                root.touch-start-x = self.mouse-x / 1px;
+                root.touch-start-y = self.mouse-y / 1px;
+                root.is-down = true;
+                root.did-long-press = false;
+                lp-timer.running = true;
+            } else if (event.kind == PointerEventKind.move) {
+                if (root.is-down) {
+                    let dx = Math.abs((self.mouse-x / 1px) - root.touch-start-x);
+                    let dy = Math.abs((self.mouse-y / 1px) - root.touch-start-y);
+                    if (dx > 12.0 || dy > 12.0) {
+                        lp-timer.running = false;
+                    }
+                }
+            } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
+                lp-timer.running = false;
+                if (root.is-down) {
+                    root.is-down = false;
+                    let dx = Math.abs((self.mouse-x / 1px) - root.touch-start-x);
+                    let dy = Math.abs((self.mouse-y / 1px) - root.touch-start-y);
+                    if (!root.did-long-press && dx < 12.0 && dy < 12.0) {
+                        root.clicked();
+                    }
+                }
+            }
+        }
     }
 
     // Icon badge slides from the cell centre (compact) to the left edge (expanded).
@@ -188,6 +233,7 @@ export component QuickSettingsSlider inherits Rectangle {
     callback brightness-changed(float);
     callback volume-changed(float);
     callback tile-clicked(string /* id */);
+    callback tile-long-pressed(string /* id */);
     callback enter-edit-mode();
     callback exit-edit-mode();
     callback reset-tiles();
@@ -352,6 +398,7 @@ export component QuickSettingsSlider inherits Rectangle {
                 width: i < 4 ? self.cw4 + (self.cw2 - self.cw4) * root.morph : self.cw2;
                 height: 64px;
                 clicked => { root.tile-clicked(tile.id); }
+                long-pressed => { root.tile-long-pressed(tile.id); }
             }
 
             // Sliders + media (Stage 2)

@@ -1,0 +1,204 @@
+import { Theme } from "../theme.slint";
+import { Icon } from "../icon.slint";
+import { SettingsTile } from "../components/settings_tile.slint";
+import { SettingsSectionCard, SettingsSectionHeader } from "../components/settings_section.slint";
+
+// ==============================================================================
+// Component: BrightnessSliderCard
+// ==============================================================================
+// Tactile touch-scrubbing brightness card for mobile displays.
+component BrightnessSliderCard inherits Rectangle {
+    // Current normalized brightness level (0.05 to 1.0).
+    in-out property <float> value: 0.75;
+    // Emitted continuously as the user drags their finger across the slider track.
+    callback changed(float);
+
+    height: 72px;
+    border-radius: Theme.radius-card;
+    background: Theme.surface-low;
+    clip: true;
+
+    // Fill track
+    Rectangle {
+        x: 0px;
+        y: 0px;
+        width: parent.width * Math.clamp(root.value, 0.05, 1.0);
+        height: parent.height;
+        background: #ffcc80.with-alpha(0.32);
+
+        animate width { duration: 60ms; easing: ease-out; }
+    }
+
+    touch := TouchArea {
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.down) {
+                root.value = Math.clamp(touch.mouse-x / root.width, 0.05, 1.0);
+                root.changed(root.value);
+            }
+        }
+        moved => {
+            if (touch.pressed) {
+                root.value = Math.clamp(touch.mouse-x / root.width, 0.05, 1.0);
+                root.changed(root.value);
+            }
+        }
+    }
+
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        spacing: 16px;
+
+        // 40px Circular Badge
+        Rectangle {
+            width: 40px;
+            height: 40px;
+            border-radius: 20px;
+            background: #ffcc80;
+            y: (parent.height - self.height) / 2;
+
+            Icon {
+                name: "brightness";
+                icon-size: 22px;
+                icon-color: #4e2600;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+            }
+        }
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 2px;
+
+            Text {
+                text: "Brightness level";
+                font-size: 16px;
+                font-weight: 500;
+                color: Theme.on-surface;
+                horizontal-alignment: left;
+            }
+
+            Text {
+                text: Math.round(root.value * 100.0) + "%";
+                font-size: 13px;
+                color: Theme.on-surface-variant;
+                horizontal-alignment: left;
+            }
+        }
+    }
+}
+
+// ==============================================================================
+// Component: PageDisplay
+// ==============================================================================
+// Display, theme, and screen lock configuration subpage.
+export component PageDisplay inherits Flickable {
+    // Current display backlight level (0.05 to 1.0).
+    in-out property <float> brightness: 0.75;
+    // Whether automatic ambient light adaptation is enabled.
+    in-out property <bool> adaptive-brightness: true;
+    // Whether pitch-black dark theme is enforced.
+    in-out property <bool> dark-theme: true;
+    // Idle timeout duration before screen dimming/blanking.
+    in-out property <string> screen-timeout: "2 minutes";
+    // Real screen display resolution.
+    in property <string> display-resolution: "1920 × 1080 Display";
+
+    // Emitted when the user adjusts the backlight slider.
+    callback brightness-changed(float);
+    // Emitted when the user toggles adaptive ambient brightness.
+    callback toggle-adaptive-brightness(bool);
+    // Emitted when the user toggles dark theme mode.
+    callback toggle-dark-theme(bool);
+
+    content := VerticalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        padding-top: 12px;
+        padding-bottom: 32px;
+        spacing: 12px;
+
+        // Brightness Slider Card
+        BrightnessSliderCard {
+            value <=> root.brightness;
+            changed(v) => { root.brightness-changed(v); }
+        }
+
+        // Display Controls Card
+        VerticalLayout {
+            spacing: 8px;
+            SettingsSectionHeader { title: "Light & color"; }
+            SettingsSectionCard {
+                VerticalLayout {
+                    padding-top: 4px;
+                    padding-bottom: 4px;
+
+                    SettingsTile {
+                        icon-name: "brightness";
+                        icon-bg: #ffcc80;
+                        icon-tint: #4e2600;
+                        title: "Adaptive brightness";
+                        subtitle: "Optimize brightness for available ambient light";
+                        is-switch: true;
+                        switch-checked: root.adaptive-brightness;
+                        is-first: true;
+                        is-last: false;
+                        show-divider: true;
+                        toggled(val) => { root.toggle-adaptive-brightness(val); }
+                    }
+
+                    SettingsTile {
+                        icon-name: "settings";
+                        icon-bg: #d0bcff;
+                        icon-tint: #381e72;
+                        title: "Dark theme";
+                        subtitle: root.dark-theme ? "On" : "Off";
+                        is-switch: true;
+                        switch-checked: root.dark-theme;
+                        is-first: false;
+                        is-last: true;
+                        show-divider: false;
+                        toggled(val) => { root.toggle-dark-theme(val); }
+                    }
+                }
+            }
+        }
+
+        // Screen & Behavior
+        VerticalLayout {
+            spacing: 8px;
+            SettingsSectionHeader { title: "Screen timeout & display"; }
+            SettingsSectionCard {
+                VerticalLayout {
+                    padding-top: 4px;
+                    padding-bottom: 4px;
+
+                    SettingsTile {
+                        icon-name: "settings";
+                        icon-bg: #7dd8fc;
+                        icon-tint: #00354e;
+                        title: "Screen timeout";
+                        subtitle: "After " + root.screen-timeout + " of inactivity";
+                        show-chevron: true;
+                        is-first: true;
+                        is-last: false;
+                        show-divider: true;
+                    }
+
+                    SettingsTile {
+                        icon-name: "devices";
+                        icon-bg: #a3e8b0;
+                        icon-tint: #073919;
+                        title: "Screen resolution";
+                        subtitle: root.display-resolution;
+                        show-chevron: false;
+                        is-first: false;
+                        is-last: true;
+                        show-divider: false;
+                    }
+                }
+            }
+        }
+    }
+}

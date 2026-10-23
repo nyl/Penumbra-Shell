@@ -121,6 +121,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initial Wallpaper Load
     {
         let cfg = layout_config.borrow();
+        let mut loaded = false;
         if !cfg.wallpaper_path.is_empty() {
             let wp_path = std::path::Path::new(&cfg.wallpaper_path);
             if wp_path.exists() {
@@ -128,6 +129,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ui.set_has_wallpaper(true);
                     ui.set_wallpaper_image(img);
                     ui.set_current_wallpaper_path(cfg.wallpaper_path.clone().into());
+                    loaded = true;
+                }
+            }
+        }
+        if !loaded {
+            let default_candidates = [
+                "/usr/share/penumbra/assets/wallpaper.jpg",
+                "assets/wallpaper.jpg",
+                "/usr/share/wallpapers/penumbra/wallpaper.jpg",
+            ];
+            for cand in default_candidates {
+                let p = std::path::Path::new(cand);
+                if p.exists() {
+                    if let Ok(img) = slint::Image::load_from_path(p) {
+                        info!("Loaded default Penumbra wallpaper: {}", cand);
+                        ui.set_has_wallpaper(true);
+                        ui.set_wallpaper_image(img);
+                        ui.set_current_wallpaper_path(cand.into());
+                        break;
+                    }
                 }
             }
         }

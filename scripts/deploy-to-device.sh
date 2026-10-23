@@ -105,6 +105,7 @@ required_bins=(
     penumbra-quicksettings
     penumbra-homescreen
     penumbra-nav-bar
+    penumbra-settings
 )
 for binary in "${required_bins[@]}"; do
     [[ -x "$release_dir/$binary" ]] || {
@@ -124,7 +125,7 @@ fi
 
 "${ssh_base[@]}" "$remote" "mkdir -p '$staging_dir/bin' '$staging_dir/assets'"
 "${scp_base[@]}" "${required_bins[@]/#/$release_dir/}" "$remote:$staging_dir/bin/"
-"${scp_base[@]}" "$repo_root/scripts/penumbra-session" "$repo_root/scripts/penumbra-nested-session" "$repo_root/scripts/penumbra-native-session" "$repo_root/data/penumbra.desktop" "$remote:$staging_dir/"
+"${scp_base[@]}" "$repo_root/scripts/penumbra-session" "$repo_root/scripts/penumbra-nested-session" "$repo_root/scripts/penumbra-native-session" "$repo_root/data/penumbra.desktop" "$repo_root/data/penumbra-settings.desktop" "$remote:$staging_dir/"
 if [[ -d "$repo_root/assets" ]]; then
     "${scp_base[@]}" -r "$repo_root/assets/." "$remote:$staging_dir/assets/"
 fi
@@ -142,13 +143,26 @@ if [[ -n "$SUDO_PASSWORD" ]]; then
         cat <<'REMOTE_INSTALL'
 set -euo pipefail
 
-install -d /usr/local/bin /usr/share/wayland-sessions /usr/share/penumbra/assets
+install -d /usr/local/bin /usr/share/wayland-sessions /usr/share/penumbra/assets /usr/share/applications
 install -m 0755 penumbra-deploy/bin/* /usr/local/bin/
 install -m 0755 penumbra-deploy/penumbra-session /usr/local/bin/penumbra-session
 install -m 0755 penumbra-deploy/penumbra-nested-session /usr/local/bin/penumbra-nested-session
 install -m 0755 penumbra-deploy/penumbra-native-session /usr/local/bin/penumbra-native-session
 install -m 0644 penumbra-deploy/penumbra.desktop /usr/share/wayland-sessions/penumbra.desktop
+install -m 0644 penumbra-deploy/penumbra-settings.desktop /usr/share/applications/penumbra-settings.desktop
 cp -a penumbra-deploy/assets/. /usr/share/penumbra/assets/
+
+mkdir -p /etc/udev/rules.d
+cat > /etc/udev/rules.d/90-backlight.rules <<'UDEV_BACKLIGHT'
+ACTION=="add", SUBSYSTEM=="backlight", RUN+="/bin/chgrp video /sys/class/backlight/%k/brightness", RUN+="/bin/chmod 0664 /sys/class/backlight/%k/brightness"
+UDEV_BACKLIGHT
+udevadm control --reload-rules 2>/dev/null || true
+udevadm trigger --subsystem-match=backlight 2>/dev/null || true
+chgrp video /sys/class/backlight/*/brightness 2>/dev/null || true
+chmod 0664 /sys/class/backlight/*/brightness 2>/dev/null || true
+addgroup "${PENUMBRA_LOGIN_USER}" video 2>/dev/null || usermod -aG video "${PENUMBRA_LOGIN_USER}" 2>/dev/null || true
+addgroup "${PENUMBRA_LOGIN_USER}" input 2>/dev/null || usermod -aG input "${PENUMBRA_LOGIN_USER}" 2>/dev/null || true
+addgroup "${PENUMBRA_LOGIN_USER}" audio 2>/dev/null || usermod -aG audio "${PENUMBRA_LOGIN_USER}" 2>/dev/null || true
 
 if [[ -f /etc/phrog/greetd-config.toml ]]; then
     if [[ ! -f /etc/phrog/greetd-config.toml.penumbra-backup ]]; then
@@ -172,8 +186,11 @@ elif [[ "${SESSION_MANAGER:-none}" == greetd ]]; then
 command = "/usr/local/bin/penumbra-native-session"
 user = "${PENUMBRA_LOGIN_USER}"
 GREETD_CONFIG
+elif [[ "${SESSION_MANAGER:-none}" == gdm || "${SESSION_MANAGER:-none}" == none ]]; then
+    # GDM / standard display managers use /usr/share/wayland-sessions/penumbra.desktop
+    true
 else
-    echo "No supported session manager configuration found" >&2
+    echo "No supported session manager configuration found: $SESSION_MANAGER" >&2
     exit 2
 fi
 
@@ -184,12 +201,13 @@ else
     "${ssh_base[@]}" "$remote" "sudo -n env $remote_env bash -s" <<'REMOTE_INSTALL'
 set -euo pipefail
 
-install -d /usr/local/bin /usr/share/wayland-sessions /usr/share/penumbra/assets
+install -d /usr/local/bin /usr/share/wayland-sessions /usr/share/penumbra/assets /usr/share/applications
 install -m 0755 penumbra-deploy/bin/* /usr/local/bin/
 install -m 0755 penumbra-deploy/penumbra-session /usr/local/bin/penumbra-session
 install -m 0755 penumbra-deploy/penumbra-nested-session /usr/local/bin/penumbra-nested-session
 install -m 0755 penumbra-deploy/penumbra-native-session /usr/local/bin/penumbra-native-session
 install -m 0644 penumbra-deploy/penumbra.desktop /usr/share/wayland-sessions/penumbra.desktop
+install -m 0644 penumbra-deploy/penumbra-settings.desktop /usr/share/applications/penumbra-settings.desktop
 cp -a penumbra-deploy/assets/. /usr/share/penumbra/assets/
 
 if [[ -f /etc/phrog/greetd-config.toml ]]; then
@@ -214,8 +232,11 @@ elif [[ "${SESSION_MANAGER:-none}" == greetd ]]; then
 command = "/usr/local/bin/penumbra-native-session"
 user = "${PENUMBRA_LOGIN_USER}"
 GREETD_CONFIG
+elif [[ "${SESSION_MANAGER:-none}" == gdm || "${SESSION_MANAGER:-none}" == none ]]; then
+    # GDM / standard display managers use /usr/share/wayland-sessions/penumbra.desktop
+    true
 else
-    echo "No supported session manager configuration found" >&2
+    echo "No supported session manager configuration found: $SESSION_MANAGER" >&2
     exit 2
 fi
 

@@ -75,6 +75,7 @@ pub struct ShellState {
     pub overview_scroll: f64,
     pub is_dragging: bool,
     pub active_card_dy: f64,
+    pub power_dialog_open: bool,
 }
 
 impl ShellState {
@@ -93,6 +94,7 @@ impl ShellState {
                 ("drawer", v) => s.drawer_open = v == "1" || v == "true",
                 ("drawer_pull_dy", v) => s.drawer_pull_dy = v.parse().unwrap_or(0.0),
                 ("drawer_dragging", v) => s.drawer_dragging = v == "1" || v == "true",
+                ("power_dialog", v) => s.power_dialog_open = v == "1" || v == "true",
                 ("overview_index", v) => s.overview_index = v.parse().unwrap_or(0),
                 ("overview_scroll", v) => {
                     s.overview_scroll = v.parse().unwrap_or(0.0);
@@ -116,11 +118,12 @@ impl ShellState {
             PhoneMode::Overview => "overview",
         };
         format!(
-            "mode={}\ndrawer={}\ndrawer_pull_dy={:.1}\ndrawer_dragging={}\noverview_index={}\noverview_scroll={:.3}\nis_dragging={}\nactive_card_dy={:.1}\n",
+            "mode={}\ndrawer={}\ndrawer_pull_dy={:.1}\ndrawer_dragging={}\npower_dialog={}\noverview_index={}\noverview_scroll={:.3}\nis_dragging={}\nactive_card_dy={:.1}\n",
             mode,
             if self.drawer_open { 1 } else { 0 },
             self.drawer_pull_dy,
             if self.drawer_dragging { 1 } else { 0 },
+            if self.power_dialog_open { 1 } else { 0 },
             self.overview_index,
             self.overview_scroll,
             if self.is_dragging { 1 } else { 0 },
@@ -135,6 +138,9 @@ pub enum ShellCommand {
     Focus(u32),
     Close(u32),
     CloseAll,
+    Back,
+    PowerDialog,
+    ScreenToggle,
 }
 
 pub fn parse_commands(text: &str) -> Vec<ShellCommand> {
@@ -145,6 +151,9 @@ pub fn parse_commands(text: &str) -> Vec<ShellCommand> {
                 ("focus", Some(id)) => id.parse().ok().map(ShellCommand::Focus),
                 ("close", Some(id)) => id.parse().ok().map(ShellCommand::Close),
                 ("close-all", _) => Some(ShellCommand::CloseAll),
+                ("back", _) => Some(ShellCommand::Back),
+                ("power-dialog", _) => Some(ShellCommand::PowerDialog),
+                ("screen-toggle", _) => Some(ShellCommand::ScreenToggle),
                 _ => None,
             }
         })

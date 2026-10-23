@@ -355,6 +355,7 @@ pub fn run(_compositor: &mut PenumbraCompositor) -> Result<(), Box<dyn Error>> {
     let mut seat = seat_state.new_wl_seat(&dh, "penumbra-seat");
     // The pointer capability carries libinput mouse input and emulated touch.
     let pointer = seat.add_pointer();
+    let _keyboard = seat.add_keyboard(Default::default(), 200, 200)?;
     let xdg_shell_state = XdgShellState::new::<PenumbraServerState>(&dh);
     let layer_shell_state = WlrLayerShellState::new::<PenumbraServerState>(&dh);
     let data_device_state = DataDeviceState::new::<PenumbraServerState>(&dh);
@@ -405,6 +406,8 @@ pub fn run(_compositor: &mut PenumbraCompositor) -> Result<(), Box<dyn Error>> {
         overview_scroll: 0.0,
         last_tasks_published: String::from("\u{0}"),
         phone_logical_size: (phone::PHONE_W, phone::PHONE_H),
+        screen_blanked: false,
+        saved_brightness: 2500,
     };
     let _ = std::fs::remove_file(runtime_path(phone::SHELL_STATE_FILE));
     let _ = std::fs::remove_file(runtime_path(phone::SHELL_CMD_FILE));
@@ -480,6 +483,14 @@ pub fn run(_compositor: &mut PenumbraCompositor) -> Result<(), Box<dyn Error>> {
             state.last_ipc_poll = Instant::now();
         }
         state.server.advance_overview_scroll();
+
+        if let Some(press_time) = state.input.power_press_time {
+            if !state.input.power_dialog_triggered && press_time.elapsed() >= Duration::from_millis(550) {
+                state.input.power_dialog_triggered = true;
+                tracing::info!("Hardware power button hold (>= 550ms) -> trigger Power Dialog");
+                state.server.show_power_dialog();
+            }
+        }
 
         if let Err(error) = state.display.flush_clients() {
             tracing::error!(?error, "Wayland client flush failed");

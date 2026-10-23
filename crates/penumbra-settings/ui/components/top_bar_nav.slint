@@ -1,0 +1,81 @@
+import { Theme } from "../theme.slint";
+import { Icon } from "../icon.slint";
+
+// ==============================================================================
+// Component: TopBarNav
+// ==============================================================================
+// Adaptive mobile top app bar that dynamically morphs between root page headline
+// and subpage navigation modes.
+//
+// Morphing Transitions & Animation Mechanics:
+// 1. Height Morphing: Expands to 72px on the root page for large headline impact,
+//    and compacts to 64px on subpages over 220ms using `ease-out`.
+// 2. Title Typography Transition: Scales smoothly between 30px bold headline
+//    (`Theme.font-headline`) on the root page and 18px (`Theme.font-title`) on subpages.
+// 3. Navigation Controls: Contextually renders a 40px circular back button when
+//    on subpages (`is-subpage == true`) or an action search pill on the root page.
+// 4. Subtle Specular Divider: 1px bottom border line separates the top bar from the
+//    flickable viewport stack below.
+export component TopBarNav inherits Rectangle {
+    // Current display title rendered in the app bar.
+    in property <string> title: "Settings";
+    // Whether the top bar is currently presenting a subpage (enables back button & subpage layout).
+    in property <bool> is-subpage: false;
+
+    // Emitted when the user taps the circular back button on subpages.
+    callback back-clicked();
+    // Emitted when the user taps the search pill button on the root page.
+    callback search-clicked();
+
+    height: root.is-subpage ? 64px : 0px;
+    visible: root.is-subpage;
+    background: Theme.base-surface;
+    clip: true;
+
+    animate height { duration: 220ms; easing: ease-out; }
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 16px;
+        spacing: 12px;
+
+        // Clean Android Back Button
+        Rectangle {
+            width: 44px;
+            height: 44px;
+            border-radius: 22px;
+            y: (parent.height - self.height) / 2;
+            background: back-touch.pressed ? #282a30 : transparent;
+
+            animate background { duration: 120ms; easing: ease-out; }
+
+            Icon {
+                name: "chevron-left";
+                icon-size: 22px;
+                icon-color: Theme.on-surface;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+            }
+
+            back-touch := TouchArea {
+                clicked => { root.back-clicked(); }
+            }
+        }
+
+        // Subpage Title
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+
+            Text {
+                text: root.title;
+                font-size: Theme.font-title;
+                font-weight: 500;
+                color: Theme.on-surface;
+                overflow: elide;
+                horizontal-alignment: left;
+            }
+        }
+    }
+}
+

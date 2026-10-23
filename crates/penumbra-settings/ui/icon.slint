@@ -1,0 +1,64 @@
+// ==============================================================================
+// Penumbra Settings: Pure SVG Vector Icon Renderer
+// ==============================================================================
+// Renders scalable, stroke-based vector icons on an idealized 24x24 coordinate
+// viewport grid without external icon fonts, asset files, or runtime I/O overhead.
+//
+// Architectural Rationale:
+// 1. Zero External Assets: Embedding pure SVG paths directly into Slint eliminates
+//    runtime font rendering discrepancies, missing glyphs, and filesystem latency.
+// 2. Uniform Stroke Weight: Every icon uses a consistent 2px stroke width, matching
+//    Material Symbols Outlined specifications.
+// 3. Dynamic Color Tinting: Inherits reactive coloring via `icon-color` for focus,
+//    active, connected, and error states across the UI.
+// ==============================================================================
+
+export component Icon inherits Rectangle {
+    /// Semantic identifier of the icon to render (e.g. "wifi", "bluetooth", "chevron-left").
+    in property <string> name;
+    /// Foreground stroke color applied to the vector path.
+    in property <color> icon-color: #ffffff;
+    /// Bounding square dimension of the icon in layout coordinates (default 20px).
+    in property <length> icon-size: 20px;
+
+    // Internal path command string mapped from the semantic icon name.
+    property <string> d: root.name == "chevron-left" ? "M15 5 L8 12 L15 19"
+        : root.name == "chevron-right" ? "M9 5 L16 12 L9 19"
+        : root.name == "wifi" ? "M2 9 Q12 -1 22 9 M5 12.5 Q12 6 19 12.5 M8.5 16 Q12 12.5 15.5 16 M11.5 19 A 0.5 0.5 0 1 0 12.5 19 A 0.5 0.5 0 1 0 11.5 19 Z"
+        : root.name == "bluetooth" ? "M7 7 L17 17 L12 22 L12 2 L17 7 L7 17"
+        : root.name == "brightness" ? "M8 12 A 4 4 0 1 0 16 12 A 4 4 0 1 0 8 12 Z M12 2 L12 4 M12 20 L12 22 M2 12 L4 12 M20 12 L22 12 M4.93 4.93 L6.34 6.34 M17.66 17.66 L19.07 19.07 M4.93 19.07 L6.34 17.66 M17.66 6.34 L19.07 4.93"
+        : root.name == "battery" ? "M3 8 L19 8 L19 16 L3 16 Z M21 11 L21 13 M6 11 L13 11 L13 13 L6 13 Z"
+        : root.name == "volume" || root.name == "sound" ? "M4 9 L8 9 L13 5 L13 19 L8 15 L4 15 Z M16 9 Q18.5 12 16 15 M18.5 6.5 Q22 12 18.5 17.5"
+        : root.name == "settings" ? "M4 7 L20 7 M4 17 L20 17 M9 4 L9 10 M15 14 L15 20"
+        : root.name == "info" ? "M12 2 A 10 10 0 1 0 12 22 A 10 10 0 1 0 12 2 Z M12 16 L12 11 M12 8 L12.01 8"
+        : root.name == "lock" ? "M7 11 V7 A 5 5 0 0 1 17 7 V11 M5 11 H19 V21 H5 Z"
+        : root.name == "check" ? "M5 13 L9 17 L19 7"
+        : root.name == "refresh" ? "M20 4 V9 H15 M4 20 V15 H9 M4.93 9 A 9 9 0 0 1 18.36 5.64 L20 9 M19.07 15 A 9 9 0 0 1 5.64 18.36 L4 15"
+        : root.name == "search" ? "M11 19 A 8 8 0 1 0 11 3 A 8 8 0 1 0 11 19 Z M21 21 L16.65 16.65"
+        : root.name == "close" ? "M18 6 L6 18 M6 6 L18 18"
+        : root.name == "power" ? "M6.34 6.34 A 8 8 0 1 0 17.66 6.34 M12 3 L12 12"
+        : root.name == "devices" ? "M4 6 H20 V16 H4 Z M8 20 H16 M12 16 V20"
+        : root.name == "network" ? "M12 2 A 10 10 0 1 0 12 22 A 10 10 0 1 0 12 2 Z M2 12 H22 M12 2 A 15 15 0 0 0 12 22 M12 2 A 15 15 0 0 1 12 22"
+        : root.name == "apps" ? "M4 4 H8 V8 H4 Z M10 4 H14 V8 H10 Z M16 4 H20 V8 H16 Z M4 10 H8 V14 H4 Z M10 10 H14 V14 H10 Z M16 10 H20 V14 H16 Z M4 16 H8 V20 H4 Z M10 16 H14 V20 H10 Z M16 16 H20 V20 H16 Z"
+        : root.name == "bell" || root.name == "notifications" ? "M18 16 V11 A 6 6 0 0 0 6 11 V16 L4 18 H20 L18 16 Z M10 19 A 2 2 0 0 0 14 19"
+        : root.name == "palette" ? "M12 2 A 10 10 0 1 0 22 12 A 4 4 0 0 0 18 8 H15 A 1 1 0 0 1 14 7 V6 A 4 4 0 0 0 10 2 H12 Z M7 11.5 A 1.5 1.5 0 1 1 8.5 13 A 1.5 1.5 0 0 1 7 11.5 Z M9.5 7.5 A 1.5 1.5 0 1 1 11 9 A 1.5 1.5 0 0 1 9.5 7.5 Z M14.5 7.5 A 1.5 1.5 0 1 1 16 9 A 1.5 1.5 0 0 1 14.5 7.5 Z"
+        : root.name == "storage" ? "M4 6 H20 V10 H4 Z M4 14 H20 V18 H4 Z M7 8 H7.01 M7 16 H7.01"
+        : root.name == "dnd" ? "M12 2 A 10 10 0 1 0 12 22 A 10 10 0 1 0 12 2 Z M7 12 H17"
+        : "M4 4 L10 4 L10 10 L4 10 Z M14 4 L20 4 L20 10 L14 10 Z M4 14 L10 14 L10 20 L4 20 Z M14 14 L20 14 L20 20 L14 20 Z";
+
+    width: root.icon-size;
+    height: root.icon-size;
+    background: transparent;
+
+    Path {
+        width: root.width;
+        height: root.height;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        commands: root.d;
+        stroke: root.icon-color;
+        stroke-width: 2px;
+        fill: transparent;
+    }
+}
+

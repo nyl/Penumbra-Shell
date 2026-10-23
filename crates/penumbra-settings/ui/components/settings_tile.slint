@@ -1,0 +1,213 @@
+import { Theme } from "../theme.slint";
+import { Icon } from "../icon.slint";
+
+// ==============================================================================
+// Component: M3Switch
+// ==============================================================================
+// Tactile toggle switch adhering to Material 3 Expressive mobile guidelines.
+//
+// Layout & Sizing Constraints:
+// - Physical dimension: 50px wide by 28px tall, bounded by 14px continuous border radius.
+// - Sliding thumb: 20px circle with 4px resting inset padding on either side.
+// - Animated transitions: Background track hue and thumb position transition over
+//   180ms using an `ease-out` timing curve for instant tactile feedback.
+export component M3Switch inherits Rectangle {
+    // Current on/off boolean state of the switch.
+    in-out property <bool> checked: false;
+    // Whether the switch is interactive; when false, dims and ignores touch gestures.
+    in property <bool> enabled: true;
+    // Emitted whenever the user toggles the switch with the new boolean state.
+    callback toggled(bool);
+
+    width: 52px;
+    height: 32px;
+    border-radius: 16px;
+    background: !root.enabled ? #49454f.with-alpha(0.3)
+        : (root.checked ? Theme.primary : #36343b);
+    border-width: root.checked ? 0px : 1px;
+    border-color: #79747e;
+
+    animate background { duration: 180ms; easing: ease-out; }
+
+    // Sliding thumb
+    Rectangle {
+        x: root.checked ? (parent.width - self.width - 4px) : 6px;
+        y: (parent.height - self.height) / 2;
+        width: root.checked ? 24px : 18px;
+        height: root.checked ? 24px : 18px;
+        border-radius: 12px;
+        background: root.checked ? Theme.on-primary : #938f99;
+
+        animate x { duration: 180ms; easing: ease-out; }
+        animate width { duration: 180ms; easing: ease-out; }
+        animate height { duration: 180ms; easing: ease-out; }
+        animate background { duration: 180ms; easing: ease-out; }
+    }
+
+    TouchArea {
+        clicked => {
+            if (root.enabled) {
+                root.checked = !root.checked;
+                root.toggled(root.checked);
+            }
+        }
+    }
+}
+
+// ==============================================================================
+// Component: SettingsTile
+// ==============================================================================
+// Universal interactive list item row designed according to Android 17 specifications.
+//
+// Layout & Geometry:
+// - Height: 72px allowing ample breathing room and comfortable touch targeting.
+// - Icon Badge: 40px diameter circle with solid background color matching tier.
+// - Title: 16px, font-weight: 500, #e6e0e9.
+// - Subtitle: 13px, #938f99.
+// - Trailing indicator: 14px chevron (#938f99) or M3Switch.
+export component SettingsTile inherits Rectangle {
+    // Optional semantic icon name rendered inside a circular badge (e.g. "wifi").
+    in property <string> icon-name: "";
+    // Background color of the 40px circular badge (Pixel category color).
+    in property <color> icon-bg: root.icon-tint.with-alpha(0.18);
+    // Foreground tint color applied to the icon vector stroke.
+    in property <color> icon-tint: #ffffff;
+    // Primary title text displayed in natural medium typography.
+    in property <string> title: "";
+    // Secondary subtitle text displaying active status or configuration summaries.
+    in property <string> subtitle: "";
+    // Optional trailing metadata text (e.g. "Connected", "98%").
+    in property <string> trailing-text: "";
+    // Whether to render a right-facing navigation chevron ("chevron-right").
+    in property <bool> show-chevron: false;
+    // Whether this tile functions as a toggle row containing an M3Switch.
+    in property <bool> is-switch: false;
+    // Checked state of the switch when `is-switch` is true.
+    in-out property <bool> switch-checked: false;
+    // Whether to render the bottom hairline divider.
+    in property <bool> show-divider: true;
+    // Flag indicating this tile is the top element of a grouped section card.
+    in property <bool> is-first: false;
+    // Flag indicating this tile is the bottom element of a grouped section card.
+    in property <bool> is-last: false;
+
+    // Emitted when the user taps anywhere on a non-switch tile.
+    callback clicked();
+    // Emitted when the user taps a switch tile, providing the new boolean state.
+    callback toggled(bool);
+
+    min-height: 72px;
+    background: touch.pressed ? Theme.surface-high.with-alpha(0.7) : transparent;
+    border-top-left-radius: root.is-first ? Theme.radius-card : 0px;
+    border-top-right-radius: root.is-first ? Theme.radius-card : 0px;
+    border-bottom-left-radius: root.is-last ? Theme.radius-card : 0px;
+    border-bottom-right-radius: root.is-last ? Theme.radius-card : 0px;
+
+    animate background { duration: 120ms; easing: ease-out; }
+
+    touch := TouchArea {
+        clicked => {
+            if (root.is-switch) {
+                root.switch-checked = !root.switch-checked;
+                root.toggled(root.switch-checked);
+            } else {
+                root.clicked();
+            }
+        }
+    }
+
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        padding-top: 10px;
+        padding-bottom: 10px;
+        spacing: 16px;
+
+        // Visual Icon Badge (40px Circle)
+        if root.icon-name != "": Rectangle {
+            width: 40px;
+            height: 40px;
+            border-radius: 20px;
+            background: root.icon-bg;
+            y: (parent.height - self.height) / 2;
+
+            Icon {
+                name: root.icon-name;
+                icon-size: 22px;
+                icon-color: root.icon-tint;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+            }
+        }
+
+        // Title and Subtitle Stack
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 2px;
+
+            Text {
+                text: root.title;
+                font-size: 16px;
+                font-weight: 500;
+                color: Theme.on-surface;
+                overflow: elide;
+                horizontal-alignment: left;
+            }
+
+            if root.subtitle != "": Text {
+                text: root.subtitle;
+                font-size: 13px;
+                color: Theme.on-surface-variant;
+                overflow: elide;
+                horizontal-alignment: left;
+            }
+        }
+
+        // Trailing status text
+        if root.trailing-text != "": Text {
+            text: root.trailing-text;
+            font-size: 14px;
+            color: Theme.on-surface-variant;
+            vertical-alignment: center;
+        }
+
+        // Trailing Switch
+        if root.is-switch: M3Switch {
+            checked: root.switch-checked;
+            y: (parent.height - self.height) / 2;
+            toggled(val) => {
+                root.switch-checked = val;
+                root.toggled(val);
+            }
+        }
+
+        // Trailing Chevron Indicator (Pixel style)
+        if root.show-chevron && !root.is-switch: Rectangle {
+            width: 24px;
+            height: 24px;
+            y: (parent.height - self.height) / 2;
+
+            Icon {
+                name: "chevron-right";
+                icon-size: 14px;
+                icon-color: Theme.on-surface-variant;
+                x: parent.width - self.width;
+                y: (parent.height - self.height) / 2;
+            }
+        }
+    }
+
+    // Divider line at bottom
+    if root.show-divider && !root.is-last: Rectangle {
+        y: parent.height - 1px;
+        x: root.icon-name != "" ? 72px : 16px;
+        width: parent.width - self.x - 16px;
+        height: 1px;
+        background: Theme.divider;
+    }
+}
+
+// Alias export for Android M3 component nomenclature
+export component SettingsItem inherits SettingsTile {}
+

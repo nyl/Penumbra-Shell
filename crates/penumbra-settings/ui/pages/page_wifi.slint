@@ -1,0 +1,171 @@
+import { Theme } from "../theme.slint";
+import { Icon } from "../icon.slint";
+import { SettingsTile } from "../components/settings_tile.slint";
+import { SettingsSectionCard, SettingsSectionHeader } from "../components/settings_section.slint";
+
+// ==============================================================================
+// Data Structure: WifiApData
+// ==============================================================================
+// Represents a single scanned wireless access point discovered via NetworkManager.
+export struct WifiApData {
+    // Human-readable broadcast SSID of the access point.
+    ssid: string,
+    // Normalized wireless signal percentage (0 to 100%).
+    signal: int,
+    // Security capabilities string (e.g. "WPA3", "WPA2", "Open").
+    security: string,
+    // Whether this access point corresponds to the currently active connection.
+    connected: bool,
+}
+
+// ==============================================================================
+// Component: PageWifi
+// ==============================================================================
+// Wi-Fi network configuration subpage adhering strictly to Android 17 design.
+export component PageWifi inherits Flickable {
+    // Current wireless adapter power state.
+    in-out property <bool> wifi-enabled: true;
+    // SSID of the active wireless connection, or empty string if disconnected.
+    in property <string> connected-ssid: "";
+    // Signal percentage of the currently active connection (0 to 100).
+    in property <int> signal-strength: 0;
+    // Real Wi-Fi hardware MAC address and interface (e.g. "5c:87:9c:27:10:a0 (wlan0)").
+    in property <string> wifi-mac: "Hardware MAC";
+    // Array of available scanned access points from NetworkManager.
+    in property <[WifiApData]> access-points: [];
+
+    // Emitted when the user toggles the master Wi-Fi power switch.
+    callback toggle-wifi(bool);
+    // Emitted when the user selects an access point to initiate a connection.
+    callback connect-ap(string);
+    // Emitted when the user requests an immediate wireless beacon rescan.
+    callback scan-requested();
+
+    content := VerticalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        padding-top: 12px;
+        padding-bottom: 32px;
+        spacing: 12px;
+
+        // Master Switch Card
+        SettingsSectionCard {
+            SettingsTile {
+                icon-name: "wifi";
+                icon-bg: root.wifi-enabled ? #7dd8fc : #36343b;
+                icon-tint: root.wifi-enabled ? #00354e : #938f99;
+                title: "Use Wi-Fi";
+                subtitle: root.wifi-enabled ? "On" : "Off";
+                is-switch: true;
+                switch-checked: root.wifi-enabled;
+                show-divider: false;
+                is-first: true;
+                is-last: true;
+                toggled(val) => { root.toggle-wifi(val); }
+            }
+        }
+
+        if root.wifi-enabled: VerticalLayout {
+            spacing: 12px;
+
+            // Connected Network Card
+            if root.connected-ssid != "": VerticalLayout {
+                spacing: 8px;
+                SettingsSectionHeader { title: "Connected network"; }
+                SettingsSectionCard {
+                    SettingsTile {
+                        icon-name: "wifi";
+                        icon-bg: #a3e8b0;
+                        icon-tint: #073919;
+                        title: root.connected-ssid;
+                        subtitle: "Connected • " + root.signal-strength + "% Signal";
+                        trailing-text: "Connected";
+                        show-chevron: false;
+                        show-divider: false;
+                        is-first: true;
+                        is-last: true;
+                    }
+                }
+            }
+
+            // Available Networks
+            VerticalLayout {
+                spacing: 8px;
+                SettingsSectionHeader { title: "Available networks"; }
+                SettingsSectionCard {
+                    VerticalLayout {
+                        padding-top: 4px;
+                        padding-bottom: 4px;
+
+                        if root.access-points.length == 0: SettingsTile {
+                            icon-name: "refresh";
+                            icon-bg: #282a30;
+                            icon-tint: #938f99;
+                            title: "Scanning for networks...";
+                            subtitle: "Searching for available Wi-Fi access points";
+                            show-chevron: false;
+                            is-first: true;
+                            is-last: true;
+                            show-divider: false;
+                        }
+
+                        for ap[idx] in root.access-points: SettingsTile {
+                            icon-name: "wifi";
+                            icon-bg: ap.connected ? #a3e8b0 : #282a30;
+                            icon-tint: ap.connected ? #073919 : #e6e0e9;
+                            title: ap.ssid;
+                            subtitle: ap.security + " • " + ap.signal + "% Signal";
+                            trailing-text: ap.connected ? "Active" : "";
+                            show-chevron: !ap.connected;
+                            is-first: idx == 0;
+                            is-last: idx == root.access-points.length - 1;
+                            show-divider: idx < root.access-points.length - 1;
+                            clicked => {
+                                if (!ap.connected) {
+                                    root.connect-ap(ap.ssid);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Wi-Fi Preferences
+            VerticalLayout {
+                spacing: 8px;
+                SettingsSectionHeader { title: "Network preferences"; }
+                SettingsSectionCard {
+                    VerticalLayout {
+                        padding-top: 4px;
+                        padding-bottom: 4px;
+
+                        SettingsTile {
+                            icon-name: "refresh";
+                            icon-bg: #7dd8fc;
+                            icon-tint: #00354e;
+                            title: "Scan for networks";
+                            subtitle: "Trigger broadcast beacon discovery";
+                            show-chevron: true;
+                            is-first: true;
+                            is-last: false;
+                            show-divider: true;
+                            clicked => { root.scan-requested(); }
+                        }
+
+                        SettingsTile {
+                            icon-name: "network";
+                            icon-bg: #d0bcff;
+                            icon-tint: #381e72;
+                            title: "Wi-Fi MAC address";
+                            subtitle: root.wifi-mac;
+                            show-chevron: false;
+                            is-first: false;
+                            is-last: true;
+                            show-divider: false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
