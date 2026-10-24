@@ -233,7 +233,12 @@ fn app_elements(
         return Vec::new();
     }
 
-    let Some(surface) = server.active_phone_surface() else {
+    let expanding_task = if server.shell_state.mode == PhoneMode::Overview {
+        server.phone_tasks.get(server.shell_state.overview_index).or_else(|| server.phone_tasks.first())
+    } else {
+        server.phone_tasks.first()
+    };
+    let Some(surface) = expanding_task.and_then(|t| t.window.toplevel()).map(|tl| tl.wl_surface().clone()) else {
         return Vec::new();
     };
 
@@ -328,8 +333,13 @@ fn overview_elements(
     };
 
     let start_index = if is_dragging_to_overview { 1 } else { 0 };
+    let is_expanding_to_fullscreen = server.shell_state.mode == PhoneMode::Overview
+        && (server.nav_gesture_active || server.nav_target == Some(penumbra_gestures::NavigationTarget::Fullscreen));
 
     for (index, task) in server.phone_tasks.iter().enumerate().skip(start_index) {
+        if is_expanding_to_fullscreen && index == server.shell_state.overview_index {
+            continue;
+        }
         let (raw_x, y, w, h, _scale) = card_transform(
             index,
             server.overview_scroll,

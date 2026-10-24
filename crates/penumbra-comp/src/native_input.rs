@@ -353,7 +353,7 @@ pub(crate) fn handle(
             let is_overview = server.shell_state.mode == PhoneMode::Overview;
             let in_overview_zone = is_overview && pos.y >= STATUS_BAR_H as f64;
 
-            if (is_nav_zone && (server.phone_app_visible() || is_overview || server.shell_state.mode == PhoneMode::App)) || in_overview_zone {
+            if (is_nav_zone && (!server.phone_tasks.is_empty() || server.phone_app_visible() || is_overview || server.shell_state.mode == PhoneMode::App)) || in_overview_zone {
                 if input.nav_tracker.is_none() {
                     let mut grabbed_card = None;
                     if is_overview {
@@ -462,6 +462,16 @@ pub(crate) fn handle(
                             server.shell_state.is_dragging = true;
                             server.shell_state.active_card_dy = dy;
                         }
+                        // Case B2: Upward drag from bottom nav bar in Overview mode -> cancel switcher to Home
+                        else if nav.grabbed_card.is_none() && nav.start_pos.y >= (NAV_BAR_Y as f64 - 48.0) && dy < -15.0 && (-dy) > dx.abs() * 0.8 {
+                            server.shell_state.is_dragging = false;
+                            server.nav_gesture_active = true;
+                            let denom = (PHONE_H as f64) * 0.35;
+                            let t = (-dy / denom).clamp(0.0, 1.0);
+                            server.nav_gesture_progress = t;
+                            server.nav_gesture_dy = dy;
+                            server.nav_gesture_vy = vy;
+                        }
                         // Case C: Horizontal carousel scrubbing
                         else if dx.abs() > 8.0 {
                             server.nav_gesture_active = false;
@@ -473,6 +483,38 @@ pub(crate) fn handle(
                             server.shell_state.overview_scroll = new_scroll;
                             server.shell_state.overview_index = new_scroll.round().clamp(0.0, max_idx) as usize;
                             server.overview_scroll = new_scroll;
+                        }
+                        return;
+                    }
+
+                    // Home screen mode:
+                    if nav.start_mode == PhoneMode::Home {
+                        let is_horizontal = dx.abs() > 24.0 && dx.abs() > dy.abs() * 1.2;
+                        if !is_horizontal {
+                            server.nav_gesture_active = true;
+                            let progress = penumbra_gestures::compute_normalized_progress(dy, PHONE_H as f64);
+                            server.nav_gesture_progress = progress;
+                            server.nav_gesture_dy = dy;
+                            server.nav_gesture_vy = vy;
+
+                            if progress >= 0.25 && vy > -550.0 {
+                                tracing::info!(progress, vy, "Bottom nav swipe up from Home -> promote to Overview");
+                                server.shell_state.mode = PhoneMode::Overview;
+                                server.shell_state.overview_index = 0;
+                                server.shell_state.overview_scroll = 0.0;
+                                server.overview_scroll = 0.0;
+                                server.nav_gesture_active = false;
+                                server.nav_gesture_progress = 0.0;
+                                server.shell_state.is_dragging = true;
+                                server.shell_state.active_card_dy = 0.0;
+                                nav.start_mode = PhoneMode::Overview;
+                                nav.start_scroll = 0.0;
+                                nav.start_pos = pos;
+                                let _ = write_atomic(
+                                    &runtime_path(phone::SHELL_STATE_FILE),
+                                    &server.shell_state.serialize(),
+                                );
+                            }
                         }
                         return;
                     }
@@ -596,19 +638,30 @@ pub(crate) fn handle(
                             };
 
                             if !dismissed {
-                                // Horizontal settle with momentum
+                                // Horizontal settle with velocity-based momentum fling
                                 let max_idx = server.phone_tasks.len().saturating_sub(1) as f64;
-                                let target_idx = if vx > 300.0 {
-                                    (nav.start_scroll + 1.0).clamp(0.0, max_idx)
-                                } else if vx < -300.0 {
-                                    (nav.start_scroll - 1.0).clamp(0.0, max_idx)
-                                } else {
-                                    server.shell_state.overview_scroll.round().clamp(0.0, max_idx)
-                                };
+                                let fling_cards = vx / 550.0;
+                                let raw_target = nav.start_scroll + (dx / CARD_STEP as f64) + fling_cards;
+                                let target_idx = raw_target.round().clamp(0.0, max_idx);
                                 server.shell_state.overview_index = target_idx as usize;
                                 server.shell_state.overview_scroll = target_idx;
-                                server.overview_scroll = target_idx;
+                                // advance_overview_scroll() smoothly lerps server.overview_scroll to target_idx
                             }
+                            server.shell_state.active_card_dy = 0.0;
+                            let _ = write_atomic(
+                                &runtime_path(phone::SHELL_STATE_FILE),
+                                &server.shell_state.serialize(),
+                            );
+                            return;
+                        }
+
+                        // Bottom nav bar swipe up in Overview mode -> dismiss to Home
+                        if nav.grabbed_card.is_none() && nav.start_pos.y >= (NAV_BAR_Y as f64 - 48.0) && (dy < -35.0 || vy < -300.0) {
+                            tracing::info!("Bottom nav bar swiped up in Overview -> dismiss to Home");
+                            server.set_phone_home();
+                            server.nav_gesture_active = false;
+                            server.nav_gesture_progress = 0.0;
+                            server.shell_state.is_dragging = false;
                             server.shell_state.active_card_dy = 0.0;
                             let _ = write_atomic(
                                 &runtime_path(phone::SHELL_STATE_FILE),
@@ -655,6 +708,26 @@ pub(crate) fn handle(
                             &runtime_path(phone::SHELL_STATE_FILE),
                             &server.shell_state.serialize(),
                         );
+                        return;
+                    }
+
+                    // Home screen mode:
+                    if nav.start_mode == PhoneMode::Home {
+                        server.nav_gesture_active = false;
+                        if dy < -40.0 || vy < -350.0 {
+                            tracing::info!("TouchUp from Home -> open Overview");
+                            server.shell_state.mode = PhoneMode::Overview;
+                            server.shell_state.overview_index = 0;
+                            server.shell_state.overview_scroll = 0.0;
+                            server.overview_scroll = 0.0;
+                            server.nav_gesture_progress = 0.0;
+                            let _ = write_atomic(
+                                &runtime_path(phone::SHELL_STATE_FILE),
+                                &server.shell_state.serialize(),
+                            );
+                        } else {
+                            server.nav_gesture_progress = 0.0;
+                        }
                         return;
                     }
 

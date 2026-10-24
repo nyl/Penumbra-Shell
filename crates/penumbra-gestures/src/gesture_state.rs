@@ -85,7 +85,7 @@ pub fn compute_normalized_progress(delta_y: f64, screen_height: f64) -> f64 {
 /// Window scaling factor in range `[0.664, 1.0]`.
 #[inline]
 pub fn compute_window_scale(progress: f64) -> f64 {
-    1.0 - (progress.clamp(0.0, 1.05) * (1.0 - 0.78))
+    1.0 - (progress.clamp(0.0, 1.05) * (1.0 - 0.70))
 }
 
 /// Computes the active application window corner radius $r(t)$ in pixels.

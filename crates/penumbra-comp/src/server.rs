@@ -318,7 +318,7 @@ impl PenumbraServerState {
             self.overview_scroll = scroll_target;
         } else {
             let scroll_diff = scroll_target - self.overview_scroll;
-            self.overview_scroll += scroll_diff * 0.35;
+            self.overview_scroll += scroll_diff * 0.22;
             if scroll_diff.abs() < 0.002 {
                 self.overview_scroll = scroll_target;
             }
@@ -374,6 +374,10 @@ impl PenumbraServerState {
                     Some(NavigationTarget::Fullscreen) | _ => {
                         self.nav_gesture_progress = 0.0;
                         self.shell_state.mode = PhoneMode::App;
+                        if let Some(task) = self.phone_tasks.get(self.shell_state.overview_index) {
+                            let id = task.id;
+                            self.focus_task_by_id(id);
+                        }
                         let _ = write_atomic(
                             &runtime_path(phone::SHELL_STATE_FILE),
                             &self.shell_state.serialize(),
