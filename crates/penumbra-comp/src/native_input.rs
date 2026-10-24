@@ -34,10 +34,13 @@ use crate::{
 /// Linux `BTN_LEFT` key code.
 const BTN_LEFT: u32 = 0x110;
 
-/// Linux hardware key codes.
-const KEY_POWER: u32 = 116;
-const KEY_VOLUMEUP: u32 = 115;
-const KEY_VOLUMEDOWN: u32 = 114;
+/// Linux hardware key codes (both raw evdev and Smithay/XKB scancodes).
+const KEY_POWER_RAW: u32 = 116;
+const KEY_POWER_XKB: u32 = 124;
+const KEY_VOLUMEUP_RAW: u32 = 115;
+const KEY_VOLUMEUP_XKB: u32 = 123;
+const KEY_VOLUMEDOWN_RAW: u32 = 114;
+const KEY_VOLUMEDOWN_XKB: u32 = 122;
 
 /// Focus target and origin for a pointer position.
 type Focus = Option<(WlSurface, Point<f64, Logical>)>;
@@ -69,6 +72,8 @@ pub(crate) struct InputState {
     edge_gesture: Option<EdgeBackGesture>,
     pub power_press_time: Option<std::time::Instant>,
     pub power_dialog_triggered: bool,
+    pub last_tap_time: Option<std::time::Instant>,
+    pub last_tap_pos: Option<Point<f64, Logical>>,
 }
 
 impl InputState {
@@ -87,6 +92,8 @@ impl InputState {
             edge_gesture: None,
             power_press_time: None,
             power_dialog_triggered: false,
+            last_tap_time: None,
+            last_tap_pos: None,
         }
     }
 
@@ -169,8 +176,9 @@ fn handle_keyboard(
     state: KeyState,
 ) {
     let key: u32 = keycode.into();
+    tracing::debug!(key, ?state, "Hardware key event");
     match key {
-        KEY_POWER => match state {
+        KEY_POWER_RAW | KEY_POWER_XKB => match state {
             KeyState::Pressed => {
                 input.power_press_time = Some(std::time::Instant::now());
                 input.power_dialog_triggered = false;
@@ -180,7 +188,7 @@ fn handle_keyboard(
                     let elapsed = start.elapsed();
                     if input.power_dialog_triggered {
                         // Already handled by hold detector
-                    } else if elapsed >= std::time::Duration::from_millis(550) {
+                    } else if elapsed >= std::time::Duration::from_millis(500) {
                         tracing::info!(
                             elapsed_ms = elapsed.as_millis(),
                             "Power button long-press -> Power Dialog"
@@ -196,20 +204,16 @@ fn handle_keyboard(
                 }
             }
         },
-        KEY_VOLUMEUP => {
+        KEY_VOLUMEUP_RAW | KEY_VOLUMEUP_XKB => {
             if state == KeyState::Pressed {
                 tracing::info!("Hardware Volume Up button pressed (+5%)");
-                let _ = std::process::Command::new("pactl")
-                    .args(["set-sink-volume", "@DEFAULT_SINK@", "+5%"])
-                    .spawn();
+                server.adjust_volume(0.05);
             }
         }
-        KEY_VOLUMEDOWN => {
+        KEY_VOLUMEDOWN_RAW | KEY_VOLUMEDOWN_XKB => {
             if state == KeyState::Pressed {
                 tracing::info!("Hardware Volume Down button pressed (-5%)");
-                let _ = std::process::Command::new("pactl")
-                    .args(["set-sink-volume", "@DEFAULT_SINK@", "-5%"])
-                    .spawn();
+                server.adjust_volume(-0.05);
             }
         }
         _ => {
@@ -237,6 +241,9 @@ pub(crate) fn handle(
 ) {
     match event {
         InputEvent::PointerMotion { event } => {
+            if server.screen_blanked {
+                return;
+            }
             let delta = event.delta();
             let pos = clamp_to_canvas(
                 server.pointer_location.x + delta.x,
@@ -245,6 +252,9 @@ pub(crate) fn handle(
             hover(server, input, pos);
         }
         InputEvent::PointerMotionAbsolute { event } => {
+            if server.screen_blanked {
+                return;
+            }
             let (width, height) = input.panel;
             let pos = input.panel_point(
                 event.x_transformed(width),
@@ -253,9 +263,15 @@ pub(crate) fn handle(
             hover(server, input, pos);
         }
         InputEvent::PointerButton { event } => {
+            if server.screen_blanked {
+                return;
+            }
             send_button(server, input, event.button_code(), event.state());
         }
         InputEvent::PointerAxis { event } => {
+            if server.screen_blanked {
+                return;
+            }
             let horizontal = event.amount(Axis::Horizontal).unwrap_or(0.0);
             let vertical = event.amount(Axis::Vertical).unwrap_or(0.0);
 
@@ -276,6 +292,29 @@ pub(crate) fn handle(
                 event.x_transformed(width),
                 event.y_transformed(height),
             );
+
+            // Double-tap to wake when screen is blanked:
+            if server.screen_blanked {
+                let now = std::time::Instant::now();
+                if let (Some(last_time), Some(last_pos)) = (input.last_tap_time, input.last_tap_pos) {
+                    let elapsed = now.duration_since(last_time);
+                    let dx = (pos.x - last_pos.x).abs();
+                    let dy = (pos.y - last_pos.y).abs();
+                    if elapsed <= std::time::Duration::from_millis(400) && dx < 50.0 && dy < 50.0 {
+                        tracing::info!(elapsed_ms = elapsed.as_millis(), "Double tap to wake recognized -> unblanking screen");
+                        server.toggle_screen_blanking();
+                        input.last_tap_time = None;
+                        input.last_tap_pos = None;
+                        return;
+                    }
+                }
+                input.last_tap_time = Some(now);
+                input.last_tap_pos = Some(pos);
+                return;
+            }
+
+            input.last_tap_time = None;
+            input.last_tap_pos = None;
 
             // Detect Android system-wide lateral back gesture starting from left or right edge.
             // Edge zone: 28px margin.
@@ -308,6 +347,9 @@ pub(crate) fn handle(
             send_button(server, input, BTN_LEFT, ButtonState::Pressed);
         }
         InputEvent::TouchMotion { event } => {
+            if server.screen_blanked {
+                return;
+            }
             let slot: i32 = event.slot().into();
             let (width, height) = input.panel;
             let pos = input.panel_point(
@@ -336,6 +378,9 @@ pub(crate) fn handle(
             send_motion(server, input, pos, focus);
         }
         InputEvent::TouchUp { event } => {
+            if server.screen_blanked {
+                return;
+            }
             let slot: i32 = event.slot().into();
             if let Some(edge) = input.edge_gesture.take() {
                 if edge.slot == slot {
@@ -352,6 +397,9 @@ pub(crate) fn handle(
             end_touch(server, input, slot);
         }
         InputEvent::TouchCancel { event } => {
+            if server.screen_blanked {
+                return;
+            }
             let slot: i32 = event.slot().into();
             input.edge_gesture = None;
             end_touch(server, input, slot);

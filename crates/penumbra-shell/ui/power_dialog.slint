@@ -12,15 +12,29 @@ export component PowerDialog inherits Rectangle {
     height: 100%;
     background: transparent;
 
-    // Scrim overlay
+    // Material 3 Gaussian Blur & Frosted Glass Backdrop Scrim
     TouchArea {
         width: 100%;
         height: 100%;
         clicked => { root.cancel(); }
+
+        // Dark frosted scrim
         Rectangle {
             width: 100%;
             height: 100%;
-            background: #000000b0;
+            background: #06070add;
+        }
+
+        // Diffused ambient blur aura behind the modal
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 360px;
+            height: 420px;
+            border-radius: 48px;
+            background: #25283838;
+            drop-shadow-blur: 64px;
+            drop-shadow-color: #000000f0;
         }
     }
 
@@ -28,10 +42,13 @@ export component PowerDialog inherits Rectangle {
     Rectangle {
         width: 320px;
         height: 380px;
-        background: #1c1b22;
+        background: #1c1b26f5;
         border-radius: 28px;
-        border-width: 1px;
-        border-color: #ffffff20;
+        border-width: 1.5px;
+        border-color: #ffffff25;
+        drop-shadow-blur: 48px;
+        drop-shadow-color: #000000e8;
+        drop-shadow-offset-y: 10px;
         clip: true;
 
         VerticalLayout {

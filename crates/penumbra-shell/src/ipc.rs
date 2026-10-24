@@ -36,11 +36,14 @@ pub struct ShellState {
     pub is_dragging: bool,
     pub active_card_dy: f64,
     pub power_dialog_open: bool,
+    pub volume_modal_open: bool,
+    pub volume_level: f32,
 }
 
 impl ShellState {
     pub fn parse(text: &str) -> Self {
         let mut s = ShellState::default();
+        s.volume_level = 0.65;
         let mut has_scroll = false;
         for line in text.lines() {
             let Some((k, v)) = line.split_once('=') else {
@@ -54,6 +57,8 @@ impl ShellState {
                 ("drawer_pull_dy", v) => s.drawer_pull_dy = v.parse().unwrap_or(0.0),
                 ("drawer_dragging", v) => s.drawer_dragging = v == "1" || v == "true",
                 ("power_dialog", v) => s.power_dialog_open = v == "1" || v == "true",
+                ("volume_modal", v) => s.volume_modal_open = v == "1" || v == "true",
+                ("volume_level", v) => s.volume_level = v.parse().unwrap_or(0.65),
                 ("overview_index", v) => s.overview_index = v.parse().unwrap_or(0),
                 ("overview_scroll", v) => {
                     s.overview_scroll = v.parse().unwrap_or(0.0);
@@ -77,12 +82,14 @@ impl ShellState {
             PhoneMode::Overview => "overview",
         };
         format!(
-            "mode={}\ndrawer={}\ndrawer_pull_dy={:.1}\ndrawer_dragging={}\npower_dialog={}\noverview_index={}\noverview_scroll={:.3}\nis_dragging={}\nactive_card_dy={:.1}\n",
+            "mode={}\ndrawer={}\ndrawer_pull_dy={:.1}\ndrawer_dragging={}\npower_dialog={}\nvolume_modal={}\nvolume_level={:.2}\noverview_index={}\noverview_scroll={:.3}\nis_dragging={}\nactive_card_dy={:.1}\n",
             mode,
             if self.drawer_open { 1 } else { 0 },
             self.drawer_pull_dy,
             if self.drawer_dragging { 1 } else { 0 },
             if self.power_dialog_open { 1 } else { 0 },
+            if self.volume_modal_open { 1 } else { 0 },
+            self.volume_level,
             self.overview_index,
             self.overview_scroll,
             if self.is_dragging { 1 } else { 0 },

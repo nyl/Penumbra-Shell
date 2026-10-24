@@ -1,7 +1,8 @@
 import { QuickSettingsSlider, TileData, NotificationData } from "quick_settings_slider.slint";
 import { PowerDialog } from "power_dialog.slint";
+import { VolumeModal } from "volume_modal.slint";
 
-export { TileData, NotificationData, PowerDialog }
+export { TileData, NotificationData, PowerDialog, VolumeModal }
 
 export component QuickSettingsWindow inherits Window {
     title: "Penumbra Quick Settings";
@@ -14,6 +15,7 @@ export component QuickSettingsWindow inherits Window {
     in-out property <float> expansion-progress: 0.0;
     in-out property <bool> edit-mode: false;
     in-out property <bool> show-power-dialog: false;
+    in-out property <bool> show-volume-modal: false;
 
     in-out property <float> brightness: 0.75;
     in-out property <float> volume: 0.60;
@@ -32,6 +34,7 @@ export component QuickSettingsWindow inherits Window {
     callback reboot();
     callback logout();
     callback dismiss-power-dialog();
+    callback dismiss-volume-modal();
     callback settings-action();
     callback brightness-changed(float);
     callback volume-changed(float);
@@ -79,6 +82,16 @@ export component QuickSettingsWindow inherits Window {
         drag-delta(dy) => { root.drag-delta(dy); }
         drag-released(cur_y, vel) => { root.drag-released(cur_y, vel); }
         fast-pull-up => { root.fast-pull-up(); }
+    }
+
+    volume-modal := VolumeModal {
+        open <=> root.show-volume-modal;
+        volume <=> root.volume;
+        volume-changed(v) => { root.volume-changed(v); }
+        dismiss => {
+            root.show-volume-modal = false;
+            root.dismiss-volume-modal();
+        }
     }
 
     power-dialog := PowerDialog {

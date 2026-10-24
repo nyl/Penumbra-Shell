@@ -221,8 +221,11 @@ fn render_frame(state: &mut NativeState, buffer: &mut Dmabuf) -> Result<(), Box<
     let overview = overview_elements(renderer, server, canvas);
     // Phone Layer 3: status bar and nav bar.
     let top = layer_elements(renderer, &server.output_a, canvas, Layer::Top);
-    // Quick settings sits above everything, only while the drawer is open.
-    let overlay = if server.shell_state.drawer_open {
+    // Quick settings, Power dialog, and Volume modal sit on the Overlay layer.
+    let overlay = if server.shell_state.drawer_open
+        || server.shell_state.power_dialog_open
+        || server.shell_state.volume_modal_open
+    {
         layer_elements(renderer, &server.output_a, canvas, Layer::Overlay)
     } else {
         Vec::new()
@@ -485,9 +488,9 @@ pub fn run(_compositor: &mut PenumbraCompositor) -> Result<(), Box<dyn Error>> {
         state.server.advance_overview_scroll();
 
         if let Some(press_time) = state.input.power_press_time {
-            if !state.input.power_dialog_triggered && press_time.elapsed() >= Duration::from_millis(550) {
+            if !state.input.power_dialog_triggered && press_time.elapsed() >= Duration::from_millis(500) {
                 state.input.power_dialog_triggered = true;
-                tracing::info!("Hardware power button hold (>= 550ms) -> trigger Power Dialog");
+                tracing::info!("Hardware power button hold (>= 500ms) -> trigger Power Dialog");
                 state.server.show_power_dialog();
             }
         }

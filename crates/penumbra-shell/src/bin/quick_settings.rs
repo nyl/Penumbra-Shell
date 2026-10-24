@@ -462,10 +462,45 @@ pub(crate) fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    qs.on_volume_changed(|val| {
-        info!("Quick Settings: Volume set to {:.2}", val);
-        apply_volume_ratio(val as f64);
-    });
+    let volume_dismiss_timer = Rc::new(RefCell::new(Timer::default()));
+    {
+        let volume_dismiss_timer = Rc::clone(&volume_dismiss_timer);
+        let ui_weak = ui_weak.clone();
+        qs.on_volume_changed(move |val| {
+            info!("Quick Settings: Volume set to {:.2}", val);
+            apply_volume_ratio(val as f64);
+            let mut s = ShellState::load();
+            s.volume_level = val;
+            let _ = s.save();
+
+            let weak = ui_weak.clone();
+            volume_dismiss_timer.borrow().start(
+                TimerMode::SingleShot,
+                Duration::from_millis(2500),
+                move || {
+                    if let Some(ui) = weak.upgrade() {
+                        ui.set_show_volume_modal(false);
+                    }
+                    let mut s = ShellState::load();
+                    s.volume_modal_open = false;
+                    let _ = s.save();
+                },
+            );
+        });
+    }
+
+    {
+        let ui_weak = ui_weak.clone();
+        qs.on_dismiss_volume_modal(move || {
+            info!("Volume Modal dismissed");
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_show_volume_modal(false);
+            }
+            let mut s = ShellState::load();
+            s.volume_modal_open = false;
+            let _ = s.save();
+        });
+    }
 
     // Android 17 Kinetic Tracking Model:
     // Direct Touch Tracking:
@@ -542,6 +577,9 @@ pub(crate) fn main() -> Result<(), Box<dyn std::error::Error>> {
         let spring_timer = Rc::clone(&spring_timer);
         let last_known_open = Rc::new(RefCell::new(false));
         let last_known_power_dialog = Rc::new(RefCell::new(false));
+        let last_known_volume_modal = Rc::new(RefCell::new(false));
+        let last_known_volume = Rc::new(RefCell::new(-1.0f32));
+        let volume_dismiss_timer_clone = Rc::clone(&volume_dismiss_timer);
         let last_known_pull_dy = Rc::new(RefCell::new(0.0f64));
         let last_dragging = Rc::new(RefCell::new(false));
         let pull_vel = Rc::new(RefCell::new(0.0f64));
@@ -634,6 +672,39 @@ pub(crate) fn main() -> Result<(), Box<dyn std::error::Error>> {
                 *last_power = state.power_dialog_open;
                 if let Some(ui) = ui_weak.upgrade() {
                     ui.set_show_power_dialog(state.power_dialog_open);
+                }
+            }
+
+            // Volume Modal sync
+            let mut last_vol_modal = last_known_volume_modal.borrow_mut();
+            let mut last_vol = last_known_volume.borrow_mut();
+            let vol_diff = (state.volume_level - *last_vol).abs();
+            if state.volume_modal_open != *last_vol_modal || (state.volume_modal_open && vol_diff > 0.01) {
+                *last_vol_modal = state.volume_modal_open;
+                *last_vol = state.volume_level;
+                if let Some(ui) = ui_weak.upgrade() {
+                    ui.set_show_volume_modal(state.volume_modal_open);
+                    ui.set_volume(state.volume_level);
+                }
+                if state.volume_modal_open {
+                    let weak = ui_weak.clone();
+                    volume_dismiss_timer_clone.borrow().start(
+                        TimerMode::SingleShot,
+                        Duration::from_millis(2500),
+                        move || {
+                            if let Some(ui) = weak.upgrade() {
+                                ui.set_show_volume_modal(false);
+                            }
+                            let mut s = ShellState::load();
+                            s.volume_modal_open = false;
+                            let _ = s.save();
+                        },
+                    );
+                }
+            } else if !state.volume_modal_open && vol_diff > 0.01 {
+                *last_vol = state.volume_level;
+                if let Some(ui) = ui_weak.upgrade() {
+                    ui.set_volume(state.volume_level);
                 }
             }
         });

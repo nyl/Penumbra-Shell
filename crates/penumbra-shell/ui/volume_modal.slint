@@ -1,0 +1,99 @@
+import { Icon } from "icon.slint";
+
+export component VolumeModal inherits Rectangle {
+    in-out property <bool> open: false;
+    in-out property <float> volume: 0.65;
+    callback volume-changed(float);
+    callback dismiss();
+
+    visible: root.open;
+    width: 100%;
+    height: 100%;
+    background: transparent;
+
+    // Dismiss area covering the outside space
+    TouchArea {
+        width: 100%;
+        height: 100%;
+        clicked => { root.dismiss(); }
+    }
+
+    // Material 3 Expressive Right-Side Floating Volume Modal
+    slider-card := Rectangle {
+        x: 346px;
+        y: 210px;
+        width: 52px;
+        height: 260px;
+        background: #1c1c24ee;
+        border-radius: 26px;
+        border-width: 1.5px;
+        border-color: #ffffff25;
+        drop-shadow-blur: 24px;
+        drop-shadow-color: #000000b0;
+        drop-shadow-offset-y: 8px;
+        clip: true;
+
+        // Active fill bar rising from the bottom
+        Rectangle {
+            x: 0;
+            y: parent.height - self.height;
+            width: parent.width;
+            height: clamp(root.volume, 0.0, 1.0) * parent.height;
+            background: root.volume > 0.01 ? #38bdf8 : #475569;
+            border-radius: 26px;
+        }
+
+        // Percentage indicator at top
+        VerticalLayout {
+            padding-top: 14px;
+            padding-bottom: 16px;
+            alignment: space-between;
+
+            Text {
+                text: Math.round(clamp(root.volume, 0.0, 1.0) * 100.0) + "%";
+                color: #ffffff;
+                font-size: 13px;
+                font-weight: 700;
+                horizontal-alignment: center;
+            }
+
+            Rectangle {
+                width: 32px;
+                height: 32px;
+                border-radius: 16px;
+                background: #00000030;
+                x: (parent.width - self.width) / 2;
+
+                Icon {
+                    name: "volume";
+                    icon-color: #ffffff;
+                    icon-size: 18px;
+                }
+            }
+        }
+
+        // Interactive touch scrubbing directly on the vertical slider
+        track-touch := TouchArea {
+            width: 100%;
+            height: 100%;
+
+            moved => {
+                if (self.pressed) {
+                    let ratio = 1.0 - (self.mouse-y / parent.height);
+                    let clamped = clamp(ratio, 0.0, 1.0);
+                    root.volume = clamped;
+                    root.volume-changed(clamped);
+                }
+            }
+
+            pointer-event(pe) => {
+                if (pe.kind == PointerEventKind.down || pe.kind == PointerEventKind.up) {
+                    let ratio = 1.0 - (self.mouse-y / parent.height);
+                    let clamped = clamp(ratio, 0.0, 1.0);
+                    root.volume = clamped;
+                    root.volume-changed(clamped);
+                }
+            }
+        }
+    }
+}

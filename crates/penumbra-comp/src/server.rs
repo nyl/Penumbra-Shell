@@ -168,8 +168,11 @@ impl PenumbraServerState {
     ) -> Option<(WlSurface, Point<f64, smithay::utils::Logical>)> {
         let map_a = layer_map_for_output(&self.output_a);
 
-        // 1. Overlay layer (highest priority - active when drawer or power dialog is open)
-        if self.shell_state.drawer_open || self.shell_state.power_dialog_open {
+        // 1. Overlay layer (highest priority - active when drawer, power dialog, or volume modal is open)
+        if self.shell_state.drawer_open
+            || self.shell_state.power_dialog_open
+            || self.shell_state.volume_modal_open
+        {
             if let Some(l) = map_a.layer_under(Layer::Overlay, pos) {
                 let geo = map_a.layer_geometry(l).unwrap_or_default();
                 return Some((
@@ -401,6 +404,22 @@ impl PenumbraServerState {
         );
     }
 
+    pub fn adjust_volume(&mut self, delta: f32) {
+        let cur = read_volume_pactl().unwrap_or(self.shell_state.volume_level);
+        let new_vol = (cur + delta).clamp(0.0, 1.0);
+        let pct = (new_vol * 100.0).round() as u32;
+        info!("Adjusting volume by {:.2} -> {:.2} ({}%)", delta, new_vol, pct);
+        let _ = std::process::Command::new("pactl")
+            .args(["set-sink-volume", "@DEFAULT_SINK@", &format!("{pct}%")])
+            .spawn();
+        self.shell_state.volume_level = new_vol;
+        self.shell_state.volume_modal_open = true;
+        let _ = write_atomic(
+            &runtime_path(phone::SHELL_STATE_FILE),
+            &self.shell_state.serialize(),
+        );
+    }
+
     pub fn toggle_screen_blanking(&mut self) {
         let backlight_file = "/sys/class/backlight/backlight/brightness";
         if self.screen_blanked {
@@ -420,6 +439,22 @@ impl PenumbraServerState {
             self.screen_blanked = true;
         }
     }
+}
+
+fn read_volume_pactl() -> Option<f32> {
+    let output = std::process::Command::new("pactl")
+        .args(["get-sink-volume", "@DEFAULT_SINK@"])
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    let pct_idx = text.find('%')?;
+    let prefix = &text[..pct_idx];
+    let start = prefix
+        .rfind(|c: char| !c.is_ascii_digit())
+        .map(|i| i + 1)
+        .unwrap_or(0);
+    let pct = prefix[start..].trim().parse::<f32>().ok()?;
+    Some((pct / 100.0).clamp(0.0, 1.0))
 }
 
 impl BufferHandler for PenumbraServerState {
