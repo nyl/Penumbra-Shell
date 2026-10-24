@@ -147,4 +147,9 @@ impl VelocityTracker {
     pub fn velocity_x(&self) -> f64 {
         self.velocity_x
     }
+
+    /// Returns the last recorded position coordinates `(x, y)` in pixels.
+    pub fn last_position(&self) -> (f64, f64) {
+        (self.last_x, self.last_y)
+    }
 }

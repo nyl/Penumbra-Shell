@@ -27,7 +27,7 @@ use smithay::{
 
 use crate::{
     native::Canvas,
-    phone::{NAV_BAR_Y, PHONE_H, PHONE_W},
+    phone::{card_transform, CARD_STEP, NAV_BAR_Y, PHONE_H, PHONE_W, PhoneMode},
     server::PenumbraServerState,
 };
 
@@ -60,6 +60,15 @@ struct EdgeBackGesture {
     triggered: bool,
 }
 
+/// Tracks a touch gesture driving navigation (bottom nav bar or Overview switcher).
+pub(crate) struct NavTouchTracker {
+    pub slot: i32,
+    pub start_pos: Point<f64, Logical>,
+    pub start_mode: PhoneMode,
+    pub start_scroll: f64,
+    pub tracker: penumbra_gestures::VelocityTracker,
+}
+
 /// Input bookkeeping for the native panel.
 pub(crate) struct InputState {
     pointer: PointerHandle<PenumbraServerState>,
@@ -70,7 +79,7 @@ pub(crate) struct InputState {
     started: std::time::Instant,
     touch: Option<TouchContact>,
     edge_gesture: Option<EdgeBackGesture>,
-    pub nav_tracker: Option<(i32, Point<f64, Logical>, penumbra_gestures::VelocityTracker)>,
+    pub nav_tracker: Option<NavTouchTracker>,
     pub power_press_time: Option<std::time::Instant>,
     pub power_dialog_triggered: bool,
     pub last_tap_time: Option<std::time::Instant>,
@@ -336,17 +345,32 @@ pub(crate) fn handle(
                 return;
             }
 
-            // Bottom navigation gesture: immediate 1:1 tracking on first pixel from nav region
-            if pos.y >= NAV_BAR_Y as f64 && server.phone_app_visible() && input.nav_tracker.is_none() {
-                let mut tracker = penumbra_gestures::VelocityTracker::new(0.8);
-                tracker.start(pos.x, pos.y, std::time::Duration::ZERO);
-                input.nav_tracker = Some((slot, pos, tracker));
-                server.nav_gesture_active = true;
-                server.nav_gesture_progress = 0.0;
-                server.nav_gesture_dy = 0.0;
-                server.nav_gesture_vy = 0.0;
-                server.nav_spring = None;
-                return;
+            // Navigation bar or Overview gesture tracking:
+            // Intercept if touching the bottom navigation area (y >= 883.0, strictly 32px navbar height)
+            // OR if already in Overview mode (where the entire screen is an interactive task switcher).
+            let is_nav_zone = pos.y >= 883.0;
+            let is_overview = server.shell_state.mode == PhoneMode::Overview;
+
+            if (is_nav_zone && (server.phone_app_visible() || is_overview || server.shell_state.mode == PhoneMode::App)) || is_overview {
+                if input.nav_tracker.is_none() {
+                    let mut tracker = penumbra_gestures::VelocityTracker::new(0.8);
+                    tracker.start(pos.x, pos.y, std::time::Duration::ZERO);
+                    input.nav_tracker = Some(NavTouchTracker {
+                        slot,
+                        start_pos: pos,
+                        start_mode: server.shell_state.mode,
+                        start_scroll: server.shell_state.overview_scroll,
+                        tracker,
+                    });
+                    if !is_overview {
+                        server.nav_gesture_active = true;
+                        server.nav_gesture_progress = 0.0;
+                        server.nav_gesture_dy = 0.0;
+                        server.nav_gesture_vy = 0.0;
+                        server.nav_spring = None;
+                    }
+                    return;
+                }
             }
 
             // Only the first finger drives the emulated pointer.
@@ -372,14 +396,49 @@ pub(crate) fn handle(
                 event.y_transformed(height),
             );
 
-            if let Some((tracked_slot, start_pos, ref mut tracker)) = input.nav_tracker {
-                if tracked_slot == slot {
+            if let Some(ref mut nav) = input.nav_tracker {
+                if nav.slot == slot {
                     let elapsed = input.started.elapsed();
-                    let (vx, vy) = tracker.update(pos.x, pos.y, elapsed);
-                    let dx = pos.x - start_pos.x;
-                    let dy = pos.y - start_pos.y;
+                    let (vx, vy) = nav.tracker.update(pos.x, pos.y, elapsed);
+                    let dx = pos.x - nav.start_pos.x;
+                    let dy = pos.y - nav.start_pos.y;
 
-                    let is_horizontal = dx.abs() > 15.0 && dx.abs() > dy.abs() * 1.1;
+                    if nav.start_mode == PhoneMode::Overview {
+                        // In Overview mode:
+                        // Case A: Downward pull gesture to restore active application to fullscreen
+                        if dy > 15.0 && dy > dx.abs() * 1.1 {
+                            server.nav_gesture_active = true;
+                            server.shell_state.is_dragging = false;
+                            server.shell_state.active_card_dy = 0.0;
+                            let denom = (PHONE_H as f64) * 0.45;
+                            let t = (1.0 - (dy / denom)).clamp(0.0, 1.05);
+                            server.nav_gesture_progress = t;
+                            server.nav_gesture_dy = dy;
+                            server.nav_gesture_vy = vy;
+                        }
+                        // Case B: Upward drag to dismiss active card
+                        else if dy < -15.0 && (-dy) > dx.abs() * 0.8 {
+                            server.nav_gesture_active = false;
+                            server.shell_state.is_dragging = true;
+                            server.shell_state.active_card_dy = dy;
+                        }
+                        // Case C: Horizontal carousel scrubbing
+                        else if dx.abs() > 8.0 {
+                            server.nav_gesture_active = false;
+                            server.shell_state.is_dragging = true;
+                            server.shell_state.active_card_dy = 0.0;
+                            let delta_cards = dx / (CARD_STEP as f64);
+                            let max_idx = server.phone_tasks.len().saturating_sub(1) as f64;
+                            let new_scroll = (nav.start_scroll + delta_cards).clamp(-0.25, max_idx + 0.25);
+                            server.shell_state.overview_scroll = new_scroll;
+                            server.shell_state.overview_index = new_scroll.round().clamp(0.0, max_idx) as usize;
+                            server.overview_scroll = new_scroll;
+                        }
+                        return;
+                    }
+
+                    // Active App mode:
+                    let is_horizontal = dx.abs() > 24.0 && dx.abs() > dy.abs() * 1.2;
                     if is_horizontal {
                         server.nav_switch_active = true;
                         server.nav_switch_dx = dx;
@@ -423,22 +482,113 @@ pub(crate) fn handle(
                 return;
             }
             let slot: i32 = event.slot().into();
-            if let Some((tracked_slot, _start_pos, tracker)) = input.nav_tracker.take() {
-                if tracked_slot == slot {
-                    let vx = tracker.velocity_x();
-                    let vy = tracker.velocity_y();
-                    let dx = server.nav_switch_dx;
+            if let Some(nav) = input.nav_tracker.take() {
+                if nav.slot == slot {
+                    let vx = nav.tracker.velocity_x();
+                    let vy = nav.tracker.velocity_y();
+                    let (last_x, last_y) = nav.tracker.last_position();
+                    let dx = last_x - nav.start_pos.x;
+                    let dy = last_y - nav.start_pos.y;
 
-                    if server.nav_switch_active || (dx.abs() > 20.0 && dx.abs() > server.nav_gesture_dy.abs() * 1.1) {
+                    if nav.start_mode == PhoneMode::Overview {
+                        // 1. If pulling down to return to fullscreen
+                        if server.nav_gesture_active {
+                            server.nav_gesture_active = false;
+                            let t = server.nav_gesture_progress;
+                            let to_fullscreen = vy > 350.0 || (vy > -200.0 && t < 0.70);
+                            let target = if to_fullscreen {
+                                penumbra_gestures::NavigationTarget::Fullscreen
+                            } else {
+                                penumbra_gestures::NavigationTarget::Overview
+                            };
+                            let target_pos = if to_fullscreen { 0.0 } else { 1.0 };
+                            let mut spring = penumbra_gestures::SpringSolver::overview();
+                            spring.reset(t);
+                            spring.set_target(target_pos);
+                            let denom = (PHONE_H as f64) * 0.45;
+                            let v_norm = if denom > 0.0 { (-vy / denom).clamp(-15.0, 15.0) } else { 0.0 };
+                            spring.set_velocity(v_norm);
+                            server.nav_spring = Some(spring);
+                            server.nav_target = Some(target);
+                            server.last_nav_spring_tick = Some(std::time::Instant::now());
+                            return;
+                        }
+
+                        // 2. If dragging carousel or swiping up to dismiss
+                        if server.shell_state.is_dragging {
+                            server.shell_state.is_dragging = false;
+                            if server.shell_state.active_card_dy < -70.0 || vy < -250.0 || dy < -70.0 {
+                                if let Some(task) = server.phone_tasks.get(server.shell_state.overview_index) {
+                                    let id = task.id;
+                                    server.close_task_by_id(id);
+                                }
+                            } else {
+                                // Horizontal settle with momentum
+                                let max_idx = server.phone_tasks.len().saturating_sub(1) as f64;
+                                let target_idx = if vx > 300.0 {
+                                    (nav.start_scroll + 1.0).clamp(0.0, max_idx)
+                                } else if vx < -300.0 {
+                                    (nav.start_scroll - 1.0).clamp(0.0, max_idx)
+                                } else {
+                                    server.shell_state.overview_scroll.round().clamp(0.0, max_idx)
+                                };
+                                server.shell_state.overview_index = target_idx as usize;
+                                server.shell_state.overview_scroll = target_idx;
+                                server.overview_scroll = target_idx;
+                            }
+                            server.shell_state.active_card_dy = 0.0;
+                            return;
+                        }
+
+                        // 3. Tap detection in Overview mode
+                        if dx.abs() < 12.0 && dy.abs() < 12.0 {
+                            let mut tapped_task_id = None;
+                            for (i, task) in server.phone_tasks.iter().enumerate() {
+                                let (cx, cy, cw, ch, _) = card_transform(
+                                    i,
+                                    server.shell_state.overview_scroll,
+                                    server.shell_state.overview_index,
+                                    0.0,
+                                );
+                                if last_x >= cx as f64
+                                    && last_x <= (cx + cw) as f64
+                                    && last_y >= cy as f64
+                                    && last_y <= (cy + ch) as f64
+                                {
+                                    tapped_task_id = Some(task.id);
+                                    break;
+                                }
+                            }
+
+                            if let Some(id) = tapped_task_id {
+                                tracing::info!(id, "Overview card tapped -> focus task");
+                                server.focus_task_by_id(id);
+                            } else {
+                                tracing::info!("Overview background tapped -> return Home");
+                                server.set_phone_home();
+                            }
+                            return;
+                        }
+
+                        // Reset overview state
+                        server.shell_state.active_card_dy = 0.0;
+                        server.shell_state.overview_scroll = server.shell_state.overview_index as f64;
+                        server.overview_scroll = server.shell_state.overview_scroll;
+                        return;
+                    }
+
+                    // Active App mode:
+                    let switch_dx = server.nav_switch_dx;
+                    if server.nav_switch_active || (switch_dx.abs() > 20.0 && switch_dx.abs() > server.nav_gesture_dy.abs() * 1.1) {
                         server.nav_switch_active = false;
-                        let target = penumbra_gestures::arbitrate_horizontal_release(dx, vx, PHONE_W as f64);
+                        let target = penumbra_gestures::arbitrate_horizontal_release(switch_dx, vx, PHONE_W as f64);
                         let target_dx = match target {
                             penumbra_gestures::NavigationTarget::NextApp => -(PHONE_W as f64),
                             penumbra_gestures::NavigationTarget::PrevApp => PHONE_W as f64,
                             _ => 0.0,
                         };
                         let mut spring = penumbra_gestures::SpringSolver::horizontal_switch();
-                        spring.reset(dx);
+                        spring.reset(switch_dx);
                         spring.set_target(target_dx);
                         spring.set_velocity(vx.clamp(-3000.0, 3000.0));
                         server.nav_switch_spring = Some(spring);
@@ -491,14 +641,16 @@ pub(crate) fn handle(
                 return;
             }
             let slot: i32 = event.slot().into();
-            if let Some((tracked_slot, _, _)) = input.nav_tracker.take() {
-                if tracked_slot == slot {
+            if let Some(nav) = input.nav_tracker.take() {
+                if nav.slot == slot {
                     server.nav_gesture_active = false;
                     server.nav_switch_active = false;
                     server.nav_gesture_progress = 0.0;
                     server.nav_switch_dx = 0.0;
                     server.nav_spring = None;
                     server.nav_switch_spring = None;
+                    server.shell_state.is_dragging = false;
+                    server.shell_state.active_card_dy = 0.0;
                     return;
                 }
             }

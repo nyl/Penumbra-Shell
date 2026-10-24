@@ -46,6 +46,8 @@ export component HomescreenWindow inherits Window {
     // Wallpaper properties
     in property <bool> has-wallpaper: false;
     in property <image> wallpaper-image;
+    in property <bool> has-blurred-wallpaper: false;
+    in property <image> wallpaper-blurred-image;
     in property <string> current-wallpaper-path: "";
     in property <[WallpaperItem]> wallpapers: [];
     in property <[FolderItem]> wallpaper-folders: [];
@@ -85,12 +87,23 @@ export component HomescreenWindow inherits Window {
     callback add-scan-folder(string);
     callback remove-scan-folder(string);
     callback rescan-wallpapers();
+    in-out property <float> drawer-progress: 0.0;
+    callback drawer-drag-delta(float);
+    callback drawer-drag-released(float);
+    callback drawer-open-requested();
+    callback drawer-close-requested();
+
     callback homescreen-pulled-down(float);
     callback homescreen-pull-released();
 
     app_surface := AppSurface {
         width: parent.width;
         height: parent.height;
+        drawer-progress <=> root.drawer-progress;
+        drawer-drag-delta(d) => { root.drawer-drag-delta(d); }
+        drawer-drag-released(v) => { root.drawer-drag-released(v); }
+        drawer-open-requested => { root.drawer-open-requested(); }
+        drawer-close-requested => { root.drawer-close-requested(); }
         active-mode <=> root.active-mode;
         active-app <=> root.active-app;
         time-text: root.time-str;
@@ -113,6 +126,8 @@ export component HomescreenWindow inherits Window {
         app-search-query <=> root.app-search-query;
         has-wallpaper: root.has-wallpaper;
         wallpaper-image: root.wallpaper-image;
+        has-blurred-wallpaper: root.has-blurred-wallpaper;
+        wallpaper-blurred-image: root.wallpaper-blurred-image;
         current-wallpaper-path: root.current-wallpaper-path;
         wallpapers: root.wallpapers;
         wallpaper-folders: root.wallpaper-folders;

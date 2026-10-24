@@ -65,6 +65,25 @@ fn resolve_app_item(id: &str, apps_list: &[InstalledApp]) -> AppItem {
     }
 }
 
+fn load_blurred_wallpaper(path: &std::path::Path) -> Option<slint::Image> {
+    let dyn_img = image::open(path).ok()?;
+    let rgb = dyn_img.into_rgb8();
+    let (orig_w, orig_h) = rgb.dimensions();
+    let down_w = (orig_w / 4).max(64);
+    let down_h = (orig_h / 4).max(64);
+    let downsampled = image::imageops::resize(
+        &rgb,
+        down_w,
+        down_h,
+        image::imageops::FilterType::Triangle,
+    );
+    let blurred = image::imageops::blur(&downsampled, 4.0);
+    let (w, h) = blurred.dimensions();
+    let raw = blurred.into_raw();
+    let buf = slint::SharedPixelBuffer::<slint::Rgb8Pixel>::clone_from_slice(&raw, w, h);
+    Some(slint::Image::from_rgb8(buf))
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let subscriber = FmtSubscriber::builder()
         .with_max_level(Level::INFO)
@@ -129,6 +148,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ui.set_has_wallpaper(true);
                     ui.set_wallpaper_image(img);
                     ui.set_current_wallpaper_path(cfg.wallpaper_path.clone().into());
+                    if let Some(blurred_img) = load_blurred_wallpaper(wp_path) {
+                        ui.set_has_blurred_wallpaper(true);
+                        ui.set_wallpaper_blurred_image(blurred_img);
+                    } else {
+                        ui.set_has_blurred_wallpaper(false);
+                    }
                     loaded = true;
                 }
             }
@@ -147,12 +172,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         ui.set_has_wallpaper(true);
                         ui.set_wallpaper_image(img);
                         ui.set_current_wallpaper_path(cand.into());
+                        if let Some(blurred_img) = load_blurred_wallpaper(p) {
+                            ui.set_has_blurred_wallpaper(true);
+                            ui.set_wallpaper_blurred_image(blurred_img);
+                        } else {
+                            ui.set_has_blurred_wallpaper(false);
+                        }
                         break;
                     }
                 }
             }
         }
     }
+    // Synchronous initial app discovery (~60ms) to guarantee apps are available on first frame
+    let discovered = discover_installed_apps();
+    info!("Synchronously loaded {} installed XDG applications", discovered.len());
+    let mut initial_slint_items = Vec::with_capacity(discovered.len());
+    for app in discovered.iter() {
+        let (has_icon, img) = if let Some(ref path) = app.icon_path {
+            match slint::Image::load_from_path(path) {
+                Ok(img) => (true, img),
+                Err(_) => (false, slint::Image::default()),
+            }
+        } else {
+            (false, slint::Image::default())
+        };
+        initial_slint_items.push(AppItem {
+            id: app.id.clone().into(),
+            name: app.name.clone().into(),
+            has_icon,
+            icon: img,
+        });
+    }
+    *apps_list.write().unwrap() = discovered;
+    ui.set_installed_apps(ModelRc::from(Rc::new(VecModel::from(initial_slint_items.clone()))));
+    let cached_all_apps = Rc::new(initial_slint_items);
 
     // Helper closure to synchronize Slint models with LayoutConfig
     let update_layout_models = {
@@ -274,53 +328,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let default_browse = std::env::var("HOME").unwrap_or_else(|_| "/home/nyl".to_string());
     ui.set_current_browse_path(default_browse.into());
 
-    // 5. Asynchronous App Discovery
-    {
-        let ui_weak = ui_weak.clone();
-        let apps_list = Arc::clone(&apps_list);
-
-        std::thread::spawn(move || {
-            let start = Instant::now();
-            let discovered = discover_installed_apps();
-            info!(
-                "Discovered {} applications in {:.2?}",
-                discovered.len(),
-                start.elapsed()
-            );
-
-            {
-                let mut list = apps_list.write().unwrap();
-                *list = discovered;
-            }
-
-            let ui_weak = ui_weak.clone();
-            let apps_list = Arc::clone(&apps_list);
-
-            let _ = slint::invoke_from_event_loop(move || {
-                if let Some(ui) = ui_weak.upgrade() {
-                    let apps = apps_list.read().unwrap();
-                    let mut slint_items = Vec::with_capacity(apps.len());
-                    for app in apps.iter() {
-                        let (has_icon, img) = if let Some(ref path) = app.icon_path {
-                            match slint::Image::load_from_path(path) {
-                                Ok(img) => (true, img),
-                                Err(_) => (false, slint::Image::default()),
-                            }
-                        } else {
-                            (false, slint::Image::default())
-                        };
-                        slint_items.push(AppItem {
-                            id: app.id.clone().into(),
-                            name: app.name.clone().into(),
-                            has_icon,
-                            icon: img,
-                        });
-                    }
-                    ui.set_installed_apps(ModelRc::new(VecModel::from(slint_items)));
-                }
-            });
-        });
-    }
+    // 5. Initial App Models Synced
 
     // 6. App Click / Launching
     {
@@ -421,9 +429,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let app_id = app_id_slint.as_str().to_string();
             let mut cfg = layout_config.borrow_mut();
 
-            let col = (((sx - 20.0) / 93.0).round() as i32).clamp(0, 3);
-            let origin_y = if page == 0 { 152.0 } else { 86.0 };
-            let row = (((sy - origin_y) / 105.0).round() as i32).clamp(0, 3);
+            let origin_y = if page == 0 { 152.0 } else { 96.0 };
+            let col = (((sx - 26.0) / 93.0).floor() as i32).clamp(0, 3);
+            let row = (((sy - origin_y) / 105.0).floor() as i32).clamp(0, 3);
 
             let existing_folder = cfg
                 .folders
@@ -633,39 +641,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
-    // 9. Search query filtering & Accepted launch
+    // 9. Search query filtering & Accepted launch (Instant In-Memory Filter)
     {
         let ui_weak = ui_weak.clone();
-        let apps_list = Arc::clone(&apps_list);
+        let cached_all_apps = Rc::clone(&cached_all_apps);
         ui.on_app_search_query_changed(move |query_slint| {
-            let query = query_slint.as_str().to_lowercase();
+            let query = query_slint.as_str().trim().to_lowercase();
             if let Some(ui) = ui_weak.upgrade() {
-                let apps = apps_list.read().unwrap();
-                let filtered: Vec<AppItem> = apps
+                let filtered: Vec<AppItem> = cached_all_apps
                     .iter()
                     .filter(|a| {
                         query.is_empty()
                             || a.name.to_lowercase().contains(&query)
                             || a.id.to_lowercase().contains(&query)
                     })
-                    .map(|app| {
-                        let (has_icon, img) = if let Some(ref path) = app.icon_path {
-                            match slint::Image::load_from_path(path) {
-                                Ok(img) => (true, img),
-                                Err(_) => (false, slint::Image::default()),
-                            }
-                        } else {
-                            (false, slint::Image::default())
-                        };
-                        AppItem {
-                            id: app.id.clone().into(),
-                            name: app.name.clone().into(),
-                            has_icon,
-                            icon: img,
-                        }
-                    })
+                    .cloned()
                     .collect();
-                ui.set_installed_apps(ModelRc::new(VecModel::from(filtered)));
+                ui.set_installed_apps(ModelRc::from(Rc::new(VecModel::from(filtered))));
             }
         });
     }
@@ -713,6 +705,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         ui.set_has_wallpaper(true);
                         ui.set_wallpaper_image(img);
                         ui.set_current_wallpaper_path(path_str.clone().into());
+                        if let Some(blurred_img) = load_blurred_wallpaper(path) {
+                            ui.set_has_blurred_wallpaper(true);
+                            ui.set_wallpaper_blurred_image(blurred_img);
+                        } else {
+                            ui.set_has_blurred_wallpaper(false);
+                        }
                     }
                     let mut cfg = layout_config.borrow_mut();
                     cfg.set_wallpaper(&path_str);
@@ -729,6 +727,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui.on_clear_wallpaper(move || {
             if let Some(ui) = ui_weak.upgrade() {
                 ui.set_has_wallpaper(false);
+                ui.set_has_blurred_wallpaper(false);
                 ui.set_current_wallpaper_path("".into());
             }
             let mut cfg = layout_config.borrow_mut();
@@ -974,12 +973,123 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
-    // 12. Periodic Task List & ShellState synchronization
+    // 12. Spring physics engine for App Drawer deployment (Fluid Material 3 dynamics)
+    // Underdamped spring-damper system matching Quick Settings: stiffness: 300.0, damping: 26.0
+    let drawer_spring = Rc::new(RefCell::new(
+        Spring::from_physics(300.0, 26.0, 1.0)
+            .with_position(0.0)
+            .with_target(0.0),
+    ));
+    let drawer_spring_timer = Rc::new(RefCell::new(Timer::default()));
+    let last_drawer_spring_time = Rc::new(RefCell::new(Instant::now()));
+
+    let animate_drawer_to = {
+        let drawer_spring = Rc::clone(&drawer_spring);
+        let drawer_spring_timer = Rc::clone(&drawer_spring_timer);
+        let last_drawer_spring_time = Rc::clone(&last_drawer_spring_time);
+        let ui_weak = ui_weak.clone();
+
+        move |target: f64, initial_vel: f64| {
+            {
+                let mut sp = drawer_spring.borrow_mut();
+                sp.target = target;
+                sp.velocity = initial_vel;
+            }
+            *last_drawer_spring_time.borrow_mut() = Instant::now();
+
+            let drawer_spring = Rc::clone(&drawer_spring);
+            let drawer_spring_timer_inner = Rc::clone(&drawer_spring_timer);
+            let last_drawer_spring_time = Rc::clone(&last_drawer_spring_time);
+            let ui_weak = ui_weak.clone();
+
+            drawer_spring_timer.borrow().start(
+                TimerMode::Repeated,
+                Duration::from_millis(16),
+                move || {
+                    let dt = {
+                        let mut t = last_drawer_spring_time.borrow_mut();
+                        let elapsed = t.elapsed().as_secs_f64().clamp(0.001, 0.05);
+                        *t = Instant::now();
+                        elapsed
+                    };
+
+                    let mut sp = drawer_spring.borrow_mut();
+                    let new_prog = sp.step(dt);
+                    let clamped = new_prog.clamp(0.0, 1.0);
+
+                    if let Some(ui) = ui_weak.upgrade() {
+                        ui.set_drawer_progress(clamped as f32);
+                    }
+
+                    if sp.snap_if_settled(0.002, 0.01) {
+                        drawer_spring_timer_inner.borrow().stop();
+                        let target = sp.target;
+                        if let Some(ui) = ui_weak.upgrade() {
+                            ui.set_drawer_progress(target as f32);
+                            ui.set_active_mode(if target > 0.5 { 2 } else { 0 });
+                        }
+                    }
+                },
+            );
+        }
+    };
+    let animate_drawer_to = Rc::new(animate_drawer_to);
+
+    {
+        let drawer_spring_timer = Rc::clone(&drawer_spring_timer);
+        let drawer_spring = Rc::clone(&drawer_spring);
+        let ui_weak = ui_weak.clone();
+        ui.on_drawer_drag_delta(move |delta_prog| {
+            drawer_spring_timer.borrow().stop();
+            if let Some(ui) = ui_weak.upgrade() {
+                let cur = ui.get_drawer_progress() as f64;
+                let new_prog = (cur + delta_prog as f64).clamp(0.0, 1.0);
+                ui.set_drawer_progress(new_prog as f32);
+                let mut sp = drawer_spring.borrow_mut();
+                sp.position = new_prog;
+                sp.velocity = 0.0;
+            }
+        });
+    }
+
+    {
+        let animate_drawer_to = Rc::clone(&animate_drawer_to);
+        let ui_weak = ui_weak.clone();
+        ui.on_drawer_drag_released(move |velocity| {
+            let cur = ui_weak.upgrade().map_or(0.0, |u| u.get_drawer_progress() as f64);
+            let vel = velocity as f64;
+            let target = if vel > 0.6 {
+                1.0
+            } else if vel < -0.6 {
+                0.0
+            } else if cur > 0.35 {
+                1.0
+            } else {
+                0.0
+            };
+            animate_drawer_to(target, vel);
+        });
+    }
+
+    {
+        let animate_drawer_to = Rc::clone(&animate_drawer_to);
+        ui.on_drawer_open_requested(move || {
+            animate_drawer_to(1.0, 1.5);
+        });
+    }
+
+    {
+        let animate_drawer_to = Rc::clone(&animate_drawer_to);
+        ui.on_drawer_close_requested(move || {
+            animate_drawer_to(0.0, -1.5);
+        });
+    }
+
+    // 13. Periodic Task List & ShellState synchronization
     let task_timer = Timer::default();
     {
         let ui_weak = ui_weak.clone();
         let apps_list = Arc::clone(&apps_list);
-        let spring_state = Rc::clone(&spring_state);
         task_timer.start(TimerMode::Repeated, Duration::from_millis(50), move || {
             let state = ShellState::load();
             if let Some(ui) = ui_weak.upgrade() {
@@ -992,8 +1102,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             0
                         }
                     }
-                    PhoneMode::Overview => 1,
-                    PhoneMode::App => 3,
+                    PhoneMode::Overview => 0,
+                    PhoneMode::App => 0,
                 };
 
                 if current_mode != target_mode {
@@ -1004,18 +1114,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ui.set_active_mode(target_mode);
                 }
 
-                if state.mode == PhoneMode::Overview {
-                    if !ui.get_is_dragging_carousel() {
-                        let cur_scroll = ui.get_overview_scroll() as f64;
-                        let target_scroll = state.overview_index as f64;
-                        if (cur_scroll - target_scroll).abs() > 0.05
-                            && spring_state.borrow().is_settled(0.01, 0.05)
-                        {
-                            ui.set_overview_index(state.overview_index as i32);
-                            ui.set_overview_scroll(state.overview_index as f32);
-                        }
-                    }
-                }
 
                 let windows = read_windows();
                 let apps = apps_list.read().unwrap();

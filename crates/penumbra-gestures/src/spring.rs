@@ -127,35 +127,35 @@ impl SpringSolver {
         }
     }
 
-    /// Android 17 (Pixel) Overview Navigation Spring preset:
+    /// Android 17 (Pixel) Overview Navigation Spring preset (Material 3 Standard):
     ///
     /// # Mathematical Formulation
-    /// - Stiffness: $k = 300.0$
-    /// - Damping: $c = 28.0$
-    /// - Mass: $m = 1.0$
-    /// - Damping ratio: $\zeta = \frac{28.0}{2\sqrt{300.0}} \approx 0.8083$ (authentic Material underdamped decay).
+    /// - Stiffness: $k = 300.0\,\text{N/m}$
+    /// - Damping ratio: $\zeta = 0.86$ (underdamped Material 3 settling without oscillation).
     pub fn overview() -> Self {
-        Self::from_physics(300.0, 28.0, 1.0)
+        Self::new(300.0, 0.86, 1.0)
     }
 
     /// Android 17 Quick Switch horizontal window cycling spring preset.
     ///
     /// Tuned for fluid lateral gliding between adjacent task cards.
-    /// - Stiffness: $k = 280.0$
-    /// - Damping: $c = 27.0$
-    /// - Mass: $m = 1.0$
+    /// - Stiffness: $k = 280.0\,\text{N/m}$
+    /// - Damping ratio: $\zeta = 0.88$
     pub fn horizontal_switch() -> Self {
-        Self::from_physics(280.0, 27.0, 1.0)
+        Self::new(280.0, 0.88, 1.0)
     }
 
-    /// Fast dismiss to Home screen spring preset ($k = 340.0, c = 29.0$).
+    /// Fast dismiss to Home screen spring preset.
+    ///
+    /// - Stiffness: $k = 360.0\,\text{N/m}$
+    /// - Damping ratio: $\zeta = 0.82$ (energetic snap into launcher icon/dock).
     pub fn home_dismiss() -> Self {
-        Self::from_physics(340.0, 29.0, 1.0)
+        Self::new(360.0, 0.82, 1.0)
     }
 
-    /// Material 3 Expressive preset ($k = 320.0, \zeta = 0.82$).
+    /// Material 3 Expressive preset ($k = 320.0, \zeta = 0.84$).
     pub fn expressive() -> Self {
-        Self::new(320.0, 0.82, 1.0)
+        Self::new(320.0, 0.84, 1.0)
     }
 
     /// Critically damped preset ($k = 300.0, \zeta = 1.0$, no overshoot).

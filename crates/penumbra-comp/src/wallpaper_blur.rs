@@ -41,6 +41,18 @@ pub struct BlurredWallpaperCache {
 }
 
 impl BlurredWallpaperCache {
+    /// Converts the cached pre-blurred pixel data into a Smithay `MemoryRenderBuffer`.
+    pub fn to_render_buffer(&self) -> smithay::backend::renderer::element::memory::MemoryRenderBuffer {
+        smithay::backend::renderer::element::memory::MemoryRenderBuffer::from_slice(
+            &self.data,
+            smithay::backend::allocator::Fourcc::Abgr8888,
+            (self.buffer_width as i32, self.buffer_height as i32),
+            1,
+            smithay::utils::Transform::Normal,
+            None,
+        )
+    }
+
     /// Locates and loads the active homescreen wallpaper, downscaling by 1/4 and
     /// applying dual-kawase blur passes.
     ///

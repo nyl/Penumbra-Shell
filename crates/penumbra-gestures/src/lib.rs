@@ -19,8 +19,8 @@ mod tests;
 
 pub use gesture_state::{
     arbitrate_horizontal_release, arbitrate_release, compute_corner_radius,
-    compute_normalized_progress, compute_scrim_alpha, compute_window_scale, GesturePhase,
-    NavigationTarget,
+    compute_home_collapse_scale, compute_normalized_progress, compute_scrim_alpha,
+    compute_window_scale, rubber_band_clamp, GesturePhase, NavigationTarget,
 };
 pub use nav::{NavGesture, NavGestureConfig, NavGestureRecognizer};
 pub use spring::{DampedHarmonicOscillator, Spring, SpringSolver};

@@ -219,29 +219,23 @@ pub fn card_x(index: usize, scroll: f64) -> i32 {
     (center - (index as f64 - scroll) * CARD_STEP as f64).round() as i32
 }
 
-/// Computes the exact (x, y, w, h, scale) transform for an overview card,
-/// applying progressive parallax scaling and vertical dismissal translation.
+/// Computes the exact (x, y, w, h, scale) transform for an overview card.
+/// All cards render at the same OVERVIEW_SCALE (flat Material 3 layout, no 3D parallax).
 pub fn card_transform(
     index: usize,
     scroll: f64,
-    active_index: usize,
+    _active_index: usize,
     active_card_dy: f64,
 ) -> (i32, i32, i32, i32, f64) {
     let dist = (index as f64) - scroll;
-    let abs_dist = dist.abs();
-    // Parallax progressive scaling: Center 1.0, Left/Right neighbors 0.90, Outer cards down to 0.82
-    let card_scale = if abs_dist <= 1.0 {
-        1.0 - (abs_dist * 0.10)
-    } else {
-        (0.90 - ((abs_dist - 1.0) * 0.08)).max(0.82)
-    };
-    let scale = OVERVIEW_SCALE * card_scale;
-    let w = (CARD_W as f64 * card_scale).round() as i32;
-    let h = (CARD_H as f64 * card_scale).round() as i32;
+    // Flat uniform scale — no fake 3D depth effect.
+    let scale = OVERVIEW_SCALE;
+    let w = CARD_W;
+    let h = CARD_H;
     let base_centered_x = ((PHONE_W - w) / 2) as f64;
     let target_x = base_centered_x - (dist * CARD_STEP as f64);
     let x = target_x.round() as i32;
-    let dy = if index == active_index {
+    let dy = if index == scroll.round() as usize {
         active_card_dy
     } else {
         0.0
@@ -369,4 +363,42 @@ mod tests {
         let scale = native_output_scale((1080, 1000), (412, 915));
         assert_eq!(letterbox_offset((1080, 1000), (412, 915), scale), (288, 0));
     }
+
+    #[test]
+    fn test_resolve_app_icon_target() {
+        assert_eq!(resolve_app_icon_target("org.gnome.Calls"), (75, 820));
+        assert_eq!(resolve_app_icon_target("sm.puri.Chatty"), (162, 820));
+        assert_eq!(resolve_app_icon_target("org.gnome.Epiphany"), (249, 820));
+        assert_eq!(resolve_app_icon_target("org.gnome.Console"), (336, 820));
+        // Fallback to dock center
+        assert_eq!(resolve_app_icon_target("org.random.UnknownApp"), (206, 820));
+    }
+}
+
+/// Resolves destination icon center coordinate $(X, Y)$ on the homescreen for App-to-Home dismiss.
+///
+/// Matches known dock positions, or falls back to dock center $(206, 820)$.
+pub fn resolve_app_icon_target(app_id: &str) -> (i32, i32) {
+    let dock_apps = [
+        "org.gnome.Calls",
+        "sm.puri.Chatty",
+        "org.gnome.Epiphany",
+        "org.gnome.Console",
+    ];
+    let dock_xs = [75, 162, 249, 336];
+    let dock_y = 820;
+
+    for (i, &dock_id) in dock_apps.iter().enumerate() {
+        if app_id.eq_ignore_ascii_case(dock_id)
+            || app_id.to_lowercase().contains(&dock_id.to_lowercase())
+            || (dock_id.contains("Calls") && app_id.to_lowercase().contains("call"))
+            || (dock_id.contains("Chatty") && app_id.to_lowercase().contains("chatt"))
+            || (dock_id.contains("Epiphany") && (app_id.to_lowercase().contains("browser") || app_id.to_lowercase().contains("epiphany")))
+            || (dock_id.contains("Console") && (app_id.to_lowercase().contains("terminal") || app_id.to_lowercase().contains("console")))
+        {
+            return (dock_xs[i], dock_y);
+        }
+    }
+
+    (206, 820)
 }

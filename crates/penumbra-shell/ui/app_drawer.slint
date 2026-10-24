@@ -37,23 +37,25 @@ export component DrawerAppTile inherits Rectangle {
         alignment: center;
         spacing: 6px;
 
-        // Squircle Icon Container
+        // Material 3 Expressive Squircle Container
         Rectangle {
-            width: 56px;
-            height: 56px;
-            border-radius: 18px;
-            background: #2b2832;
-            border-width: 1px;
-            border-color: #ffffff14;
+            width: (root.is-down && !root.is-dragging) ? 52px : 56px;
+            height: (root.is-down && !root.is-dragging) ? 52px : 56px;
+            border-radius: 20px;
+            background: (root.is-down && !root.is-dragging) ? #2e2a37 : #221f28;
+            border-width: 0px;
             clip: true;
             x: (parent.width - self.width) / 2;
 
+            animate width, height { duration: 110ms; easing: cubic-bezier(0.2, 0.9, 0.3, 1.0); }
+            animate background { duration: 110ms; easing: ease-out; }
+
             if root.app.has-icon: Image {
                 source: root.app.icon;
-                width: 40px;
-                height: 40px;
-                x: 8px;
-                y: 8px;
+                width: parent.width * 0.72;
+                height: parent.height * 0.72;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
             }
 
             if !root.app.has-icon: Text {
@@ -67,7 +69,7 @@ export component DrawerAppTile inherits Rectangle {
         Text {
             text: root.app.name;
             color: #e6e0e9;
-            font-size: 11px;
+            font-size: 11.5px;
             font-weight: 500;
             horizontal-alignment: center;
             overflow: elide;
@@ -118,6 +120,7 @@ export component DrawerAppTile inherits Rectangle {
 export component AppDrawer inherits Rectangle {
     in property <[AppItem]> installed-apps: [];
     in property <bool> is-open: false;
+    in property <float> drawer-progress: 1.0;
     in-out property <string> search-query: "";
 
     callback app-clicked(string);
@@ -127,91 +130,107 @@ export component AppDrawer inherits Rectangle {
     callback drag-moved(length, length);
     callback drag-ended(string, length, length);
     callback close-requested();
+    callback drawer-drag-delta(float);
+    callback drawer-drag-released(float);
+
+    changed search-query => {
+        root.search-query-changed(self.search-query);
+    }
 
     width: 100%;
     height: 100%;
-    background: #0E0C12F8;
+    background: #131118;
+    border-top-left-radius: 28px;
+    border-top-right-radius: 28px;
     clip: true;
 
-    // Swipe-down detector to dismiss App Drawer
-    drawer-bg-ta := TouchArea {
-        property <float> start-y: 0.0;
-        property <bool> is-active: false;
-
-        pointer-event(event) => {
-            if (event.kind == PointerEventKind.down) {
-                self.start-y = drawer-bg-ta.mouse-y / 1px;
-                self.is-active = true;
-            } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
-                if (self.is-active) {
-                    self.is-active = false;
-                    let dy = (drawer-bg-ta.mouse-y / 1px) - self.start-y;
-                    if (dy > 30.0) {
-                        search-input.text = "";
-                        root.search-query = "";
-                        root.search-query-changed("");
-                        root.close-requested();
-                    }
-                }
-            }
-        }
-    }
-
     VerticalLayout {
-        padding-top: 52px;
-        padding-bottom: 48px;
+        padding-top: 8px;
+        padding-bottom: 40px;
         padding-left: 20px;
         padding-right: 20px;
-        spacing: 16px;
+        spacing: 12px;
         alignment: start;
 
-        // Top Dismiss Handle
-        HorizontalLayout {
-            alignment: center;
+        // Top Material 3 Expressive Drag / Dismiss Handle (Touch enabled for smooth 1:1 pull down)
+        Rectangle {
+            height: 38px;
+            background: transparent;
 
             Rectangle {
-                width: 44px;
+                width: 48px;
                 height: 5px;
                 border-radius: 2.5px;
-                background: Theme.outline-variant;
+                background: #79747e;
+                x: (parent.width - self.width) / 2;
+                y: 12px;
+            }
 
-                TouchArea {
-                    clicked => {
-                        search-input.text = "";
-                        root.search-query = "";
-                        root.search-query-changed("");
-                        root.close-requested();
+            handle-touch := TouchArea {
+                property <float> last-screen-y: 0.0;
+                property <float> velocity: 0.0;
+                property <float> total-drag: 0.0;
+                property <bool> is-down: false;
+
+                pointer-event(event) => {
+                    // Absolute screen Y accounting for parent drawer sheet vertical position
+                    let cur-screen-y = 42.0 + (1.0 - root.drawer-progress) * 873.0 + (handle-touch.mouse-y / 1px);
+                    if (event.kind == PointerEventKind.down) {
+                        self.last-screen-y = cur-screen-y;
+                        self.velocity = 0.0;
+                        self.total-drag = 0.0;
+                        self.is-down = true;
+                    } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
+                        if (self.is-down) {
+                            self.is-down = false;
+                            if (self.total-drag < 12.0) {
+                                root.close-requested();
+                            } else {
+                                root.drawer-drag-released(self.velocity);
+                            }
+                        }
+                    }
+                }
+
+                moved => {
+                    if (self.is-down) {
+                        let cur-screen-y = 42.0 + (1.0 - root.drawer-progress) * 873.0 + (handle-touch.mouse-y / 1px);
+                        let delta = cur-screen-y - self.last-screen-y;
+                        self.total-drag = self.total-drag + Math.abs(delta);
+                        self.velocity = self.velocity * 0.6 + ((-delta / 873.0) / 0.016) * 0.4;
+                        self.last-screen-y = cur-screen-y;
+                        root.drawer-drag-delta(-delta / 873.0);
                     }
                 }
             }
         }
 
-        // Top Search Bar Pill
+        // Top Search Bar Pill (Material 3 Expressive - no G, live app filter)
         Rectangle {
-            height: 50px;
-            border-radius: Theme.radius-pill;
-            background: #2b2930b3; // Subtle translucent tint (70% alpha)
+            height: 52px;
+            border-radius: 26px;
+            background: #201d26;
             border-width: 1px;
-            border-color: search-input.has-focus ? Theme.primary : #ffffff18;
+            border-color: search-input.has-focus ? Theme.primary : #2e2a36;
 
             animate border-color { duration: 150ms; }
 
             HorizontalLayout {
                 padding-left: 18px;
                 padding-right: 14px;
-                spacing: 10px;
+                spacing: 12px;
                 alignment: space-between;
 
                 // Left: Search Icon + Text Input
                 HorizontalLayout {
-                    spacing: 10px;
+                    spacing: 12px;
                     alignment: center;
                     horizontal-stretch: 1;
 
                     Text {
                         text: "🔍";
                         font-size: 16px;
-                        color: search-input.has-focus ? Theme.primary : #e6e0e9;
+                        color: #a09cb0;
                         vertical-alignment: center;
                     }
 
@@ -228,7 +247,7 @@ export component AppDrawer inherits Rectangle {
                             height: 100%;
                             text: "Search apps...";
                             font-size: Theme.font-label;
-                            color: #cac4d0;
+                            color: #a09cb0;
                             vertical-alignment: center;
                         }
 

@@ -30,7 +30,7 @@ use smithay::{
         rustix::fs::OFlags,
         wayland_server::{Client, Display, ListeningSocket},
     },
-    utils::{DeviceFd, Physical, Rectangle, Size, Transform},
+    utils::{DeviceFd, Logical, Physical, Point, Rectangle, Size, Transform},
     wayland::{
         compositor::CompositorState,
         output::OutputManagerState,
@@ -46,14 +46,15 @@ use smithay::{
 use crate::{
     native_input::{self, InputState},
     phone::{
-        self, card_transform, runtime_path, write_atomic, PhoneMode, ShellState, APP_H, APP_Y,
-        PHONE_H, PHONE_W,
+        self, card_transform, resolve_app_icon_target, runtime_path, write_atomic, PhoneMode,
+        ShellState, APP_H, APP_Y, CARD_H, PHONE_H, PHONE_W,
     },
     server::{
         cropped, send_frames_surface_tree, surface_elements, ClientState, PenumbraCompositor,
         PenumbraServerState, SurfaceElement,
     },
 };
+use penumbra_gestures::compute_home_collapse_scale;
 
 type NativeSurface = GbmBufferedSurface<GbmAllocator<DrmDeviceFd>, ()>;
 
@@ -152,17 +153,24 @@ fn app_elements(
     let phone_clip = canvas.rect(0, 0, PHONE_W, PHONE_H);
     let switch_dx = server.nav_switch_dx;
 
-    if switch_dx.abs() > 0.5 {
-        // Horizontal Quick Switch: render active and adjacent task sliding laterally
-        let cur_x = switch_dx.round() as i32;
-        let cur_scale = (1.0 - (switch_dx.abs() / (PHONE_W as f64 * 3.0))).clamp(0.92, 1.0);
+    if server.nav_switch_active || server.nav_switch_spring.is_some() || switch_dx.abs() > 0.5 {
+        // Quick Switch: 0.94x subtle card scale, 16px inter-card gutter
+        let cur_scale = if server.nav_switch_spring.is_none() && !server.nav_switch_active {
+            1.0
+        } else {
+            (1.0 - (switch_dx.abs() / (PHONE_W as f64 * 4.0))).clamp(0.94, 1.0)
+        };
+        let cur_w = (PHONE_W as f64 * cur_scale).round() as i32;
+        let cur_h = (APP_H as f64 * cur_scale).round() as i32;
+        let cur_y = APP_Y + (APP_H - cur_h) / 2;
+        let cur_x = (switch_dx + ((PHONE_W - cur_w) / 2) as f64).round() as i32;
         let draw_scale = cur_scale * canvas.scale;
 
         if let Some(cur_surface) = server.active_phone_surface() {
-            let rect = canvas.rect(cur_x, APP_Y, PHONE_W, APP_H);
+            let rect = canvas.rect(cur_x, cur_y, cur_w, cur_h);
             if let Some(clip) = rect.intersection(phone_clip) {
                 elements.extend(cropped(
-                    surface_elements(renderer, &cur_surface, canvas.loc(cur_x, APP_Y), draw_scale),
+                    surface_elements(renderer, &cur_surface, canvas.loc(cur_x, cur_y), draw_scale),
                     clip,
                 ));
             }
@@ -170,28 +178,28 @@ fn app_elements(
 
         if server.phone_tasks.len() > 1 {
             if switch_dx > 0.0 {
-                // Dragging right -> previous task enters from left
+                // Dragging right -> previous task enters from left with 16px gutter
                 if let Some(prev_task) = server.phone_tasks.last() {
                     if let Some(toplevel) = prev_task.window.toplevel() {
-                        let prev_x = (switch_dx - PHONE_W as f64).round() as i32;
-                        let rect = canvas.rect(prev_x, APP_Y, PHONE_W, APP_H);
+                        let prev_x = cur_x - cur_w - 16;
+                        let rect = canvas.rect(prev_x, cur_y, cur_w, cur_h);
                         if let Some(clip) = rect.intersection(phone_clip) {
                             elements.extend(cropped(
-                                surface_elements(renderer, toplevel.wl_surface(), canvas.loc(prev_x, APP_Y), draw_scale),
+                                surface_elements(renderer, toplevel.wl_surface(), canvas.loc(prev_x, cur_y), draw_scale),
                                 clip,
                             ));
                         }
                     }
                 }
             } else {
-                // Dragging left -> next task enters from right
+                // Dragging left -> next task enters from right with 16px gutter
                 if let Some(next_task) = server.phone_tasks.get(1) {
                     if let Some(toplevel) = next_task.window.toplevel() {
-                        let next_x = (switch_dx + PHONE_W as f64).round() as i32;
-                        let rect = canvas.rect(next_x, APP_Y, PHONE_W, APP_H);
+                        let next_x = cur_x + cur_w + 16;
+                        let rect = canvas.rect(next_x, cur_y, cur_w, cur_h);
                         if let Some(clip) = rect.intersection(phone_clip) {
                             elements.extend(cropped(
-                                surface_elements(renderer, toplevel.wl_surface(), canvas.loc(next_x, APP_Y), draw_scale),
+                                surface_elements(renderer, toplevel.wl_surface(), canvas.loc(next_x, cur_y), draw_scale),
                                 clip,
                             ));
                         }
@@ -214,42 +222,76 @@ fn app_elements(
 
     if nav_progress > 0.001 {
         if server.nav_target == Some(penumbra_gestures::NavigationTarget::Home) {
-            // Dismiss to home: shrink smoothly into homescreen launcher
-            let scale_factor = (1.0 - nav_progress * 0.75).max(0.15);
+            // Dismiss to home: track and collapse window into target icon coordinate
+            let active_app_id = server.phone_tasks.first().map(|t| t.app_id()).unwrap_or_default();
+            let (target_icon_x, target_icon_y) = resolve_app_icon_target(&active_app_id);
+            let t = nav_progress.clamp(0.0, 1.0);
+            let scale_factor = compute_home_collapse_scale(t);
             let w = (PHONE_W as f64 * scale_factor).round() as i32;
             let h = (APP_H as f64 * scale_factor).round() as i32;
-            let x = ((PHONE_W - w) / 2).max(0);
-            let target_y = (APP_Y as f64 + (APP_H as f64 * 0.35)).round() as i32;
-            let y = (APP_Y as f64 * (1.0 - nav_progress) + target_y as f64 * nav_progress).round() as i32;
+
+            let initial_cx = (PHONE_W as f64) / 2.0;
+            let initial_cy = (APP_Y as f64) + (APP_H as f64) / 2.0;
+            let cx = initial_cx * (1.0 - t) + (target_icon_x as f64) * t;
+            let cy = initial_cy * (1.0 - t) + (target_icon_y as f64) * t;
+
+            let x = (cx - (w as f64) / 2.0).round() as i32;
+            let y = (cy - (h as f64) / 2.0).round() as i32;
 
             let draw_scale = scale_factor * canvas.scale;
             let card_clip = canvas.rect(x, y, w, h);
-            cropped(
-                surface_elements(renderer, &surface, canvas.loc(x, y), draw_scale),
-                card_clip,
-            )
+            if let Some(clip) = card_clip.intersection(phone_clip) {
+                elements.extend(cropped(
+                    surface_elements(renderer, &surface, canvas.loc(x, y), draw_scale),
+                    clip,
+                ));
+            }
         } else {
-            // Overview card transform: scale to 0.68, center at y = 172
+            // Overview card transform: scale to 0.78, center at y = 129.5
             let scale_factor = penumbra_gestures::compute_window_scale(nav_progress);
             let w = (PHONE_W as f64 * scale_factor).round() as i32;
             let h = (APP_H as f64 * scale_factor).round() as i32;
             let x = ((PHONE_W - w) / 2).max(0);
-            let target_y = 172.0;
+            let target_y = ((PHONE_H - CARD_H) / 2) as f64;
             let y = (APP_Y as f64 * (1.0 - nav_progress) + target_y * nav_progress).round() as i32;
 
             let draw_scale = scale_factor * canvas.scale;
             let card_clip = canvas.rect(x, y, w, h);
-            cropped(
-                surface_elements(renderer, &surface, canvas.loc(x, y), draw_scale),
-                card_clip,
-            )
+            if let Some(clip) = card_clip.intersection(phone_clip) {
+                elements.extend(cropped(
+                    surface_elements(renderer, &surface, canvas.loc(x, y), draw_scale),
+                    clip,
+                ));
+            }
+
+            // Adjacent cards peek into viewport when nav_progress > 0.20 (finger above dock area)
+            if nav_progress > 0.20 && server.phone_tasks.len() > 1 {
+                let p_peek = ((nav_progress - 0.20) / 0.80).clamp(0.0, 1.0);
+                if let Some(prev_task) = server.phone_tasks.get(1) {
+                    if let Some(toplevel) = prev_task.window.toplevel() {
+                        let (dest_x, dest_y, dest_w, dest_h, card_scale) =
+                            card_transform(1, 0.0, 0, 0.0);
+                        let start_x = -dest_w - 60;
+                        let peek_x = (start_x as f64 * (1.0 - p_peek) + dest_x as f64 * p_peek).round() as i32;
+                        let peek_clip = canvas.rect(peek_x, dest_y, dest_w, dest_h);
+                        if let Some(clip) = peek_clip.intersection(phone_clip) {
+                            let draw_scale = card_scale * canvas.scale;
+                            elements.extend(cropped(
+                                surface_elements(renderer, toplevel.wl_surface(), canvas.loc(peek_x, dest_y), draw_scale),
+                                clip,
+                            ));
+                        }
+                    }
+                }
+            }
         }
     } else {
-        cropped(
+        elements.extend(cropped(
             surface_elements(renderer, &surface, canvas.loc(0, APP_Y), canvas.scale),
             canvas.rect(0, APP_Y, PHONE_W, APP_H),
-        )
+        ));
     }
+    elements
 }
 
 /// Overview carousel cards, clipped to the phone canvas.
@@ -311,34 +353,31 @@ fn render_frame(state: &mut NativeState, buffer: &mut Dmabuf) -> Result<(), Box<
     let background = layer_elements(renderer, &server.output_a, canvas, Layer::Background);
     let bottom = layer_elements(renderer, &server.output_a, canvas, Layer::Bottom);
 
-    // Phone Layer 0.5: Dimming Scrim (#0b0a0e, max 45% alpha) modulated by gesture progress
+    // Phone Layer 0.5: Dual-Kawase Blurred Wallpaper & Dimming Scrim modulated by gesture progress
     let nav_progress = if server.is_nav_animating() {
         server.nav_gesture_progress
+    } else if server.shell_state.mode == PhoneMode::Overview {
+        1.0
     } else {
         0.0
     };
-    let scrim: Vec<smithay::backend::renderer::element::solid::SolidColorRenderElement> = if nav_progress > 0.001 {
-        let max_scrim = if server.nav_target == Some(penumbra_gestures::NavigationTarget::Home) {
-            0.25 * (1.0 - nav_progress).max(0.0)
-        } else {
-            penumbra_gestures::compute_scrim_alpha(nav_progress)
-        };
-        let scrim_alpha = max_scrim as f32;
-        if scrim_alpha > 0.001 {
-            let scrim_buf = smithay::backend::renderer::element::solid::SolidColorBuffer::new(
-                (PHONE_W, PHONE_H),
-                Color32F::new(0.0431, 0.0392, 0.0549, scrim_alpha),
-            );
-            smithay::backend::renderer::element::AsRenderElements::<GlesRenderer>::render_elements(
-                &scrim_buf,
-                renderer,
-                canvas.loc(0, 0).into(),
-                smithay::utils::Scale::from(canvas.scale),
-                1.0,
-            )
-        } else {
-            Vec::new()
-        }
+
+    // Blurred wallpaper overlay is disabled during swiping to maintain crisp background and eliminate tear artifacts
+    let blurred_bg: Vec<smithay::backend::renderer::element::memory::MemoryRenderBufferRenderElement<GlesRenderer>> = Vec::new();
+
+    let scrim: Vec<smithay::backend::renderer::element::solid::SolidColorRenderElement> = if server.shell_state.mode == PhoneMode::Overview {
+        let scrim_alpha = 0.22f32;
+        let scrim_buf = smithay::backend::renderer::element::solid::SolidColorBuffer::new(
+            (PHONE_W, PHONE_H),
+            Color32F::new(0.0431, 0.0392, 0.0549, scrim_alpha),
+        );
+        smithay::backend::renderer::element::AsRenderElements::<GlesRenderer>::render_elements(
+            &scrim_buf,
+            renderer,
+            canvas.loc(0, 0).into(),
+            smithay::utils::Scale::from(canvas.scale),
+            1.0,
+        )
     } else {
         Vec::new()
     };
@@ -347,6 +386,9 @@ fn render_frame(state: &mut NativeState, buffer: &mut Dmabuf) -> Result<(), Box<
     let apps = app_elements(renderer, server, canvas);
     // Phone Layer 2: overview carousel thumbnails.
     let overview = overview_elements(renderer, server, canvas);
+
+    // (Card corner masks removed — they were causing UI breakage. Flat card rendering is used instead.)
+
     // Phone Layer 3: status bar and nav bar.
     let top = layer_elements(renderer, &server.output_a, canvas, Layer::Top);
     // Quick settings, Power dialog, and Volume modal sit on the Overlay layer.
@@ -366,6 +408,9 @@ fn render_frame(state: &mut NativeState, buffer: &mut Dmabuf) -> Result<(), Box<
     frame.clear(Color32F::new(0.02, 0.02, 0.03, 1.0), &[damage])?;
     draw_render_elements(&mut frame, scale, &background, &[damage])?;
     draw_render_elements(&mut frame, scale, &bottom, &[damage])?;
+    if !blurred_bg.is_empty() {
+        draw_render_elements::<GlesRenderer, _, _>(&mut frame, scale, &blurred_bg, &[damage])?;
+    }
     if !scrim.is_empty() {
         draw_render_elements::<GlesRenderer, _, _>(&mut frame, scale, &scrim, &[damage])?;
     }
@@ -373,6 +418,7 @@ fn render_frame(state: &mut NativeState, buffer: &mut Dmabuf) -> Result<(), Box<
     for (card_scale, card) in &overview {
         draw_render_elements(&mut frame, *card_scale, card, &[damage])?;
     }
+
     draw_render_elements(&mut frame, scale, &top, &[damage])?;
     draw_render_elements(&mut frame, scale, &overlay, &[damage])?;
     frame.finish()?.wait()?;
@@ -554,11 +600,23 @@ pub fn run(_compositor: &mut PenumbraCompositor) -> Result<(), Box<dyn Error>> {
         nav_switch_spring: None,
         nav_switch_target: None,
         last_nav_spring_tick: None,
-        blurred_wallpaper: Some(crate::wallpaper_blur::BlurredWallpaperCache::load_and_blur(
-            None,
-            phone::PHONE_W,
-            phone::PHONE_H,
-        )),
+        blurred_wallpaper: {
+            let cache = crate::wallpaper_blur::BlurredWallpaperCache::load_and_blur(
+                None,
+                phone::PHONE_W,
+                phone::PHONE_H,
+            );
+            Some(cache)
+        },
+        blurred_wallpaper_buffer: {
+            let cache = crate::wallpaper_blur::BlurredWallpaperCache::load_and_blur(
+                None,
+                phone::PHONE_W,
+                phone::PHONE_H,
+            );
+            Some(cache.to_render_buffer())
+        },
+        card_corner_masks: crate::card_rounding::CardCornerMasks::default(),
     };
     let _ = std::fs::remove_file(runtime_path(phone::SHELL_STATE_FILE));
     let _ = std::fs::remove_file(runtime_path(phone::SHELL_CMD_FILE));

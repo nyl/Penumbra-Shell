@@ -91,6 +91,8 @@ export component AppSurface inherits Rectangle {
     // Wallpaper properties
     in property <bool> has-wallpaper: false;
     in property <image> wallpaper-image;
+    in property <bool> has-blurred-wallpaper: false;
+    in property <image> wallpaper-blurred-image;
     in property <string> current-wallpaper-path: "";
     in property <[WallpaperItem]> wallpapers: [];
     in property <[FolderItem]> wallpaper-folders: [];
@@ -99,6 +101,23 @@ export component AppSurface inherits Rectangle {
 
     in-out property <bool> show-context-menu: false;
     in-out property <bool> show-wallpaper-picker: false;
+
+    // Multi-page sliding workspace state (Continuous physics)
+    in-out property <float> page-scroll: root.current-page * 1.0;
+    property <bool> is-dragging-pages: false;
+
+    animate page-scroll {
+        duration: is-dragging-pages ? 0ms : 280ms;
+        easing: cubic-bezier(0.18, 0.9, 0.25, 1.0);
+    }
+
+    // App Drawer pull-up gesture state (Continuous physics driven by Spring engine)
+    in-out property <float> drawer-progress: root.active-mode == 2 ? 1.0 : 0.0;
+
+    callback drawer-drag-delta(float);
+    callback drawer-drag-released(float);
+    callback drawer-open-requested();
+    callback drawer-close-requested();
 
     callback select-wallpaper(string);
     callback clear-wallpaper();
@@ -110,7 +129,7 @@ export component AppSurface inherits Rectangle {
     background: Theme.base-surface;
     clip: true;
 
-    // Active Wallpaper rendering
+    // Active Crisp Wallpaper rendering
     if root.has-wallpaper: Image {
         x: 0px;
         y: 0px;
@@ -120,13 +139,25 @@ export component AppSurface inherits Rectangle {
         image-fit: cover;
     }
 
-    // Scrim overlay to ensure contrast and readability of text and icons
-    if root.has-wallpaper: Rectangle {
+    // Progressive Blurred Wallpaper rendering (opacity modulated by drawer-progress!)
+    if root.has-wallpaper && root.has-blurred-wallpaper: Image {
         x: 0px;
         y: 0px;
         width: parent.width;
         height: parent.height;
-        background: #00000030;
+        source: root.wallpaper-blurred-image;
+        image-fit: cover;
+        opacity: root.is-dragging-app ? 0.0 : root.drawer-progress;
+    }
+
+    // Material 3 Expressive Scrim overlay (progressively darkens as drawer pulls up)
+    Rectangle {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        background: #000000;
+        opacity: root.is-dragging-app ? 0.15 : (root.has-wallpaper ? (0.20 + (root.drawer-progress * 0.65)) : (root.drawer-progress * 0.85));
     }
 
     // Ambient Iris Glow in the background (when no wallpaper is set)
@@ -137,6 +168,7 @@ export component AppSurface inherits Rectangle {
         height: 320px;
         border-radius: 160px;
         background: #25407026;
+        opacity: Math.clamp(1.0 - root.drawer-progress, 0.0, 1.0);
     }
 
     // Edge Dwell Timer for dragging apps across homescreen pages (Android Workspace behavior)
@@ -159,6 +191,7 @@ export component AppSurface inherits Rectangle {
                         root.dwell-ticks = 0;
                         if (root.current-page < 4) { // Max 5 pages (0..4)
                             root.current-page += 1;
+                            root.page-scroll = root.current-page;
                             if (root.current-page >= root.num-pages) {
                                 root.num-pages = root.current-page + 1;
                             }
@@ -174,6 +207,7 @@ export component AppSurface inherits Rectangle {
                     if (root.dwell-ticks >= 5) {
                         root.dwell-ticks = 0;
                         root.current-page -= 1;
+                        root.page-scroll = root.current-page;
                     }
                 } else {
                     root.dwell-direction = -1;
@@ -189,18 +223,22 @@ export component AppSurface inherits Rectangle {
     // =========================================================================
     // MODE 0: MULTI-PAGE HOMESCREEN WORKSPACE (Material 3 Expressive)
     // =========================================================================
-    if root.active-mode == 0 || root.active-mode == 2: Rectangle {
+    homescreen-workspace := Rectangle {
         x: 0px;
         y: 0px;
         width: parent.width;
         height: parent.height;
+        // As App Drawer is pulled up, homescreen content progressively fades and recedes, but reveals 100% during app drag
+        opacity: root.is-dragging-app ? 1.0 : Math.clamp(1.0 - (root.drawer-progress * 1.6), 0.0, 1.0);
+        visible: (root.is-dragging-app || self.opacity > 0.01) && (root.active-mode == 0 || root.active-mode == 2);
 
         // Background gesture listener:
-        // - Swiping UP opens App Drawer
-        // - Swiping LEFT/RIGHT navigates between homescreen pages
+        // - Dragging UP pulls up App Drawer interactively with 1:1 finger tracking
+        // - Dragging DOWN pulls down Quick Settings
+        // - Dragging LEFT/RIGHT smoothly scrolls between homescreen pages with spring physics
         // - Tap and Hold (450ms) opens Android-style Homescreen Context Menu
         // - Tap exits edit mode
-        if root.active-mode == 0 && !root.is-folder-open && !root.is-dragging-app: TouchArea {
+        if !root.is-folder-open && !root.is-dragging-app: TouchArea {
             x: 0px;
             y: 0px;
             width: parent.width;
@@ -208,128 +246,200 @@ export component AppSurface inherits Rectangle {
 
             property <float> start-x: 0.0;
             property <float> start-y: 0.0;
-            property <bool> is-active: false;
-            property <bool> is-pulling-down: false;
+            property <float> start-page-scroll: 0.0;
+            property <bool> is-down: false;
+            property <int> drag-gesture: 0; // 0: none/evaluating, 1: horizontal page, 2: drawer pull-up, 3: quick settings pull-down
             property <bool> hold-triggered: false;
 
             hold-timer := Timer {
                 interval: 450ms;
                 running: false;
                 triggered => {
-                    if (is-active && !hold-triggered && !root.is-dragging-app && !is-pulling-down) {
+                    if (is-down && !hold-triggered && drag-gesture == 0 && !root.is-dragging-app && root.active-mode == 0) {
                         hold-triggered = true;
                         root.show-context-menu = true;
                     }
                 }
             }
 
+            property <float> last-drawer-y: 0.0;
+            property <float> drawer-drag-velocity: 0.0;
+
             pointer-event(event) => {
                 if (event.kind == PointerEventKind.down) {
                     self.start-x = self.mouse-x / 1px;
                     self.start-y = self.mouse-y / 1px;
-                    self.is-active = true;
-                    self.is-pulling-down = false;
+                    self.last-drawer-y = self.mouse-y / 1px;
+                    self.drawer-drag-velocity = 0.0;
+                    self.start-page-scroll = root.page-scroll;
+                    self.is-down = true;
+                    self.drag-gesture = 0;
                     self.hold-triggered = false;
                     hold-timer.running = true;
-                } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
-                    hold-timer.running = false;
-                    if (self.is-active && !self.hold-triggered) {
-                        self.is-active = false;
+                } else if (event.kind == PointerEventKind.move) {
+                    if (self.is-down) {
                         let dx = (self.mouse-x / 1px) - self.start-x;
-                        let dy = self.start-y - (self.mouse-y / 1px);
-                        let pull-dy = (self.mouse-y / 1px) - self.start-y;
+                        let dy = (self.mouse-y / 1px) - self.start-y;
 
-                        if (self.is-pulling-down || (pull-dy > 25.0 && pull-dy > Math.abs(dx))) {
-                            root.homescreen-pull-released();
-                        } else if (dy > 30.0 && Math.abs(dy) > Math.abs(dx)) {
-                            root.active-mode = 2; // Swipe UP -> Open App Drawer
-                        } else if (dx < -40.0 && Math.abs(dx) > Math.abs(dy)) {
-                            // Swipe LEFT -> next page
-                            if (root.current-page < root.num-pages - 1) {
-                                root.current-page += 1;
+                        if (Math.abs(dx) > 10.0 || Math.abs(dy) > 10.0) {
+                            hold-timer.running = false;
+                        }
+
+                        // Determine gesture mode if not locked
+                        if (self.drag-gesture == 0) {
+                            if (root.active-mode == 0 && Math.abs(dx) > 12.0 && Math.abs(dx) > Math.abs(dy) * 1.1) {
+                                self.drag-gesture = 1; // Horizontal page scrolling
+                                root.is-dragging-pages = true;
+                            } else if (dy < -12.0 && Math.abs(dy) > Math.abs(dx) * 1.1) {
+                                self.drag-gesture = 2; // Pulling UP App Drawer
+                            } else if (root.active-mode == 0 && dy > 12.0 && dy > Math.abs(dx) * 1.1) {
+                                self.drag-gesture = 3; // Pulling DOWN Quick Settings
                             }
-                        } else if (dx > 40.0 && Math.abs(dx) > Math.abs(dy)) {
-                            // Swipe RIGHT -> previous page
-                            if (root.current-page > 0) {
-                                root.current-page -= 1;
-                            }
-                        } else if (Math.abs(dx) < 15.0 && Math.abs(dy) < 15.0 && root.is-editing) {
-                            root.is-editing = false; // Tap background -> exit edit mode
+                        }
+
+                        if (self.drag-gesture == 1) {
+                            // Drag pages interactively: swiping left (dx < 0) advances to next page
+                            let delta-pages = dx / 380.0;
+                            let max-page = Math.max(0.0, (root.num-pages - 1) * 1.0);
+                            root.page-scroll = Math.clamp(self.start-page-scroll - delta-pages, -0.15, max-page + 0.15);
+                        } else if (self.drag-gesture == 2) {
+                            // Drag drawer interactively with incremental 1:1 touch response
+                            let cur-y = self.mouse-y / 1px;
+                            let delta = cur-y - self.last-drawer-y;
+                            self.drawer-drag-velocity = self.drawer-drag-velocity * 0.6 + ((-delta / 873.0) / 0.016) * 0.4;
+                            self.last-drawer-y = cur-y;
+                            root.drawer-drag-delta(-delta / 873.0);
+                        } else if (self.drag-gesture == 3) {
+                            // Pull down quick settings
+                            root.homescreen-pulled-down(dy);
                         }
                     }
-                    self.is-pulling-down = false;
-                }
-            }
+                } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
+                    hold-timer.running = false;
+                    if (self.is-down) {
+                        self.is-down = false;
+                        let dx = (self.mouse-x / 1px) - self.start-x;
+                        let dy = (self.mouse-y / 1px) - self.start-y;
 
-            moved => {
-                if (self.is-active) {
-                    let move-dx = (self.mouse-x / 1px) - self.start-x;
-                    let pull-dy = (self.mouse-y / 1px) - self.start-y;
-                    if (Math.abs(move-dx) > 12.0 || Math.abs(pull-dy) > 12.0) {
-                        hold-timer.running = false;
-                    }
-                    if (pull-dy > 12.0 && pull-dy > Math.abs(move-dx) * 1.1) {
-                        self.is-pulling-down = true;
-                        root.homescreen-pulled-down(pull-dy);
+                        if (self.drag-gesture == 1) {
+                            // Release horizontal page scroll: snap with spring physics to target page
+                            root.is-dragging-pages = false;
+                            let max-p = root.num-pages - 1;
+                            let target = dx < -35.0 ? (Math.round(self.start-page-scroll) + 1) : (dx > 35.0 ? (Math.round(self.start-page-scroll) - 1) : Math.round(root.page-scroll));
+                            let clamped-target = Math.clamp(target, 0, max-p);
+                            root.current-page = clamped-target;
+                            root.page-scroll = clamped-target * 1.0;
+                        } else if (self.drag-gesture == 2) {
+                            // Release drawer pull-up: snap with spring physics
+                            root.drawer-drag-released(self.drawer-drag-velocity);
+                        } else if (self.drag-gesture == 3) {
+                            root.homescreen-pull-released();
+                        } else if (self.drag-gesture == 0 && Math.abs(dx) < 15.0 && Math.abs(dy) < 15.0) {
+                            if (root.is-editing) {
+                                root.is-editing = false;
+                            }
+                        }
+                        self.drag-gesture = 0;
                     }
                 }
             }
         }
 
-        // Top At-a-Glance Clock & Weather Widget (Displayed on Page 0)
-        if root.current-page == 0: VerticalLayout {
-            x: 20px;
-            y: 56px;
+        // Top At-a-Glance Clock & Weather Widget (Page 0, slides left with page-scroll)
+        Rectangle {
+            x: 20px - (root.page-scroll * 380px);
+            y: 54px;
             width: parent.width - 40px;
             height: 84px;
-            spacing: 2px;
-            alignment: start;
+            opacity: Math.clamp(1.0 - (root.page-scroll * 1.6), 0.0, 1.0);
+            visible: self.opacity > 0.01;
 
-            Text {
-                text: root.time-text;
-                font-size: Theme.font-clock-large;
-                font-weight: 800;
-                color: Theme.on-surface;
-            }
-
-            HorizontalLayout {
-                spacing: 8px;
+            VerticalLayout {
+                spacing: 4px;
                 alignment: start;
 
                 Text {
-                    text: "\{root.date-text}  •  21°C Clear";
-                    font-size: Theme.font-body;
-                    font-weight: 600;
-                    color: Theme.primary;
+                    text: root.time-text;
+                    font-size: Theme.font-clock-large;
+                    font-weight: 800;
+                    color: Theme.on-surface;
+                }
+
+                HorizontalLayout {
+                    spacing: 10px;
+                    alignment: start;
+
+                    Text {
+                        text: root.date-text;
+                        font-size: Theme.font-body;
+                        font-weight: 600;
+                        color: Theme.on-surface-variant;
+                        vertical-alignment: center;
+                    }
+
+                    // Weather Pill
+                    Rectangle {
+                        height: 26px;
+                        border-radius: 13px;
+                        background: #24212c;
+
+                        HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            spacing: 6px;
+                            alignment: center;
+
+                            Text {
+                                text: "⛅";
+                                font-size: 13px;
+                                vertical-alignment: center;
+                            }
+
+                            Text {
+                                text: "21°C Clear";
+                                font-size: 11.5px;
+                                font-weight: 600;
+                                color: Theme.primary;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
                 }
             }
         }
 
-        // Top Subtle Page Label on Pages 1+
-        if root.current-page > 0: HorizontalLayout {
-            x: 20px;
-            y: 54px;
+        // Top Subtle Page Label on Pages 1+ (Slides in when page-scroll > 0)
+        Rectangle {
+            x: 20px + ((1.0 - root.page-scroll) * 380px);
+            y: 56px;
             width: parent.width - 40px;
-            alignment: space-between;
+            height: 36px;
+            opacity: Math.clamp(root.page-scroll * 1.5 - 0.2, 0.0, 1.0);
+            visible: self.opacity > 0.01;
 
-            Text {
-                text: "Page \{root.current-page + 1}";
-                font-size: Theme.font-title;
-                font-weight: 700;
-                color: Theme.on-surface-variant;
-            }
+            HorizontalLayout {
+                alignment: space-between;
 
-            Text {
-                text: "Swipe right for home";
-                font-size: Theme.font-label;
-                color: Theme.outline-variant;
-                vertical-alignment: center;
+                Text {
+                    text: "Page \{Math.min(root.num-pages, Math.round(root.page-scroll) + 1)}";
+                    font-size: Theme.font-title;
+                    font-weight: 700;
+                    color: Theme.on-surface-variant;
+                    vertical-alignment: center;
+                }
+
+                Text {
+                    text: "Swipe right for home";
+                    font-size: Theme.font-label;
+                    color: Theme.outline-variant;
+                    vertical-alignment: center;
+                }
             }
         }
 
         // Drop Snap Target Preview Box on Homescreen Grid
-        if root.is-dragging-app && !root.is-folder-open && root.active-mode == 0 && root.drag-y < 760px: Rectangle {
-            property <float> origin-y-f: root.current-page == 0 ? 152.0 : 86.0;
+        if root.is-dragging-app && !root.is-folder-open && root.drag-y < 760px: Rectangle {
+            property <float> origin-y-f: root.current-page == 0 ? 152.0 : 96.0;
             property <int> snap-col: Math.clamp(Math.round(((root.drag-x / 1px) - 20.0) / 93.0), 0, 3);
             property <int> snap-row: Math.clamp(Math.round(((root.drag-y / 1px) - self.origin-y-f) / 105.0), 0, 3);
 
@@ -337,34 +447,68 @@ export component AppSurface inherits Rectangle {
             y: (self.origin-y-f * 1px) + (self.snap-row * 105px) + 4px;
             width: 58px;
             height: 58px;
-            border-radius: 18px;
+            border-radius: 20px;
             background: #ADC6FF22;
             border-width: 2px;
-            border-color: #ADC6FFAA;
+            border-color: Theme.primary;
         }
 
         // Drop Snap Target Preview Box on Bottom Dock
-        if root.is-dragging-app && !root.is-folder-open && root.active-mode == 0 && root.drag-y >= 760px: Rectangle {
+        if root.is-dragging-app && !root.is-folder-open && root.drag-y >= 760px: Rectangle {
             x: (parent.width - 240px) / 2;
             y: 770px;
             width: 240px;
             height: 64px;
-            border-radius: 24px;
+            border-radius: 32px;
             background: #ADC6FF22;
             border-width: 2px;
-            border-color: #ADC6FFAA;
+            border-color: Theme.primary;
         }
 
-        // Dynamic 4x4 Grid Shortcuts for the Current Page
+        // Dynamic 4x4 Grid Shortcuts with Continuous Multi-Page Sliding Animation
         for item[idx] in root.homescreen-items: Rectangle {
-            property <bool> is-on-page: item.page == root.current-page;
-            visible: self.is-on-page;
+            property <float> page-diff: (item.page * 1.0) - root.page-scroll;
+            property <bool> is-drag-hovered: root.is-dragging-app && !root.is-folder-open && root.dragging-app-item.id != item.id && item.page == root.current-page && Math.abs(root.drag-x - (self.x + 36px)) < 40px && Math.abs(root.drag-y - (self.y + 44px)) < 44px;
+            // Render when within visible viewport or adjacent transitioning range
+            visible: Math.abs(self.page-diff) < 1.25;
             opacity: (root.is-dragging-app && root.dragging-app-item.id == item.id) ? 0.0 : 1.0;
 
-            x: 20px + (item.x * 93px) + 6px;
-            y: (root.current-page == 0 ? 152px : 86px) + (item.y * 105px);
+            x: 20px + (self.page-diff * 412px) + (item.x * 93px) + 6px;
+            y: (item.page == 0 ? 152px : 96px) + (item.y * 105px);
             width: 72px;
             height: 88px;
+
+            if self.is-drag-hovered: Rectangle {
+                x: 4px;
+                y: 0px;
+                width: 64px;
+                height: 64px;
+                border-radius: 22px;
+                border-width: 3px;
+                border-color: item.is-folder ? #7CDB8A : #D0BCFF;
+                background: item.is-folder ? #7CDB8A33 : #D0BCFF33;
+                z: 100;
+
+                Rectangle {
+                    y: -14px;
+                    x: (parent.width - self.width) / 2;
+                    width: tag-txt.width + 12px;
+                    height: 18px;
+                    border-radius: 9px;
+                    background: item.is-folder ? #23542B : #381E72;
+                    border-width: 1px;
+                    border-color: item.is-folder ? #7CDB8A : #D0BCFF;
+
+                    tag-txt := Text {
+                        text: item.is-folder ? "Add" : "Folder";
+                        font-size: 10px;
+                        font-weight: 700;
+                        color: item.is-folder ? #A9FFAE : #EADDFF;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
 
             ShortcutTile {
                 item: item;
@@ -419,12 +563,14 @@ export component AppSurface inherits Rectangle {
         }
 
         // Empty Homescreen Hint on Page 0 when no shortcuts are pinned
-        if root.homescreen-items.length == 0 && root.current-page == 0: VerticalLayout {
-            x: 0px;
+        if root.homescreen-items.length == 0: VerticalLayout {
+            x: 0px - (root.page-scroll * 380px);
             y: 320px;
             width: parent.width;
             alignment: center;
             spacing: 8px;
+            opacity: Math.clamp(1.0 - (root.page-scroll * 1.6), 0.0, 1.0);
+            visible: self.opacity > 0.01;
 
             Text {
                 text: "✨";
@@ -439,59 +585,83 @@ export component AppSurface inherits Rectangle {
             }
         }
 
-        // Bottom Page Indicator Dots (Pills)
-        if root.num-pages > 1: HorizontalLayout {
+        // Material 3 Expressive Worm Page Indicator (Slides smoothly with page-scroll)
+        if root.num-pages > 1: Rectangle {
             x: 0px;
-            y: 698px;
+            y: 696px;
             width: parent.width;
-            height: 12px;
-            alignment: center;
-            spacing: 8px;
+            height: 14px;
 
-            for p in root.num-pages: Rectangle {
-                width: p == root.current-page ? 20px : 8px;
-                height: 8px;
-                border-radius: 4px;
-                background: p == root.current-page ? Theme.primary : #ffffff44;
+            // Dot track
+            HorizontalLayout {
+                alignment: center;
+                spacing: 12px;
 
-                animate width { duration: 150ms; easing: ease-out; }
-                animate background { duration: 150ms; }
+                for p in root.num-pages: Rectangle {
+                    width: 8px;
+                    height: 8px;
+                    border-radius: 4px;
+                    background: #3f3c47;
 
-                TouchArea {
-                    clicked => {
-                        root.current-page = p;
+                    TouchArea {
+                        clicked => {
+                            root.current-page = p;
+                            root.page-scroll = p * 1.0;
+                        }
                     }
                 }
             }
+
+            // Smooth gliding active indicator pill
+            Rectangle {
+                property <float> total-track-w: ((root.num-pages - 1) * 20.0);
+                x: ((parent.width / 1px - 20.0 - self.total-track-w) / 2.0 * 1px) + (root.page-scroll * 20px);
+                y: 3px;
+                width: 20px;
+                height: 8px;
+                border-radius: 4px;
+                background: Theme.primary;
+            }
         }
 
-        // Bottom Search Pill
+        // Bottom Google Pixel Search Bar (Material 3 Expressive - no glass)
         Rectangle {
             x: 20px;
-            y: 722px;
+            y: 720px;
             width: parent.width - 40px;
-            height: 48px;
-            border-radius: Theme.radius-pill;
-            background: #2b2930b3; // Modern subtle translucent tint (70% opacity)
-            border-width: 1px;
-            border-color: #ffffff18;
+            height: 52px;
+            border-radius: 26px;
+            background: #1e1b24;
+            border-width: 0px;
 
             search-ta := TouchArea {
-                property <float> start-y: 0.0;
+                property <float> last-y: 0.0;
+                property <float> velocity: 0.0;
+                property <float> total-pull: 0.0;
                 property <bool> is-active: false;
 
                 pointer-event(event) => {
                     if (event.kind == PointerEventKind.down) {
-                        self.start-y = search-ta.mouse-y / 1px;
+                        self.last-y = search-ta.mouse-y / 1px;
+                        self.velocity = 0.0;
+                        self.total-pull = 0.0;
                         self.is-active = true;
+                    } else if (event.kind == PointerEventKind.move) {
+                        if (self.is-active) {
+                            let cur-y = search-ta.mouse-y / 1px;
+                            let delta = cur-y - self.last-y;
+                            self.total-pull = self.total-pull - delta;
+                            self.velocity = self.velocity * 0.6 + ((-delta / 873.0) / 0.016) * 0.4;
+                            self.last-y = cur-y;
+                            root.drawer-drag-delta(-delta / 873.0);
+                        }
                     } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
                         if (self.is-active) {
                             self.is-active = false;
-                            let dy = self.start-y - (search-ta.mouse-y / 1px);
-                            if (dy > 25.0) {
-                                root.active-mode = 2; // Open App Drawer
-                            } else if (Math.abs(dy) < 15.0) {
-                                root.app-clicked("browser");
+                            if (self.total-pull < 12.0) {
+                                root.drawer-open-requested();
+                            } else {
+                                root.drawer-drag-released(self.velocity);
                             }
                         }
                     }
@@ -504,30 +674,42 @@ export component AppSurface inherits Rectangle {
                 alignment: space-between;
 
                 HorizontalLayout {
-                    spacing: 10px;
+                    spacing: 12px;
                     alignment: center;
 
                     Text {
                         text: "G";
-                        font-size: 18px;
+                        font-size: 19px;
                         font-weight: 800;
                         color: Theme.primary;
                         vertical-alignment: center;
                     }
 
                     Text {
-                        text: "Search apps, web, & devices...";
+                        text: "Search apps & web...";
                         font-size: Theme.font-label;
-                        color: #cac4d0;
+                        color: #c4c6d0;
                         vertical-alignment: center;
                     }
                 }
 
-                Text {
-                    text: "🎙";
-                    font-size: 16px;
-                    color: Theme.primary;
-                    vertical-alignment: center;
+                HorizontalLayout {
+                    spacing: 12px;
+                    alignment: center;
+
+                    Text {
+                        text: "🎙";
+                        font-size: 16px;
+                        color: Theme.primary;
+                        vertical-alignment: center;
+                    }
+
+                    Text {
+                        text: "✦";
+                        font-size: 16px;
+                        color: #c4c6d0;
+                        vertical-alignment: center;
+                    }
                 }
             }
         }
@@ -732,28 +914,27 @@ export component AppSurface inherits Rectangle {
     }
 
     // =========================================================================
-    // MODE 2: APP DRAWER (All Applications Overlay)
+    // =========================================================================
+    // MODE 2: APP DRAWER (All Applications Overlay with Material 3 Expressive Physics)
     // =========================================================================
     app-drawer := Rectangle {
         x: 0px;
-        y: root.active-mode == 2 ? 0px : parent.height;
+        y: 42px + (1.0 - root.drawer-progress) * (parent.height - 42px);
         width: parent.width;
-        height: parent.height;
+        height: parent.height - 42px;
         opacity: root.is-dragging-app ? 0.0 : 1.0;
+        visible: (!root.is-dragging-app) && (root.drawer-progress > 0.001);
         clip: true;
 
-        animate y {
-            duration: 260ms;
-            easing: cubic-bezier(0.1, 0.9, 0.2, 1.0);
-        }
         animate opacity {
             duration: 150ms;
             easing: ease-out;
         }
 
         AppDrawer {
+            drawer-progress: root.drawer-progress;
             installed-apps: root.installed-apps;
-            is-open: root.active-mode == 2;
+            is-open: root.drawer-progress > 0.1;
             search-query <=> root.app-search-query;
             search-query-changed(q) => {
                 root.app-search-query-changed(q);
@@ -763,6 +944,17 @@ export component AppSurface inherits Rectangle {
             }
             app-clicked(id) => {
                 root.app-clicked(id);
+            }
+            drawer-drag-delta(delta) => {
+                root.drawer-drag-delta(delta);
+            }
+            drawer-drag-released(vel) => {
+                root.drawer-drag-released(vel);
+            }
+            close-requested => {
+                root.app-search-query = "";
+                root.app-search-query-changed("");
+                root.drawer-close-requested();
             }
             start-drag(id, item, sx, sy) => {
                 root.is-dragging-app = true;
@@ -781,17 +973,13 @@ export component AppSurface inherits Rectangle {
                 root.dwell-direction = 0;
                 root.dwell-ticks = 0;
                 root.active-mode = 0; // Return to homescreen
+                root.drawer-progress = 0.0;
                 let drop-y = sy / 1px;
                 if (drop-y >= 760.0) {
                     root.app-pinned-to-dock(id);
                 } else if (drop-y < 760.0) {
                     root.app-dropped-on-homescreen(id, root.current-page, sx, sy);
                 }
-            }
-            close-requested => {
-                root.active-mode = 0;
-                root.app-search-query = "";
-                root.app-search-query-changed("");
             }
         }
     }
@@ -839,91 +1027,10 @@ export component AppSurface inherits Rectangle {
 
     // =========================================================================
     // MODE 3: ACTIVE REAL WAYLAND APPLICATION CANVAS (Composited by penumbra-comp)
-    // =========================================================================
-    if root.active-mode == 3: Rectangle {
-        x: 0px;
-        y: 42px; // Strictly below status bar (y: 0..42)
-        width: parent.width;
-        height: 841px; // Strictly above navigation bar (y: 883..915)
-        background: #08060B;
-        clip: true;
-
-        // Centered App Launch Splash Screen (shown seamlessly while Wayland client initializes surface)
-        VerticalLayout {
-            alignment: center;
-            spacing: 16px;
-
-            Rectangle {
-                width: 72px;
-                height: 72px;
-                border-radius: 20px;
-                background: #181524;
-                border-width: 1px;
-                border-color: #352F48;
-
-                Text {
-                    text: "✨";
-                    font-size: 32px;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                }
-            }
-
-            Text {
-                text: root.active-app != "" ? root.active-app : "Application";
-                font-size: 20px;
-                font-weight: 700;
-                color: Theme.on-surface;
-                horizontal-alignment: center;
-            }
-
-            Text {
-                text: "Launching application...";
-                font-size: 13px;
-                color: Theme.on-surface-variant;
-                horizontal-alignment: center;
-            }
-        }
-    }
+    // Mode 3 (native app) is rendered on Layer 1 by the compositor; homescreen stays as clean background.
 
     // =========================================================================
-    // MODE 1: RECENTS / OVERVIEW APP SWITCHER (Fluid 120Hz Kinetic Flickable Carousel)
-    // =========================================================================
-    if root.active-mode == 1: RecentsSwitcher {
-        x: 0px;
-        y: 0px;
-        width: 100%;
-        height: 100%;
-        active-index: root.safe-overview-index;
-        horizontal-offset: root.overview-scroll;
-        scale-factor: 1.0;
-        running-apps: root.running-tasks;
-
-        switch-to-app(id) => {
-            root.select-task(id);
-        }
-        dismiss-app(id) => {
-            root.close-task(id);
-        }
-        horizontal-drag(offset, is_drag) => {
-            root.overview-scroll = offset;
-            root.is-dragging-carousel = is_drag;
-            root.overview-scroll-changed(offset, is_drag);
-        }
-        drag-released(cur_offset, vel) => {
-            root.overview-drag-released(cur_offset, vel);
-        }
-        vertical-drag(dy) => {
-            root.active-card-dy-changed(dy);
-        }
-        clear-all-recents => {
-            root.active-mode = 0;
-            root.clear-all-recents();
-        }
-        exit-overview => {
-            root.exit-overview();
-        }
-    }
+    // Overview (Mode 1) is rendered natively by the compositor on Layer 1 with 120Hz physics.
 
     // Android Homescreen Long-Press Context Menu
     HomescreenContextMenu {

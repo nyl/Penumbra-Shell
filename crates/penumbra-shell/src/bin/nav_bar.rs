@@ -108,8 +108,8 @@ pub(crate) fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut state = ShellState::load();
             state.nav_gesture_active = true;
 
-            // Check if gesture is horizontally dominant (Android Quick Switch)
-            if delta_x.abs() > 15.0 && delta_x.abs() > delta_y.abs() * 1.1 {
+            // Check if gesture is horizontally dominant (Android Quick Switch, 24px deadzone)
+            if delta_x.abs() > 24.0 && delta_x.abs() > delta_y.abs() * 1.2 {
                 state.nav_switch_active = true;
                 state.nav_gesture_dx = delta_x;
                 state.nav_gesture_vx = vx;

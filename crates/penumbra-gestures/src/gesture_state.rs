@@ -85,7 +85,7 @@ pub fn compute_normalized_progress(delta_y: f64, screen_height: f64) -> f64 {
 /// Window scaling factor in range `[0.664, 1.0]`.
 #[inline]
 pub fn compute_window_scale(progress: f64) -> f64 {
-    1.0 - (progress.clamp(0.0, 1.05) * (1.0 - 0.68))
+    1.0 - (progress.clamp(0.0, 1.05) * (1.0 - 0.78))
 }
 
 /// Computes the active application window corner radius $r(t)$ in pixels.
@@ -109,16 +109,44 @@ pub fn compute_corner_radius(progress: f64) -> f64 {
 /// Computes the dimming scrim alpha overlay opacity $\alpha(t)$.
 ///
 /// # Mathematical Formulation
-/// $$\alpha(t) = \mathrm{clamp}(t, 0.0, 1.0) \cdot 0.45$$
+/// Authentic Android 17 Material You scrim: subtle background dark tint, capped at 28% opacity
+/// so wallpapers remain vibrant and legible under active gesture cards.
+/// $$\alpha(t) = \mathrm{clamp}(t, 0.0, 1.0) \cdot 0.28$$
 ///
 /// # Arguments
 /// * `progress` - Normalized gesture progress $t$.
 ///
 /// # Returns
-/// Opacity in range `[0.0, 0.45]`.
+/// Opacity in range `[0.0, 0.28]`.
 #[inline]
 pub fn compute_scrim_alpha(progress: f64) -> f64 {
-    progress.clamp(0.0, 1.0) * 0.45
+    progress.clamp(0.0, 1.0) * 0.28
+}
+
+/// Computes the active application window scale during App-to-Home dismiss.
+///
+/// # Mathematical Formulation
+/// Follows non-linear deceleration:
+/// $$s(t) = (1.0 - t)^{1.2} \times 0.88 + 0.12$$
+/// At $t = 0.0 \implies 1.0$ (fullscreen).
+/// At $t = 1.0 \implies 0.12$ (matches squircle app icon size $\sim 56\text{px}$).
+#[inline]
+pub fn compute_home_collapse_scale(progress: f64) -> f64 {
+    let t = progress.clamp(0.0, 1.0);
+    (1.0 - t).powf(1.2) * 0.88 + 0.12
+}
+
+/// Applies non-linear rubber-band resistance when gesture progress exceeds $1.0$.
+///
+/// # Mathematical Formulation
+/// $$t_{\text{damped}} = 1.0 + (t - 1.0) \times 0.25$$
+#[inline]
+pub fn rubber_band_clamp(progress: f64) -> f64 {
+    if progress <= 1.0 {
+        progress.max(0.0)
+    } else {
+        1.0 + (progress - 1.0) * 0.25
+    }
 }
 
 /// Arbitrates between [`NavigationTarget::Home`], [`NavigationTarget::Overview`],

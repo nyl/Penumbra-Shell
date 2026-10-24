@@ -75,35 +75,38 @@ export component ShortcutTile inherits Rectangle {
             alignment: center;
             spacing: 5px;
 
-            // Icon box
+            // Material 3 Expressive Squircle Icon Container
             icon-box := Rectangle {
-                width: 56px;
-                height: 56px;
+                width: (root.is-down && !root.is-dragging) ? 52px : 56px;
+                height: (root.is-down && !root.is-dragging) ? 52px : 56px;
                 x: (parent.width - self.width) / 2;
-                border-radius: 18px;
-                background: root.tile-is-folder ? #1F1C25EE : #232029;
-                border-width: 1px;
-                border-color: root.is-editing ? #ADC6FF66 : (root.tile-is-folder ? #FFFFFF22 : Theme.specular-rim);
+                border-radius: 20px;
+                background: root.tile-is-folder ? #25222d : ((root.is-down && !root.is-dragging) ? #2e2a37 : #1f1c25);
+                border-width: root.is-editing ? 2px : 0px;
+                border-color: root.is-editing ? Theme.primary : transparent;
                 clip: false;
+
+                animate width, height { duration: 110ms; easing: cubic-bezier(0.2, 0.9, 0.3, 1.0); }
+                animate background { duration: 110ms; easing: ease-out; }
 
                 // Single App Icon
                 if !root.tile-is-folder: Rectangle {
                     width: 100%;
                     height: 100%;
                     clip: true;
-                    border-radius: 18px;
+                    border-radius: 20px;
 
                     if root.tile-has-icon: Image {
                         source: root.tile-icon;
-                        width: 40px;
-                        height: 40px;
-                        x: 8px;
-                        y: 8px;
+                        width: parent.width * 0.72;
+                        height: parent.height * 0.72;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
                     }
 
                     if !root.tile-has-icon: Icon {
                         name: "app";
-                        icon-size: 28px;
+                        icon-size: parent.width * 0.52;
                         icon-color: Theme.on-surface;
                         x: (parent.width - self.width) / 2;
                         y: (parent.height - self.height) / 2;

@@ -77,13 +77,15 @@ use smithay::{
 
 use crate::args::CliArgs;
 use crate::phone::{
-    self, card_transform, parse_commands, runtime_path, task_line, write_atomic, PhoneMode,
-    ShellCommand, ShellState, APP_H, APP_Y, NAV_BAR_H, NAV_BAR_Y, PHONE_H, PHONE_W, STATUS_BAR_H,
+    self, card_transform, parse_commands, resolve_app_icon_target, runtime_path, task_line,
+    write_atomic, PhoneMode, ShellCommand, ShellState, APP_H, APP_Y, NAV_BAR_H, NAV_BAR_Y,
+    PHONE_H, PHONE_W, STATUS_BAR_H,
 };
 use crate::policy::{AsymmetricOutputManager, OutputRole};
 use penumbra_gestures::{
-    arbitrate_horizontal_release, arbitrate_release, compute_scrim_alpha, compute_window_scale,
-    GestureStateMachine, NavigationGesture, NavigationTarget, Spring, SpringSolver,
+    arbitrate_horizontal_release, arbitrate_release, compute_home_collapse_scale,
+    compute_scrim_alpha, compute_window_scale, GestureStateMachine, NavigationGesture,
+    NavigationTarget, Spring, SpringSolver,
 };
 
 /// Client-specific compositor state.
@@ -160,12 +162,34 @@ pub struct PenumbraServerState {
     pub last_nav_spring_tick: Option<Instant>,
     /// Pre-blurred wallpaper cache for fast zero-cost background compositing.
     pub blurred_wallpaper: Option<crate::wallpaper_blur::BlurredWallpaperCache>,
+    /// GPU memory render buffer for blurred wallpaper.
+    pub blurred_wallpaper_buffer: Option<smithay::backend::renderer::element::memory::MemoryRenderBuffer>,
+    /// Pre-computed 28px Material 3 squircle corner masks.
+    pub card_corner_masks: crate::card_rounding::CardCornerMasks,
 }
 
 /// A Wayland toplevel living on the phone output.
 pub struct PhoneTask {
     pub id: u32,
     pub window: Window,
+}
+
+impl PhoneTask {
+    pub fn app_id(&self) -> String {
+        self.window
+            .toplevel()
+            .map(|t| {
+                with_states(t.wl_surface(), |states| {
+                    states
+                        .data_map
+                        .get::<XdgToplevelSurfaceData>()
+                        .and_then(|d| d.lock().ok())
+                        .and_then(|d| d.app_id.clone())
+                        .unwrap_or_default()
+                })
+            })
+            .unwrap_or_default()
+    }
 }
 
 impl PenumbraServerState {
@@ -186,8 +210,15 @@ impl PenumbraServerState {
     }
 
     /// Whether an app currently occupies the phone inset (Layer 1 is visible).
+    /// Also true during a drag-down navigation gesture from Overview → App (fullscreen restore).
     pub(crate) fn phone_app_visible(&self) -> bool {
-        self.shell_state.mode == PhoneMode::App && !self.phone_tasks.is_empty()
+        if self.phone_tasks.is_empty() {
+            return false;
+        }
+        self.shell_state.mode == PhoneMode::App
+            // During Overview drag-down or settle animation, we render the app
+            // so it animates smoothly expanding back to fullscreen.
+            || (self.shell_state.mode == PhoneMode::Overview && (self.nav_gesture_active || self.is_nav_animating()))
     }
 
     /// Resolves the surface receiving input at `pos` on the phone output.
@@ -441,15 +472,22 @@ impl PenumbraServerState {
 
         self.phone_tasks.retain(|t| t.window.alive());
 
-        if self.phone_tasks.is_empty() && self.shell_state.mode == PhoneMode::App {
+        if self.phone_tasks.is_empty() && (self.shell_state.mode == PhoneMode::App || self.shell_state.mode == PhoneMode::Overview) {
             info!("All phone tasks closed -> returning to Home mode");
             self.shell_state.mode = PhoneMode::Home;
+            self.shell_state.overview_index = 0;
+            self.shell_state.overview_scroll = 0.0;
+            self.overview_scroll = 0.0;
             let _ = write_atomic(
                 &runtime_path(phone::SHELL_STATE_FILE),
                 &self.shell_state.serialize(),
             );
         }
 
+        self.publish_phone_tasks();
+    }
+
+    pub fn publish_phone_tasks(&mut self) {
         let mut listing = String::new();
         for task in &self.phone_tasks {
             let (app_id, title) = task
@@ -478,31 +516,77 @@ impl PenumbraServerState {
             self.last_tasks_published = listing;
         }
     }
+    pub fn set_phone_home(&mut self) {
+        self.shell_state.mode = PhoneMode::Home;
+        let _ = write_atomic(
+            &runtime_path(phone::SHELL_STATE_FILE),
+            &self.shell_state.serialize(),
+        );
+    }
+
+    pub fn focus_task_by_id(&mut self, id: u32) {
+        if let Some(idx) = self.phone_tasks.iter().position(|t| t.id == id) {
+            let task = self.phone_tasks.remove(idx);
+            self.phone_tasks.insert(0, task);
+            self.overview_scroll = 0.0;
+            self.shell_state.overview_index = 0;
+            self.shell_state.mode = PhoneMode::App;
+            let _ = write_atomic(
+                &runtime_path(phone::SHELL_STATE_FILE),
+                &self.shell_state.serialize(),
+            );
+        }
+    }
+
+    pub fn close_task_by_id(&mut self, id: u32) {
+        if let Some(pos) = self.phone_tasks.iter().position(|t| t.id == id) {
+            let task = self.phone_tasks.remove(pos);
+            if let Some(t) = task.window.toplevel() {
+                t.send_close();
+            }
+            if self.phone_tasks.is_empty() {
+                self.shell_state.mode = PhoneMode::Home;
+                self.shell_state.overview_index = 0;
+                self.shell_state.overview_scroll = 0.0;
+                self.overview_scroll = 0.0;
+            } else {
+                self.shell_state.overview_index =
+                    self.shell_state.overview_index.min(self.phone_tasks.len() - 1);
+                self.shell_state.overview_scroll = self.shell_state.overview_index as f64;
+                self.overview_scroll = self.shell_state.overview_scroll;
+            }
+            let _ = write_atomic(
+                &runtime_path(phone::SHELL_STATE_FILE),
+                &self.shell_state.serialize(),
+            );
+            self.publish_phone_tasks();
+        }
+    }
 
     fn apply_shell_command(&mut self, cmd: ShellCommand) {
         info!("Shell command: {:?}", cmd);
         match cmd {
             ShellCommand::Focus(id) => {
-                if let Some(idx) = self.phone_tasks.iter().position(|t| t.id == id) {
-                    let task = self.phone_tasks.remove(idx);
-                    self.phone_tasks.insert(0, task);
-                    // Carousel indices shift; recenter on the newly active task.
-                    self.overview_scroll = 0.0;
-                }
+                self.focus_task_by_id(id);
             }
             ShellCommand::Close(id) => {
-                if let Some(task) = self.phone_tasks.iter().find(|t| t.id == id) {
-                    if let Some(t) = task.window.toplevel() {
-                        t.send_close();
-                    }
-                }
+                self.close_task_by_id(id);
             }
             ShellCommand::CloseAll => {
-                for task in &self.phone_tasks {
+                for task in self.phone_tasks.drain(..) {
                     if let Some(t) = task.window.toplevel() {
                         t.send_close();
                     }
                 }
+                self.shell_state.mode = PhoneMode::Home;
+                self.shell_state.overview_index = 0;
+                self.shell_state.overview_scroll = 0.0;
+                self.overview_scroll = 0.0;
+                let _ = write_atomic(
+                    &runtime_path(phone::SHELL_STATE_FILE),
+                    &self.shell_state.serialize(),
+                );
+                self.publish_phone_tasks();
             }
             ShellCommand::Back => {
                 self.trigger_back();
@@ -1179,11 +1263,23 @@ impl PenumbraCompositor {
             nav_switch_spring: None,
             nav_switch_target: None,
             last_nav_spring_tick: None,
-            blurred_wallpaper: Some(crate::wallpaper_blur::BlurredWallpaperCache::load_and_blur(
-                None,
-                mode_a.size.w,
-                mode_a.size.h,
-            )),
+            blurred_wallpaper: {
+                let cache = crate::wallpaper_blur::BlurredWallpaperCache::load_and_blur(
+                    None,
+                    mode_a.size.w,
+                    mode_a.size.h,
+                );
+                Some(cache)
+            },
+            blurred_wallpaper_buffer: {
+                let cache = crate::wallpaper_blur::BlurredWallpaperCache::load_and_blur(
+                    None,
+                    mode_a.size.w,
+                    mode_a.size.h,
+                );
+                Some(cache.to_render_buffer())
+            },
+            card_corner_masks: crate::card_rounding::CardCornerMasks::default(),
         };
 
         // Reset IPC files from any previous session.
@@ -1626,43 +1722,51 @@ impl PenumbraCompositor {
                 let mut app_elements = Vec::new();
                 if state.phone_app_visible() {
                     let switch_dx = state.nav_switch_dx;
-                    if switch_dx.abs() > 0.5 {
-                        // Horizontal Quick Switch: render active and adjacent task sliding laterally
-                        let cur_x = switch_dx.round() as i32;
-                        let cur_scale = (1.0 - (switch_dx.abs() / (PHONE_W as f64 * 3.0))).clamp(0.92, 1.0);
+                    if state.nav_switch_active || state.nav_switch_spring.is_some() || switch_dx.abs() > 0.5 {
+                        // Quick Switch: 0.94x subtle card scale, 16px inter-card gutter
+                        let cur_scale = if state.nav_switch_spring.is_none() && !state.nav_switch_active {
+                            1.0
+                        } else {
+                            (1.0 - (switch_dx.abs() / (PHONE_W as f64 * 4.0))).clamp(0.94, 1.0)
+                        };
+                        let cur_w = (PHONE_W as f64 * cur_scale).round() as i32;
+                        let cur_h = (APP_H as f64 * cur_scale).round() as i32;
+                        let cur_y = APP_Y + (APP_H - cur_h) / 2;
+                        let cur_x = (switch_dx + ((PHONE_W - cur_w) / 2) as f64).round() as i32;
+
                         if let Some(cur_surface) = state.active_phone_surface() {
-                            let rect = phys_rect(cur_x, APP_Y, PHONE_W, APP_H);
+                            let rect = phys_rect(cur_x, cur_y, cur_w, cur_h);
                             if let Some(clip) = rect.intersection(phone_rect) {
                                 app_elements.extend(cropped(
-                                    surface_elements(renderer, &cur_surface, (cur_x, APP_Y), cur_scale),
+                                    surface_elements(renderer, &cur_surface, (cur_x, cur_y), cur_scale),
                                     clip,
                                 ));
                             }
                         }
                         if state.phone_tasks.len() > 1 {
                             if switch_dx > 0.0 {
-                                // Dragging right -> previous task enters from left
+                                // Dragging right -> previous task enters from left with 16px gutter
                                 if let Some(prev_task) = state.phone_tasks.last() {
                                     if let Some(toplevel) = prev_task.window.toplevel() {
-                                        let prev_x = (switch_dx - PHONE_W as f64).round() as i32;
-                                        let rect = phys_rect(prev_x, APP_Y, PHONE_W, APP_H);
+                                        let prev_x = cur_x - cur_w - 16;
+                                        let rect = phys_rect(prev_x, cur_y, cur_w, cur_h);
                                         if let Some(clip) = rect.intersection(phone_rect) {
                                             app_elements.extend(cropped(
-                                                surface_elements(renderer, toplevel.wl_surface(), (prev_x, APP_Y), cur_scale),
+                                                surface_elements(renderer, toplevel.wl_surface(), (prev_x, cur_y), cur_scale),
                                                 clip,
                                             ));
                                         }
                                     }
                                 }
                             } else {
-                                // Dragging left -> next task enters from right
+                                // Dragging left -> next task enters from right with 16px gutter
                                 if let Some(next_task) = state.phone_tasks.get(1) {
                                     if let Some(toplevel) = next_task.window.toplevel() {
-                                        let next_x = (switch_dx + PHONE_W as f64).round() as i32;
-                                        let rect = phys_rect(next_x, APP_Y, PHONE_W, APP_H);
+                                        let next_x = cur_x + cur_w + 16;
+                                        let rect = phys_rect(next_x, cur_y, cur_w, cur_h);
                                         if let Some(clip) = rect.intersection(phone_rect) {
                                             app_elements.extend(cropped(
-                                                surface_elements(renderer, toplevel.wl_surface(), (next_x, APP_Y), cur_scale),
+                                                surface_elements(renderer, toplevel.wl_surface(), (next_x, cur_y), cur_scale),
                                                 clip,
                                             ));
                                         }
@@ -1673,18 +1777,28 @@ impl PenumbraCompositor {
                     } else if nav_progress > 0.001 {
                         if let Some(surface) = state.active_phone_surface() {
                             if state.nav_target == Some(NavigationTarget::Home) {
-                                // Dismiss to home: shrink smoothly into homescreen launcher
-                                let scale = (1.0 - nav_progress * 0.75).max(0.15);
+                                // Dismiss to home: track and collapse window into target icon coordinate
+                                let active_app_id = state.phone_tasks.first().map(|t| t.app_id()).unwrap_or_default();
+                                let (target_icon_x, target_icon_y) = resolve_app_icon_target(&active_app_id);
+                                let t = nav_progress.clamp(0.0, 1.0);
+                                let scale = compute_home_collapse_scale(t);
                                 let w = (PHONE_W as f64 * scale).round() as i32;
                                 let h = (APP_H as f64 * scale).round() as i32;
-                                let x = ((PHONE_W - w) / 2).max(0);
-                                let target_y = (APP_Y as f64 + (APP_H as f64 * 0.35)).round() as i32;
-                                let y = (APP_Y as f64 * (1.0 - nav_progress) + target_y as f64 * nav_progress).round() as i32;
+
+                                let initial_cx = (PHONE_W as f64) / 2.0;
+                                let initial_cy = (APP_Y as f64) + (APP_H as f64) / 2.0;
+                                let cx = initial_cx * (1.0 - t) + (target_icon_x as f64) * t;
+                                let cy = initial_cy * (1.0 - t) + (target_icon_y as f64) * t;
+
+                                let x = (cx - (w as f64) / 2.0).round() as i32;
+                                let y = (cy - (h as f64) / 2.0).round() as i32;
                                 let app_rect = phys_rect(x, y, w, h);
-                                app_elements = cropped(
-                                    surface_elements(renderer, &surface, (x, y), scale),
-                                    app_rect,
-                                );
+                                if let Some(clip) = app_rect.intersection(phone_rect) {
+                                    app_elements.extend(cropped(
+                                        surface_elements(renderer, &surface, (x, y), scale),
+                                        clip,
+                                    ));
+                                }
                             } else {
                                 // Overview card transform: scale to 0.68, center at y = 172
                                 let scale = compute_window_scale(nav_progress);
@@ -1694,10 +1808,32 @@ impl PenumbraCompositor {
                                 let target_y = 172.0;
                                 let y = (APP_Y as f64 * (1.0 - nav_progress) + target_y * nav_progress).round() as i32;
                                 let app_rect = phys_rect(x, y, w, h);
-                                app_elements = cropped(
-                                    surface_elements(renderer, &surface, (x, y), scale),
-                                    app_rect,
-                                );
+                                if let Some(clip) = app_rect.intersection(phone_rect) {
+                                    app_elements.extend(cropped(
+                                        surface_elements(renderer, &surface, (x, y), scale),
+                                        clip,
+                                    ));
+                                }
+
+                                // Adjacent cards peek into viewport when nav_progress > 0.35
+                                if nav_progress > 0.35 && state.phone_tasks.len() > 1 {
+                                    let p_peek = ((nav_progress - 0.35) / 0.65).clamp(0.0, 1.0);
+                                    if let Some(prev_task) = state.phone_tasks.get(1) {
+                                        if let Some(toplevel) = prev_task.window.toplevel() {
+                                            let (dest_x, dest_y, dest_w, dest_h, card_scale) =
+                                                card_transform(1, 0.0, 0, 0.0);
+                                            let start_x = -dest_w;
+                                            let peek_x = (start_x as f64 * (1.0 - p_peek) + dest_x as f64 * p_peek).round() as i32;
+                                            let peek_rect = phys_rect(peek_x, dest_y, dest_w, dest_h);
+                                            if let Some(clip) = peek_rect.intersection(phone_rect) {
+                                                app_elements.extend(cropped(
+                                                    surface_elements(renderer, toplevel.wl_surface(), (peek_x, dest_y), card_scale),
+                                                    clip,
+                                                ));
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     } else if let Some(surface) = state.active_phone_surface() {
