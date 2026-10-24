@@ -22,6 +22,69 @@ use penumbra_shell::wallpaper::{read_file_browser_entries, scan_wallpaper_paths_
 
 slint::include_modules!();
 
+/// Focuses an existing application window if already open, or spawns a new process without prematurely
+/// setting PhoneMode::App, ensuring that the compositor only enters App mode when the new window maps.
+fn activate_or_launch_app(target_app: &InstalledApp) {
+    let running_windows = read_windows();
+    let target_id_clean = target_app.id.trim_end_matches(".desktop").to_lowercase();
+    let target_exec_bin = std::path::Path::new(&target_app.exec)
+        .file_name()
+        .and_then(|f| f.to_str())
+        .unwrap_or(&target_app.exec)
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_lowercase();
+
+    let existing_window = running_windows.iter().find(|win| {
+        let win_app_id = win.app_id.trim_end_matches(".desktop").to_lowercase();
+        let win_title = win.title.trim().to_lowercase();
+
+        if !win_app_id.is_empty() {
+            if win_app_id == target_id_clean
+                || win_app_id == target_app.name.to_lowercase()
+                || (!target_exec_bin.is_empty() && win_app_id == target_exec_bin)
+            {
+                return true;
+            }
+        }
+
+        if !win_title.is_empty() && win_title.len() >= 3 {
+            if win_title == target_app.name.to_lowercase()
+                || win_title == target_id_clean
+            {
+                return true;
+            }
+        }
+
+        false
+    });
+
+    if let Some(win) = existing_window {
+        info!(
+            "App '{}' is already running (task id: {}) -> switching focus",
+            target_app.name, win.id
+        );
+        let _ = send_command(&format!("focus {}", win.id));
+        let mut state = ShellState::load();
+        state.mode = PhoneMode::App;
+        state.drawer_open = false;
+        let _ = state.save();
+    } else {
+        info!("Spawning new instance of app '{}'", target_app.name);
+        if let Err(e) = launch_app(target_app, Some("phone")) {
+            warn!("Failed to launch app '{}': {:?}", target_app.name, e);
+        } else {
+            // Close the drawer if open, but DO NOT set state.mode = App yet.
+            // The compositor will automatically switch to PhoneMode::App when the
+            // new application window actually maps, avoiding flashing old apps.
+            let mut state = ShellState::load();
+            state.drawer_open = false;
+            let _ = state.save();
+        }
+    }
+}
+
 fn resolve_app_item(id: &str, apps_list: &[InstalledApp]) -> AppItem {
     let app_opt = apps_list
         .iter()
@@ -347,14 +410,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .or_else(|| find_single_app(app_id));
 
             if let Some(ref target_app) = app_opt {
-                if let Err(e) = launch_app(target_app, Some("phone")) {
-                    warn!("Failed to launch app '{}': {:?}", app_id, e);
-                } else {
-                    let mut state = ShellState::load();
-                    state.mode = PhoneMode::App;
-                    state.drawer_open = false;
-                    let _ = state.save();
-                }
+                activate_or_launch_app(target_app);
             } else {
                 warn!("Could not resolve app '{}' to launch", app_id);
             }
@@ -688,14 +744,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             if let Some(target) = app_opt {
                 info!("Launching search match '{}'", target.name);
-                if let Err(e) = launch_app(&target, Some("phone")) {
-                    warn!("Failed to launch app: {:?}", e);
-                } else {
-                    let mut state = ShellState::load();
-                    state.mode = PhoneMode::App;
-                    state.drawer_open = false;
-                    let _ = state.save();
-                }
+                activate_or_launch_app(&target);
             }
         });
     }

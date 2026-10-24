@@ -82,8 +82,8 @@ use smithay::{
 use crate::args::CliArgs;
 use crate::phone::{
     self, card_transform, parse_commands, resolve_app_icon_target, runtime_path, task_line,
-    write_atomic, PhoneMode, ShellCommand, ShellState, APP_H, APP_Y, NAV_BAR_H, NAV_BAR_Y,
-    PHONE_H, PHONE_W, STATUS_BAR_H,
+    write_atomic, PhoneMode, ShellCommand, ShellState, APP_H, APP_Y, CARD_H, CARD_STEP, NAV_BAR_H,
+    NAV_BAR_Y, PHONE_H, PHONE_W, STATUS_BAR_H,
 };
 use crate::policy::{AsymmetricOutputManager, OutputRole};
 use penumbra_gestures::{
@@ -128,6 +128,7 @@ pub struct PenumbraServerState {
     pub output_a: Output,
     pub output_b: Option<Output>,
     pub is_convergence_active: bool,
+    pub is_native: bool,
     pub pointer_location: Point<f64, smithay::utils::Logical>,
 
     /// Phone (Output A) tasks in MRU order. `[0]` is the active app.
@@ -411,6 +412,20 @@ impl PenumbraServerState {
                     &runtime_path(phone::SHELL_STATE_FILE),
                     &self.shell_state.serialize(),
                 );
+                self.publish_phone_tasks();
+                if let Some(first) = self.phone_tasks.first() {
+                    let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+                    if let Some(toplevel) = first.window.toplevel() {
+                        toplevel.with_pending_state(|state| {
+                            state.states.set(xdg_toplevel::State::Activated);
+                        });
+                        toplevel.send_configure();
+                        let surf = toplevel.wl_surface().clone();
+                        if let Some(keyboard) = self.seat.get_keyboard() {
+                            keyboard.set_focus(self, Some(surf), serial);
+                        }
+                    }
+                }
             }
         }
     }
@@ -420,68 +435,75 @@ impl PenumbraServerState {
         if let Ok(text) = std::fs::read_to_string(runtime_path(phone::SHELL_STATE_FILE)) {
             let new_state = ShellState::parse(&text);
 
-            if new_state.nav_switch_active && new_state.nav_gesture_active {
-                // Real-time horizontal Quick Switch drag
-                self.nav_switch_active = true;
-                self.nav_switch_dx = new_state.nav_gesture_dx;
-                self.nav_switch_vx = new_state.nav_gesture_vx;
-                self.nav_switch_spring = None;
-                self.nav_gesture_active = false;
-                self.nav_spring = None;
-            } else if self.nav_switch_active && !new_state.nav_gesture_active {
-                // Horizontal contact released -> launch lateral switch spring
-                self.nav_switch_active = false;
-                let dx = new_state.nav_gesture_dx;
-                let vx = new_state.nav_gesture_vx;
-                let target = arbitrate_horizontal_release(dx, vx, PHONE_W as f64);
-                let target_dx = match target {
-                    NavigationTarget::NextApp => -(PHONE_W as f64),
-                    NavigationTarget::PrevApp => PHONE_W as f64,
-                    _ => 0.0,
-                };
-                let mut spring = SpringSolver::horizontal_switch();
-                spring.reset(dx);
-                spring.set_target(target_dx);
-                spring.set_velocity(vx.clamp(-3000.0, 3000.0));
-                self.nav_switch_spring = Some(spring);
-                self.nav_switch_target = Some(target);
-                self.last_nav_spring_tick = Some(Instant::now());
-            } else if new_state.nav_gesture_active {
-                // Real-time vertical drag
-                self.nav_gesture_active = true;
-                self.nav_switch_active = false;
-                self.nav_gesture_progress = new_state.nav_gesture_progress;
-                self.nav_gesture_dy = new_state.nav_gesture_dy;
-                self.nav_gesture_vy = new_state.nav_gesture_vy;
-                self.nav_spring = None;
-            } else if self.nav_gesture_active {
-                // Vertical contact released -> arbitrate into Home, Overview, or Fullscreen
-                self.nav_gesture_active = false;
-                let target = arbitrate_release(
-                    self.nav_gesture_progress,
-                    self.nav_gesture_vy,
-                );
-                let target_pos = match target {
-                    NavigationTarget::Overview | NavigationTarget::Home => 1.0,
-                    _ => 0.0,
-                };
-                let mut spring = match target {
-                    NavigationTarget::Home => SpringSolver::home_dismiss(),
-                    _ => SpringSolver::overview(),
-                };
-                spring.reset(self.nav_gesture_progress);
-                spring.set_target(target_pos);
-                let denom = (PHONE_H as f64) * 0.45;
-                let v_norm = if denom > 0.0 { (-self.nav_gesture_vy / denom).clamp(-15.0, 15.0) } else { 0.0 };
-                spring.set_velocity(v_norm);
-                self.nav_spring = Some(spring);
-                self.nav_target = Some(target);
-                self.last_nav_spring_tick = Some(Instant::now());
+            if !self.is_native {
+                if new_state.nav_switch_active && new_state.nav_gesture_active {
+                    // Real-time horizontal Quick Switch drag
+                    self.nav_switch_active = true;
+                    self.nav_switch_dx = new_state.nav_gesture_dx;
+                    self.nav_switch_vx = new_state.nav_gesture_vx;
+                    self.nav_switch_spring = None;
+                    self.nav_gesture_active = false;
+                    self.nav_spring = None;
+                } else if self.nav_switch_active && !new_state.nav_gesture_active {
+                    // Horizontal contact released -> launch lateral switch spring
+                    self.nav_switch_active = false;
+                    let dx = new_state.nav_gesture_dx;
+                    let vx = new_state.nav_gesture_vx;
+                    let target = arbitrate_horizontal_release(dx, vx, PHONE_W as f64);
+                    let target_dx = match target {
+                        NavigationTarget::NextApp => -(PHONE_W as f64),
+                        NavigationTarget::PrevApp => PHONE_W as f64,
+                        _ => 0.0,
+                    };
+                    let mut spring = SpringSolver::horizontal_switch();
+                    spring.reset(dx);
+                    spring.set_target(target_dx);
+                    spring.set_velocity(vx.clamp(-3000.0, 3000.0));
+                    self.nav_switch_spring = Some(spring);
+                    self.nav_switch_target = Some(target);
+                    self.last_nav_spring_tick = Some(Instant::now());
+                } else if new_state.nav_gesture_active {
+                    // Real-time vertical drag
+                    self.nav_gesture_active = true;
+                    self.nav_switch_active = false;
+                    self.nav_gesture_progress = new_state.nav_gesture_progress;
+                    self.nav_gesture_dy = new_state.nav_gesture_dy;
+                    self.nav_gesture_vy = new_state.nav_gesture_vy;
+                    self.nav_spring = None;
+                } else if self.nav_gesture_active {
+                    // Vertical contact released -> arbitrate into Home, Overview, or Fullscreen
+                    self.nav_gesture_active = false;
+                    let target = arbitrate_release(
+                        self.nav_gesture_progress,
+                        self.nav_gesture_vy,
+                    );
+                    let target_pos = match target {
+                        NavigationTarget::Overview | NavigationTarget::Home => 1.0,
+                        _ => 0.0,
+                    };
+                    let mut spring = match target {
+                        NavigationTarget::Home => SpringSolver::home_dismiss(),
+                        _ => SpringSolver::overview(),
+                    };
+                    spring.reset(self.nav_gesture_progress);
+                    spring.set_target(target_pos);
+                    let denom = (PHONE_H as f64) * 0.45;
+                    let v_norm = if denom > 0.0 { (-self.nav_gesture_vy / denom).clamp(-15.0, 15.0) } else { 0.0 };
+                    spring.set_velocity(v_norm);
+                    self.nav_spring = Some(spring);
+                    self.nav_target = Some(target);
+                    self.last_nav_spring_tick = Some(Instant::now());
+                }
             }
 
             if new_state != self.shell_state {
-                info!("Shell state changed: {:?}", new_state);
-                self.shell_state = new_state;
+                // If compositor is actively tracking touch dragging in Overview, do not overwrite in-memory gesture coordinates
+                if self.shell_state.mode == PhoneMode::Overview && new_state.mode == PhoneMode::Overview && self.shell_state.is_dragging {
+                    // Retain in-memory drag position
+                } else {
+                    info!("Shell state changed: {:?}", new_state);
+                    self.shell_state = new_state;
+                }
             }
         }
 
@@ -586,6 +608,7 @@ impl PenumbraServerState {
                 &runtime_path(phone::SHELL_STATE_FILE),
                 &self.shell_state.serialize(),
             );
+            self.publish_phone_tasks();
 
             let serial = smithay::utils::SERIAL_COUNTER.next_serial();
             if let Some(first) = self.phone_tasks.first() {
@@ -872,6 +895,7 @@ impl XdgShellHandler for PenumbraServerState {
                 &runtime_path(phone::SHELL_STATE_FILE),
                 &self.shell_state.serialize(),
             );
+            self.publish_phone_tasks();
 
             let serial = smithay::utils::SERIAL_COUNTER.next_serial();
             if let Some(toplevel) = window_clone.toplevel() {
@@ -1344,6 +1368,7 @@ impl PenumbraCompositor {
             output_a,
             output_b,
             is_convergence_active: self.args.convergence,
+            is_native: false,
             pointer_location: (0.0, 0.0).into(),
             phone_tasks: Vec::new(),
             next_task_id: 1,
@@ -1614,6 +1639,37 @@ impl PenumbraCompositor {
                             false
                         };
 
+                        if !is_on_top_layer && state.pointer_location.x < PHONE_W as f64 && state.shell_state.mode == PhoneMode::Overview {
+                            if event.state() == smithay::backend::input::ButtonState::Released {
+                                let px = state.pointer_location.x;
+                                let py = state.pointer_location.y;
+                                let mut tapped_id = None;
+                                for (i, task) in state.phone_tasks.iter().enumerate() {
+                                    let (cx, cy, cw, ch, _) = card_transform(
+                                        i,
+                                        state.overview_scroll,
+                                        state.shell_state.overview_index,
+                                        0.0,
+                                    );
+                                    if px >= cx as f64
+                                        && px <= (cx + cw) as f64
+                                        && py >= cy as f64
+                                        && py <= (cy + ch) as f64
+                                    {
+                                        tapped_id = Some(task.id);
+                                        break;
+                                    }
+                                }
+                                if let Some(id) = tapped_id {
+                                    state.focus_task_by_id(id);
+                                    return;
+                                } else if py >= STATUS_BAR_H as f64 && py < NAV_BAR_Y as f64 {
+                                    state.set_phone_home();
+                                    return;
+                                }
+                            }
+                        }
+
                         if !is_on_top_layer && state.pointer_location.x >= PHONE_W as f64 {
                             let clicked_window = state
                                 .space
@@ -1640,6 +1696,25 @@ impl PenumbraCompositor {
                     InputEvent::PointerAxis { event } => {
                         let horizontal_amount = event.amount(Axis::Horizontal).unwrap_or(0.0);
                         let vertical_amount = event.amount(Axis::Vertical).unwrap_or(0.0);
+
+                        if state.pointer_location.x < PHONE_W as f64 && state.shell_state.mode == PhoneMode::Overview {
+                            let amount = if horizontal_amount.abs() > vertical_amount.abs() {
+                                horizontal_amount
+                            } else {
+                                vertical_amount
+                            };
+                            let delta = amount / (CARD_STEP as f64);
+                            let max_idx = state.phone_tasks.len().saturating_sub(1) as f64;
+                            let new_scroll = (state.overview_scroll + delta).clamp(0.0, max_idx);
+                            state.overview_scroll = new_scroll;
+                            state.shell_state.overview_scroll = new_scroll;
+                            state.shell_state.overview_index = new_scroll.round() as usize;
+                            let _ = write_atomic(
+                                &runtime_path(phone::SHELL_STATE_FILE),
+                                &state.shell_state.serialize(),
+                            );
+                            return;
+                        }
 
                         let mut frame = AxisFrame::new(start_time.elapsed().as_millis() as u32)
                             .source(event.source());
@@ -1849,6 +1924,7 @@ impl PenumbraCompositor {
                             if let Some(clip) = rect.intersection(phone_rect) {
                                 app_elements.extend(cropped(
                                     surface_elements(renderer, &cur_surface, (cur_x, cur_y), cur_scale),
+                                    cur_scale,
                                     clip,
                                 ));
                             }
@@ -1863,6 +1939,7 @@ impl PenumbraCompositor {
                                         if let Some(clip) = rect.intersection(phone_rect) {
                                             app_elements.extend(cropped(
                                                 surface_elements(renderer, toplevel.wl_surface(), (prev_x, cur_y), cur_scale),
+                                                cur_scale,
                                                 clip,
                                             ));
                                         }
@@ -1877,6 +1954,7 @@ impl PenumbraCompositor {
                                         if let Some(clip) = rect.intersection(phone_rect) {
                                             app_elements.extend(cropped(
                                                 surface_elements(renderer, toplevel.wl_surface(), (next_x, cur_y), cur_scale),
+                                                cur_scale,
                                                 clip,
                                             ));
                                         }
@@ -1906,6 +1984,7 @@ impl PenumbraCompositor {
                                 if let Some(clip) = app_rect.intersection(phone_rect) {
                                     app_elements.extend(cropped(
                                         surface_elements(renderer, &surface, (x, y), scale),
+                                        scale,
                                         clip,
                                     ));
                                 }
@@ -1915,12 +1994,13 @@ impl PenumbraCompositor {
                                 let w = (PHONE_W as f64 * scale).round() as i32;
                                 let h = (APP_H as f64 * scale).round() as i32;
                                 let x = ((PHONE_W - w) / 2).max(0);
-                                let target_y = 172.0;
+                                let target_y = ((PHONE_H - CARD_H) / 2) as f64;
                                 let y = (APP_Y as f64 * (1.0 - nav_progress) + target_y * nav_progress).round() as i32;
                                 let app_rect = phys_rect(x, y, w, h);
                                 if let Some(clip) = app_rect.intersection(phone_rect) {
                                     app_elements.extend(cropped(
                                         surface_elements(renderer, &surface, (x, y), scale),
+                                        scale,
                                         clip,
                                     ));
                                 }
@@ -1938,6 +2018,7 @@ impl PenumbraCompositor {
                                             if let Some(clip) = peek_rect.intersection(phone_rect) {
                                                 app_elements.extend(cropped(
                                                     surface_elements(renderer, toplevel.wl_surface(), (peek_x, dest_y), card_scale),
+                                                    card_scale,
                                                     clip,
                                                 ));
                                             }
@@ -1950,6 +2031,7 @@ impl PenumbraCompositor {
                         let app_rect = phys_rect(0, APP_Y, PHONE_W, APP_H);
                         app_elements = cropped(
                             surface_elements(renderer, &surface, (0, APP_Y), 1.0),
+                            1.0,
                             app_rect,
                         );
                     }
@@ -1975,6 +2057,7 @@ impl PenumbraCompositor {
                         if let Some(clip) = card.intersection(phone_rect) {
                             overview_elements.extend(cropped(
                                 surface_elements(renderer, toplevel.wl_surface(), (x, y), scale),
+                                scale,
                                 clip,
                             ));
                         }
@@ -1997,7 +2080,7 @@ impl PenumbraCompositor {
                 if let Some(ref s) = root_surface {
                     for rect in chrome_rects {
                         chrome_elements
-                            .extend(cropped(surface_elements(renderer, s, (0, 0), 1.0), rect));
+                            .extend(cropped(surface_elements(renderer, s, (0, 0), 1.0), 1.0, rect));
                     }
                 }
 
@@ -2107,11 +2190,13 @@ pub(crate) fn surface_elements(
 /// Clips render elements to `rect` (elements fully outside are dropped).
 pub(crate) fn cropped(
     elements: Vec<SurfaceElement>,
+    scale: impl Into<smithay::utils::Scale<f64>>,
     rect: Rectangle<i32, Physical>,
 ) -> Vec<CropRenderElement<SurfaceElement>> {
+    let scale = scale.into();
     elements
         .into_iter()
-        .filter_map(|e| CropRenderElement::from_element(e, 1.0, rect))
+        .filter_map(|e| CropRenderElement::from_element(e, scale, rect))
         .collect()
 }
 

@@ -27,7 +27,7 @@ use smithay::{
 
 use crate::{
     native::Canvas,
-    phone::{card_transform, CARD_STEP, NAV_BAR_Y, PHONE_H, PHONE_W, PhoneMode},
+    phone::{self, card_transform, runtime_path, write_atomic, CARD_STEP, NAV_BAR_Y, PHONE_H, PHONE_W, STATUS_BAR_H, PhoneMode},
     server::PenumbraServerState,
 };
 
@@ -66,6 +66,7 @@ pub(crate) struct NavTouchTracker {
     pub start_pos: Point<f64, Logical>,
     pub start_mode: PhoneMode,
     pub start_scroll: f64,
+    pub grabbed_card: Option<usize>,
     pub tracker: penumbra_gestures::VelocityTracker,
 }
 
@@ -345,23 +346,35 @@ pub(crate) fn handle(
                 return;
             }
 
-            // Dedicated bottom-right keyboard button (x >= 350.0, y >= 883.0)
-            if pos.y >= 883.0 && pos.x >= 350.0 {
-                let runtime_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
-                let cmd_file = std::path::PathBuf::from(runtime_dir).join("penumbra-keyboard-cmd");
-                let _ = std::fs::write(cmd_file, "toggle");
-                tracing::info!("Bottom-right keyboard button tapped -> toggling virtual keyboard");
-                return;
-            }
-
             // Navigation bar or Overview gesture tracking:
-            // Intercept if touching the bottom navigation swipe area (y >= 883.0, x < 350.0)
+            // Intercept if touching the generous bottom navigation swipe area (y >= 835.0, full width)
             // OR if already in Overview mode (where the entire screen is an interactive task switcher).
-            let is_nav_zone = pos.y >= 883.0 && pos.x < 350.0;
+            let is_nav_zone = pos.y >= (NAV_BAR_Y as f64 - 48.0);
             let is_overview = server.shell_state.mode == PhoneMode::Overview;
+            let in_overview_zone = is_overview && pos.y >= STATUS_BAR_H as f64;
 
-            if (is_nav_zone && (server.phone_app_visible() || is_overview || server.shell_state.mode == PhoneMode::App)) || is_overview {
+            if (is_nav_zone && (server.phone_app_visible() || is_overview || server.shell_state.mode == PhoneMode::App)) || in_overview_zone {
                 if input.nav_tracker.is_none() {
+                    let mut grabbed_card = None;
+                    if is_overview {
+                        for (index, _) in server.phone_tasks.iter().enumerate() {
+                            let (cx, cy, cw, ch, _) = card_transform(
+                                index,
+                                server.overview_scroll,
+                                server.shell_state.overview_index,
+                                0.0,
+                            );
+                            if pos.x >= cx as f64
+                                && pos.x <= (cx + cw) as f64
+                                && pos.y >= cy as f64
+                                && pos.y <= (cy + ch) as f64
+                            {
+                                grabbed_card = Some(index);
+                                break;
+                            }
+                        }
+                    }
+
                     let mut tracker = penumbra_gestures::VelocityTracker::new(0.8);
                     tracker.start(pos.x, pos.y, std::time::Duration::ZERO);
                     input.nav_tracker = Some(NavTouchTracker {
@@ -369,6 +382,7 @@ pub(crate) fn handle(
                         start_pos: pos,
                         start_mode: server.shell_state.mode,
                         start_scroll: server.shell_state.overview_scroll,
+                        grabbed_card,
                         tracker,
                     });
                     if !is_overview {
@@ -442,8 +456,8 @@ pub(crate) fn handle(
                             server.nav_gesture_dy = dy;
                             server.nav_gesture_vy = vy;
                         }
-                        // Case B: Upward drag to dismiss active card
-                        else if dy < -15.0 && (-dy) > dx.abs() * 0.8 {
+                        // Case B: Upward drag to dismiss active card ONLY if grabbed_card is Some
+                        else if nav.grabbed_card.is_some() && dy < -15.0 && (-dy) > dx.abs() * 0.8 {
                             server.nav_gesture_active = false;
                             server.shell_state.is_dragging = true;
                             server.shell_state.active_card_dy = dy;
@@ -478,6 +492,28 @@ pub(crate) fn handle(
                         server.nav_gesture_progress = progress;
                         server.nav_gesture_dy = dy;
                         server.nav_gesture_vy = vy;
+
+                        // Android dynamic transition: moving up at normal speed into overview zone
+                        // (progress >= 0.28 and vy > -550.0) seamlessly promotes gesture directly into live
+                        // Overview mode without releasing finger.
+                        if progress >= 0.28 && vy > -550.0 {
+                            tracing::info!(progress, vy, "Continuous pull-up promoted to live Overview under finger");
+                            server.shell_state.mode = PhoneMode::Overview;
+                            server.shell_state.overview_index = 0;
+                            server.shell_state.overview_scroll = 0.0;
+                            server.overview_scroll = 0.0;
+                            server.nav_gesture_active = false;
+                            server.nav_gesture_progress = 0.0;
+                            server.shell_state.is_dragging = true;
+                            server.shell_state.active_card_dy = 0.0;
+                            nav.start_mode = PhoneMode::Overview;
+                            nav.start_scroll = 0.0;
+                            nav.start_pos = pos;
+                            let _ = write_atomic(
+                                &runtime_path(phone::SHELL_STATE_FILE),
+                                &server.shell_state.serialize(),
+                            );
+                        }
                     }
                     return;
                 }
@@ -543,12 +579,23 @@ pub(crate) fn handle(
                         // 2. If dragging carousel or swiping up to dismiss
                         if server.shell_state.is_dragging {
                             server.shell_state.is_dragging = false;
-                            if server.shell_state.active_card_dy < -70.0 || vy < -250.0 || dy < -70.0 {
-                                if let Some(task) = server.phone_tasks.get(server.shell_state.overview_index) {
-                                    let id = task.id;
-                                    server.close_task_by_id(id);
+                            let dismissed = if let Some(card_idx) = nav.grabbed_card {
+                                if server.shell_state.active_card_dy < -70.0 || vy < -250.0 || dy < -70.0 {
+                                    if let Some(task) = server.phone_tasks.get(card_idx) {
+                                        let id = task.id;
+                                        server.close_task_by_id(id);
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                } else {
+                                    false
                                 }
                             } else {
+                                false
+                            };
+
+                            if !dismissed {
                                 // Horizontal settle with momentum
                                 let max_idx = server.phone_tasks.len().saturating_sub(1) as f64;
                                 let target_idx = if vx > 300.0 {
@@ -563,11 +610,15 @@ pub(crate) fn handle(
                                 server.overview_scroll = target_idx;
                             }
                             server.shell_state.active_card_dy = 0.0;
+                            let _ = write_atomic(
+                                &runtime_path(phone::SHELL_STATE_FILE),
+                                &server.shell_state.serialize(),
+                            );
                             return;
                         }
 
-                        // 3. Tap detection in Overview mode
-                        if dx.abs() < 12.0 && dy.abs() < 12.0 {
+                        // 3. Tap detection in Overview mode (using a 24px threshold for touchscreen tolerances)
+                        if dx.abs() < 24.0 && dy.abs() < 24.0 {
                             let mut tapped_task_id = None;
                             for (i, task) in server.phone_tasks.iter().enumerate() {
                                 let (cx, cy, cw, ch, _) = card_transform(
@@ -600,10 +651,25 @@ pub(crate) fn handle(
                         server.shell_state.active_card_dy = 0.0;
                         server.shell_state.overview_scroll = server.shell_state.overview_index as f64;
                         server.overview_scroll = server.shell_state.overview_scroll;
+                        let _ = write_atomic(
+                            &runtime_path(phone::SHELL_STATE_FILE),
+                            &server.shell_state.serialize(),
+                        );
                         return;
                     }
 
                     // Active App mode:
+                    // If tap occurred in bottom-right keyboard button area without dragging:
+                    if nav.start_pos.y >= 880.0 && nav.start_pos.x >= 355.0 && dx.abs() < 15.0 && dy.abs() < 15.0 {
+                        let runtime_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
+                        let cmd_file = std::path::PathBuf::from(runtime_dir).join("penumbra-keyboard-cmd");
+                        let _ = std::fs::write(cmd_file, "toggle");
+                        tracing::info!("Bottom-right keyboard button tapped -> toggling virtual keyboard");
+                        server.nav_gesture_active = false;
+                        server.nav_gesture_progress = 0.0;
+                        return;
+                    }
+
                     let switch_dx = server.nav_switch_dx;
                     if server.nav_switch_active || (switch_dx.abs() > 20.0 && switch_dx.abs() > server.nav_gesture_dy.abs() * 1.1) {
                         server.nav_switch_active = false;

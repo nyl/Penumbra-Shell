@@ -174,12 +174,17 @@ pub fn rubber_band_clamp(progress: f64) -> f64 {
 /// # Returns
 /// Committed [`NavigationTarget`].
 pub fn arbitrate_release(progress: f64, velocity_y: f64) -> NavigationTarget {
-    const FLICK_THRESHOLD: f64 = 500.0;
-    if velocity_y < -FLICK_THRESHOLD {
-        NavigationTarget::Home
-    } else if velocity_y > FLICK_THRESHOLD {
+    const DOWNWARD_FLING_THRESHOLD: f64 = 400.0;
+    const HOME_THROW_THRESHOLD: f64 = -550.0;
+    const OVERVIEW_PROGRESS_THRESHOLD: f64 = 0.25;
+
+    if velocity_y > DOWNWARD_FLING_THRESHOLD {
         NavigationTarget::Fullscreen
-    } else if progress >= 0.35 {
+    } else if velocity_y < HOME_THROW_THRESHOLD {
+        // Fast upward throw gesture -> sends to home screen, minimizes app
+        NavigationTarget::Home
+    } else if progress >= OVERVIEW_PROGRESS_THRESHOLD {
+        // Pull up normal speed into overview zone -> opens active windows cards
         NavigationTarget::Overview
     } else {
         NavigationTarget::Fullscreen

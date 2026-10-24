@@ -13,27 +13,16 @@
 //! - On touch release, dispatches velocity to [`penumbra_gestures::arbitrate_release`] and
 //!   transitions window state into `Overview` or returns to `Fullscreen`.
 
-use std::cell::RefCell;
-use std::rc::Rc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use slint::{ComponentHandle, Timer, TimerMode};
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
 use layer_shell_slint::{Anchor, KeyboardInteractivity, Layer, LayerConfig};
-use penumbra_gestures::{compute_normalized_progress, VelocityTracker};
 use penumbra_shell::ipc::{read_windows, send_command, PhoneMode, ShellState};
 
 slint::include_modules!();
-
-/// Coordinates and timestamps for active navigation touch interactions.
-#[derive(Debug, Clone, Copy)]
-struct TouchSession {
-    start_x: f64,
-    start_y: f64,
-    start_time: Instant,
-}
 
 pub(crate) fn main() -> Result<(), Box<dyn std::error::Error>> {
     let subscriber = FmtSubscriber::builder()
@@ -66,139 +55,10 @@ pub(crate) fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("Toggled virtual keyboard via navigation bar button");
     });
 
-    // 3. Continuous Navigation Gesture Tracker (Zero hold timers, EMA alpha = 0.8)
-    let tracker = Rc::new(RefCell::new(VelocityTracker::new(0.8)));
-    let active_touch = Rc::new(RefCell::new(Option::<TouchSession>::None));
-
-    {
-        let tracker = Rc::clone(&tracker);
-        let active_touch = Rc::clone(&active_touch);
-
-        bar.on_touch_down(move |x, y| {
-            let now = Instant::now();
-            *active_touch.borrow_mut() = Some(TouchSession {
-                start_x: x as f64,
-                start_y: y as f64,
-                start_time: now,
-            });
-
-            let mut trk = tracker.borrow_mut();
-            trk.reset();
-            trk.start(x as f64, y as f64, Duration::ZERO);
-
-            let mut state = ShellState::load();
-            state.nav_gesture_active = true;
-            state.nav_gesture_dy = 0.0;
-            state.nav_gesture_progress = 0.0;
-            state.nav_gesture_vy = 0.0;
-            let _ = state.save();
-        });
-    }
-
-    {
-        let tracker = Rc::clone(&tracker);
-        let active_touch = Rc::clone(&active_touch);
-
-        bar.on_touch_move(move |x, y| {
-            let touch = *active_touch.borrow();
-            let Some(session) = touch else {
-                return;
-            };
-
-            let elapsed = session.start_time.elapsed();
-            let mut trk = tracker.borrow_mut();
-            let (vx, vy) = trk.update(x as f64, y as f64, elapsed);
-
-            let delta_x = x as f64 - session.start_x;
-            let delta_y = y as f64 - session.start_y;
-
-            let mut state = ShellState::load();
-            state.nav_gesture_active = true;
-
-            // Check if gesture is horizontally dominant (Android Quick Switch, 24px deadzone)
-            if delta_x.abs() > 24.0 && delta_x.abs() > delta_y.abs() * 1.2 {
-                state.nav_switch_active = true;
-                state.nav_gesture_dx = delta_x;
-                state.nav_gesture_vx = vx;
-                state.nav_gesture_dy = 0.0;
-                state.nav_gesture_progress = 0.0;
-                state.nav_gesture_vy = 0.0;
-            } else {
-                // Vertically dominant (Overview / Home swipe)
-                let progress = compute_normalized_progress(delta_y, 915.0);
-                state.nav_switch_active = false;
-                state.nav_gesture_dx = 0.0;
-                state.nav_gesture_vx = 0.0;
-                state.nav_gesture_dy = delta_y;
-                state.nav_gesture_progress = progress;
-                state.nav_gesture_vy = vy;
-            }
-            let _ = state.save();
-        });
-    }
-
-    {
-        let tracker = Rc::clone(&tracker);
-        let active_touch = Rc::clone(&active_touch);
-
-        bar.on_touch_up(move |x, y| {
-            let touch = active_touch.borrow_mut().take();
-            let Some(session) = touch else {
-                return;
-            };
-
-            let elapsed = session.start_time.elapsed();
-            let mut trk = tracker.borrow_mut();
-            let (vx, vy) = trk.update(x as f64, y as f64, elapsed);
-
-            let delta_x = x as f64 - session.start_x;
-            let delta_y = y as f64 - session.start_y;
-
-            // 1. Quick tap (< 15px travel, < 250ms duration) -> Go Home
-            if delta_x.abs() < 15.0 && delta_y.abs() < 15.0 && elapsed < Duration::from_millis(250) {
-                info!("Navigation: Quick tap on nav pill -> Return Home");
-                let mut state = ShellState::load();
-                state.mode = PhoneMode::Home;
-                state.drawer_open = false;
-                state.nav_gesture_active = false;
-                state.nav_gesture_progress = 0.0;
-                state.nav_switch_active = false;
-                state.nav_gesture_dx = 0.0;
-                let _ = state.save();
-                return;
-            }
-
-            // 2. Horizontal Quick Switch Arbitration
-            if delta_x.abs() > 15.0 && delta_x.abs() > delta_y.abs() * 1.1 {
-                info!(
-                    "Navigation: Horizontal Quick Switch release dx={:.1}, vx={:.1}px/s",
-                    delta_x, vx
-                );
-                let mut state = ShellState::load();
-                state.nav_gesture_active = false;
-                state.nav_switch_active = true;
-                state.nav_gesture_dx = delta_x;
-                state.nav_gesture_vx = vx;
-                let _ = state.save();
-                return;
-            }
-
-            // 3. Vertical Navigation Swipe Arbitration
-            let progress = compute_normalized_progress(delta_y, 915.0);
-            info!(
-                "Navigation: Vertical release progress={:.2}, vy={:.1}px/s",
-                progress, vy
-            );
-
-            let mut state = ShellState::load();
-            state.nav_gesture_active = false;
-            state.nav_switch_active = false;
-            state.nav_gesture_progress = progress;
-            state.nav_gesture_dy = delta_y;
-            state.nav_gesture_vy = vy;
-            let _ = state.save();
-        });
-    }
+    // 3. Navigation gesture tracking is handled natively by penumbra-comp with 120Hz libinput physics.
+    bar.on_touch_down(|_, _| {});
+    bar.on_touch_move(|_, _| {});
+    bar.on_touch_up(|_, _| {});
 
     // Direct callbacks
     bar.on_nav_home(|| {

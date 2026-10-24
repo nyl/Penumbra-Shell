@@ -30,7 +30,7 @@ use smithay::{
         rustix::fs::OFlags,
         wayland_server::{Client, Display, ListeningSocket},
     },
-    utils::{DeviceFd, Logical, Physical, Point, Rectangle, Size, Transform},
+    utils::{DeviceFd, Physical, Rectangle, Size, Transform},
     wayland::{
         compositor::CompositorState,
         input_method::InputMethodManagerState,
@@ -50,7 +50,7 @@ use crate::{
     native_input::{self, InputState},
     phone::{
         self, card_transform, resolve_app_icon_target, runtime_path, write_atomic, PhoneMode,
-        ShellState, APP_H, APP_Y, CARD_H, PHONE_H, PHONE_W,
+        ShellState, APP_H, APP_Y, CARD_H, OVERVIEW_SCALE, PHONE_H, PHONE_W,
     },
     server::{
         cropped, send_frames_surface_tree, surface_elements, ClientState, PenumbraCompositor,
@@ -184,6 +184,7 @@ fn app_elements(
             if let Some(clip) = rect.intersection(phone_clip) {
                 elements.extend(cropped(
                     surface_elements(renderer, &cur_surface, canvas.loc(cur_x, cur_y), draw_scale),
+                    draw_scale,
                     clip,
                 ));
             }
@@ -199,6 +200,7 @@ fn app_elements(
                         if let Some(clip) = rect.intersection(phone_clip) {
                             elements.extend(cropped(
                                 surface_elements(renderer, toplevel.wl_surface(), canvas.loc(prev_x, cur_y), draw_scale),
+                                draw_scale,
                                 clip,
                             ));
                         }
@@ -213,6 +215,7 @@ fn app_elements(
                         if let Some(clip) = rect.intersection(phone_clip) {
                             elements.extend(cropped(
                                 surface_elements(renderer, toplevel.wl_surface(), canvas.loc(next_x, cur_y), draw_scale),
+                                draw_scale,
                                 clip,
                             ));
                         }
@@ -221,6 +224,13 @@ fn app_elements(
             }
         }
         return elements;
+    }
+
+    if server.shell_state.mode == PhoneMode::Overview
+        && server.nav_target != Some(penumbra_gestures::NavigationTarget::Fullscreen)
+        && !server.nav_gesture_active
+    {
+        return Vec::new();
     }
 
     let Some(surface) = server.active_phone_surface() else {
@@ -256,11 +266,15 @@ fn app_elements(
             if let Some(clip) = card_clip.intersection(phone_clip) {
                 elements.extend(cropped(
                     surface_elements(renderer, &surface, canvas.loc(x, y), draw_scale),
+                    draw_scale,
                     clip,
                 ));
             }
+        } else if server.nav_target == Some(penumbra_gestures::NavigationTarget::Overview) {
+            // Handled smoothly by overview_elements spring entrance
+            return elements;
         } else {
-            // Overview card transform: scale to 0.78, center at y = 129.5
+            // Active window scaling down to card position during gesture pull-up
             let scale_factor = penumbra_gestures::compute_window_scale(nav_progress);
             let w = (PHONE_W as f64 * scale_factor).round() as i32;
             let h = (APP_H as f64 * scale_factor).round() as i32;
@@ -273,34 +287,15 @@ fn app_elements(
             if let Some(clip) = card_clip.intersection(phone_clip) {
                 elements.extend(cropped(
                     surface_elements(renderer, &surface, canvas.loc(x, y), draw_scale),
+                    draw_scale,
                     clip,
                 ));
-            }
-
-            // Adjacent cards peek into viewport when nav_progress > 0.20 (finger above dock area)
-            if nav_progress > 0.20 && server.phone_tasks.len() > 1 {
-                let p_peek = ((nav_progress - 0.20) / 0.80).clamp(0.0, 1.0);
-                if let Some(prev_task) = server.phone_tasks.get(1) {
-                    if let Some(toplevel) = prev_task.window.toplevel() {
-                        let (dest_x, dest_y, dest_w, dest_h, card_scale) =
-                            card_transform(1, 0.0, 0, 0.0);
-                        let start_x = -dest_w - 60;
-                        let peek_x = (start_x as f64 * (1.0 - p_peek) + dest_x as f64 * p_peek).round() as i32;
-                        let peek_clip = canvas.rect(peek_x, dest_y, dest_w, dest_h);
-                        if let Some(clip) = peek_clip.intersection(phone_clip) {
-                            let draw_scale = card_scale * canvas.scale;
-                            elements.extend(cropped(
-                                surface_elements(renderer, toplevel.wl_surface(), canvas.loc(peek_x, dest_y), draw_scale),
-                                clip,
-                            ));
-                        }
-                    }
-                }
             }
         }
     } else {
         elements.extend(cropped(
             surface_elements(renderer, &surface, canvas.loc(0, APP_Y), canvas.scale),
+            canvas.scale,
             canvas.rect(0, APP_Y, PHONE_W, APP_H),
         ));
     }
@@ -308,26 +303,40 @@ fn app_elements(
 }
 
 /// Overview carousel cards, clipped to the phone canvas.
-///
-/// Each card is returned with its own draw scale: element size is resolved at draw time,
-/// so the card scale (carousel scale times canvas scale) must be passed to the draw call.
 fn overview_elements(
     renderer: &mut GlesRenderer,
     server: &PenumbraServerState,
     canvas: Canvas,
-) -> Vec<(f64, Vec<CropRenderElement<SurfaceElement>>)> {
+) -> Vec<CropRenderElement<SurfaceElement>> {
     let mut cards = Vec::new();
-    if server.shell_state.mode != PhoneMode::Overview || server.shell_state.drawer_open {
+    let is_spring_to_overview = server.nav_target == Some(penumbra_gestures::NavigationTarget::Overview);
+    let is_dragging_to_overview = server.nav_gesture_active && server.nav_gesture_progress > 0.10;
+    if (server.shell_state.mode != PhoneMode::Overview && !is_spring_to_overview && !is_dragging_to_overview)
+        || server.shell_state.drawer_open
+    {
         return cards;
     }
     let phone_clip = canvas.rect(0, 0, PHONE_W, PHONE_H);
-    for (index, task) in server.phone_tasks.iter().enumerate() {
-        let (x, y, w, h, scale) = card_transform(
+    let card_scale = OVERVIEW_SCALE * canvas.scale;
+
+    // Google spring entrance offset: carousel glides smoothly from left into center on last app card
+    let entrance_offset_x = if is_spring_to_overview || is_dragging_to_overview {
+        let p = server.nav_gesture_progress.clamp(0.0, 1.0);
+        ((1.0 - p) * -160.0).round() as i32
+    } else {
+        0
+    };
+
+    let start_index = if is_dragging_to_overview { 1 } else { 0 };
+
+    for (index, task) in server.phone_tasks.iter().enumerate().skip(start_index) {
+        let (raw_x, y, w, h, _scale) = card_transform(
             index,
             server.overview_scroll,
             server.shell_state.overview_index,
             server.shell_state.active_card_dy,
         );
+        let x = raw_x + entrance_offset_x;
         if x + w <= 0 || x >= PHONE_W {
             continue;
         }
@@ -336,12 +345,12 @@ fn overview_elements(
         };
         let card = canvas.rect(x, y, w, h);
         if let Some(clip) = card.intersection(phone_clip) {
-            let draw_scale = scale * canvas.scale;
             let elements = cropped(
-                surface_elements(renderer, toplevel.wl_surface(), canvas.loc(x, y), draw_scale),
+                surface_elements(renderer, toplevel.wl_surface(), canvas.loc(x, y), card_scale),
+                card_scale,
                 clip,
             );
-            cards.push((draw_scale, elements));
+            cards.extend(elements);
         }
     }
     cards
@@ -427,10 +436,20 @@ fn render_frame(state: &mut NativeState, buffer: &mut Dmabuf) -> Result<(), Box<
     if !scrim.is_empty() {
         draw_render_elements::<GlesRenderer, _, _>(&mut frame, scale, &scrim, &[damage])?;
     }
-    draw_render_elements(&mut frame, scale, &apps, &[damage])?;
-    for (card_scale, card) in &overview {
-        draw_render_elements(&mut frame, *card_scale, card, &[damage])?;
-    }
+    let active_app_scale = if (server.is_nav_animating() || server.nav_gesture_active)
+        && server.nav_target == Some(penumbra_gestures::NavigationTarget::Home)
+    {
+        let t = server.nav_gesture_progress.clamp(0.0, 1.0);
+        compute_home_collapse_scale(t) * canvas.scale
+    } else if (server.is_nav_animating() || server.nav_gesture_active) && server.nav_gesture_progress > 0.001 {
+        let scale_factor = penumbra_gestures::compute_window_scale(server.nav_gesture_progress);
+        scale_factor * canvas.scale
+    } else {
+        canvas.scale
+    };
+    draw_render_elements(&mut frame, active_app_scale, &apps, &[damage])?;
+    let overview_scale = OVERVIEW_SCALE * canvas.scale;
+    draw_render_elements(&mut frame, overview_scale, &overview, &[damage])?;
 
     draw_render_elements(&mut frame, scale, &top, &[damage])?;
     draw_render_elements(&mut frame, scale, &overlay, &[damage])?;
@@ -599,6 +618,7 @@ pub fn run(_compositor: &mut PenumbraCompositor) -> Result<(), Box<dyn Error>> {
         output_a,
         output_b: None,
         is_convergence_active: false,
+        is_native: true,
         pointer_location: (0.0, 0.0).into(),
         phone_tasks: Vec::new(),
         next_task_id: 1,
