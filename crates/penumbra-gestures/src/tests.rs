@@ -192,4 +192,78 @@ mod unit_tests {
         );
         assert_eq!(gesture, Some(NavigationGesture::OpenQuickSettings));
     }
+
+    #[test]
+    fn test_velocity_tracker_ema() {
+        use crate::velocity::VelocityTracker;
+        let mut tracker = VelocityTracker::new(0.8);
+        let t0 = Duration::from_millis(0);
+        tracker.start(100.0, 500.0, t0);
+
+        // Move 100px up in 100ms -> inst_vy = -1000.0 px/s
+        let (_, vy) = tracker.update(100.0, 400.0, t0 + Duration::from_millis(100));
+        assert!((vy - (-1000.0)).abs() < 50.0);
+
+        // Move another 100px up in 100ms -> inst_vy = -1000.0 px/s
+        let (_, vy2) = tracker.update(100.0, 300.0, t0 + Duration::from_millis(200));
+        assert!((vy2 - (-1000.0)).abs() < 50.0);
+    }
+
+    #[test]
+    fn test_overview_spring_physics() {
+        use crate::spring::SpringSolver;
+        let mut spring = SpringSolver::overview()
+            .with_position(0.0)
+            .with_target(1.0)
+            .with_velocity(-1.5);
+
+        let dt = 1.0 / 60.0;
+        for _ in 0..60 {
+            spring.step(dt);
+        }
+        // At 1 second, it should have reached close to 1.0
+        assert!((spring.position - 1.0).abs() < 0.05);
+    }
+
+    #[test]
+    fn test_navigation_arbitration() {
+        use crate::gesture_state::{
+            arbitrate_horizontal_release, arbitrate_release, compute_normalized_progress,
+            NavigationTarget,
+        };
+        let screen_h = 915.0;
+
+        // Small upward drag (-50px) at low velocity -> Fullscreen
+        let t = compute_normalized_progress(-50.0, screen_h);
+        assert_eq!(arbitrate_release(t, -100.0), NavigationTarget::Fullscreen);
+
+        // Fast upward flick -> Home (Authentic Android navigation)
+        assert_eq!(arbitrate_release(t, -800.0), NavigationTarget::Home);
+
+        // Fast downward fling -> Fullscreen
+        assert_eq!(arbitrate_release(0.8, 700.0), NavigationTarget::Fullscreen);
+
+        // Drag and pause past threshold (t >= 0.35) at low velocity -> Overview
+        let t_large = compute_normalized_progress(-200.0, screen_h);
+        assert_eq!(arbitrate_release(t_large, 0.0), NavigationTarget::Overview);
+
+        // Horizontal Quick Switch arbitration:
+        let screen_w = 412.0;
+        // Fast swipe left -> NextApp
+        assert_eq!(
+            arbitrate_horizontal_release(-30.0, -600.0, screen_w),
+            NavigationTarget::NextApp
+        );
+        // Fast swipe right -> PrevApp
+        assert_eq!(
+            arbitrate_horizontal_release(30.0, 600.0, screen_w),
+            NavigationTarget::PrevApp
+        );
+        // Small horizontal drag without flick -> Fullscreen
+        assert_eq!(
+            arbitrate_horizontal_release(10.0, 50.0, screen_w),
+            NavigationTarget::Fullscreen
+        );
+    }
 }
+

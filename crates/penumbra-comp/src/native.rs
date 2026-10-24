@@ -139,7 +139,7 @@ fn layer_elements(
     elements
 }
 
-/// Active phone application, cropped to the app work area.
+/// Active phone application, cropped to the app work area and transformed interactively during gestures.
 fn app_elements(
     renderer: &mut GlesRenderer,
     server: &PenumbraServerState,
@@ -148,13 +148,108 @@ fn app_elements(
     if !server.phone_app_visible() {
         return Vec::new();
     }
+    let mut elements = Vec::new();
+    let phone_clip = canvas.rect(0, 0, PHONE_W, PHONE_H);
+    let switch_dx = server.nav_switch_dx;
+
+    if switch_dx.abs() > 0.5 {
+        // Horizontal Quick Switch: render active and adjacent task sliding laterally
+        let cur_x = switch_dx.round() as i32;
+        let cur_scale = (1.0 - (switch_dx.abs() / (PHONE_W as f64 * 3.0))).clamp(0.92, 1.0);
+        let draw_scale = cur_scale * canvas.scale;
+
+        if let Some(cur_surface) = server.active_phone_surface() {
+            let rect = canvas.rect(cur_x, APP_Y, PHONE_W, APP_H);
+            if let Some(clip) = rect.intersection(phone_clip) {
+                elements.extend(cropped(
+                    surface_elements(renderer, &cur_surface, canvas.loc(cur_x, APP_Y), draw_scale),
+                    clip,
+                ));
+            }
+        }
+
+        if server.phone_tasks.len() > 1 {
+            if switch_dx > 0.0 {
+                // Dragging right -> previous task enters from left
+                if let Some(prev_task) = server.phone_tasks.last() {
+                    if let Some(toplevel) = prev_task.window.toplevel() {
+                        let prev_x = (switch_dx - PHONE_W as f64).round() as i32;
+                        let rect = canvas.rect(prev_x, APP_Y, PHONE_W, APP_H);
+                        if let Some(clip) = rect.intersection(phone_clip) {
+                            elements.extend(cropped(
+                                surface_elements(renderer, toplevel.wl_surface(), canvas.loc(prev_x, APP_Y), draw_scale),
+                                clip,
+                            ));
+                        }
+                    }
+                }
+            } else {
+                // Dragging left -> next task enters from right
+                if let Some(next_task) = server.phone_tasks.get(1) {
+                    if let Some(toplevel) = next_task.window.toplevel() {
+                        let next_x = (switch_dx + PHONE_W as f64).round() as i32;
+                        let rect = canvas.rect(next_x, APP_Y, PHONE_W, APP_H);
+                        if let Some(clip) = rect.intersection(phone_clip) {
+                            elements.extend(cropped(
+                                surface_elements(renderer, toplevel.wl_surface(), canvas.loc(next_x, APP_Y), draw_scale),
+                                clip,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        return elements;
+    }
+
     let Some(surface) = server.active_phone_surface() else {
         return Vec::new();
     };
-    cropped(
-        surface_elements(renderer, &surface, canvas.loc(0, APP_Y), canvas.scale),
-        canvas.rect(0, APP_Y, PHONE_W, APP_H),
-    )
+
+    let nav_progress = if server.is_nav_animating() {
+        server.nav_gesture_progress
+    } else {
+        0.0
+    };
+
+    if nav_progress > 0.001 {
+        if server.nav_target == Some(penumbra_gestures::NavigationTarget::Home) {
+            // Dismiss to home: shrink smoothly into homescreen launcher
+            let scale_factor = (1.0 - nav_progress * 0.75).max(0.15);
+            let w = (PHONE_W as f64 * scale_factor).round() as i32;
+            let h = (APP_H as f64 * scale_factor).round() as i32;
+            let x = ((PHONE_W - w) / 2).max(0);
+            let target_y = (APP_Y as f64 + (APP_H as f64 * 0.35)).round() as i32;
+            let y = (APP_Y as f64 * (1.0 - nav_progress) + target_y as f64 * nav_progress).round() as i32;
+
+            let draw_scale = scale_factor * canvas.scale;
+            let card_clip = canvas.rect(x, y, w, h);
+            cropped(
+                surface_elements(renderer, &surface, canvas.loc(x, y), draw_scale),
+                card_clip,
+            )
+        } else {
+            // Overview card transform: scale to 0.68, center at y = 172
+            let scale_factor = penumbra_gestures::compute_window_scale(nav_progress);
+            let w = (PHONE_W as f64 * scale_factor).round() as i32;
+            let h = (APP_H as f64 * scale_factor).round() as i32;
+            let x = ((PHONE_W - w) / 2).max(0);
+            let target_y = 172.0;
+            let y = (APP_Y as f64 * (1.0 - nav_progress) + target_y * nav_progress).round() as i32;
+
+            let draw_scale = scale_factor * canvas.scale;
+            let card_clip = canvas.rect(x, y, w, h);
+            cropped(
+                surface_elements(renderer, &surface, canvas.loc(x, y), draw_scale),
+                card_clip,
+            )
+        }
+    } else {
+        cropped(
+            surface_elements(renderer, &surface, canvas.loc(0, APP_Y), canvas.scale),
+            canvas.rect(0, APP_Y, PHONE_W, APP_H),
+        )
+    }
 }
 
 /// Overview carousel cards, clipped to the phone canvas.
@@ -215,7 +310,40 @@ fn render_frame(state: &mut NativeState, buffer: &mut Dmabuf) -> Result<(), Box<
     // Phone Layer 0: homescreen and wallpaper on the background layer.
     let background = layer_elements(renderer, &server.output_a, canvas, Layer::Background);
     let bottom = layer_elements(renderer, &server.output_a, canvas, Layer::Bottom);
-    // Phone Layer 1: active application inside the system insets.
+
+    // Phone Layer 0.5: Dimming Scrim (#0b0a0e, max 45% alpha) modulated by gesture progress
+    let nav_progress = if server.is_nav_animating() {
+        server.nav_gesture_progress
+    } else {
+        0.0
+    };
+    let scrim: Vec<smithay::backend::renderer::element::solid::SolidColorRenderElement> = if nav_progress > 0.001 {
+        let max_scrim = if server.nav_target == Some(penumbra_gestures::NavigationTarget::Home) {
+            0.25 * (1.0 - nav_progress).max(0.0)
+        } else {
+            penumbra_gestures::compute_scrim_alpha(nav_progress)
+        };
+        let scrim_alpha = max_scrim as f32;
+        if scrim_alpha > 0.001 {
+            let scrim_buf = smithay::backend::renderer::element::solid::SolidColorBuffer::new(
+                (PHONE_W, PHONE_H),
+                Color32F::new(0.0431, 0.0392, 0.0549, scrim_alpha),
+            );
+            smithay::backend::renderer::element::AsRenderElements::<GlesRenderer>::render_elements(
+                &scrim_buf,
+                renderer,
+                canvas.loc(0, 0).into(),
+                smithay::utils::Scale::from(canvas.scale),
+                1.0,
+            )
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
+    // Phone Layer 1: active application inside the system insets (transformed dynamically during gestures).
     let apps = app_elements(renderer, server, canvas);
     // Phone Layer 2: overview carousel thumbnails.
     let overview = overview_elements(renderer, server, canvas);
@@ -238,6 +366,9 @@ fn render_frame(state: &mut NativeState, buffer: &mut Dmabuf) -> Result<(), Box<
     frame.clear(Color32F::new(0.02, 0.02, 0.03, 1.0), &[damage])?;
     draw_render_elements(&mut frame, scale, &background, &[damage])?;
     draw_render_elements(&mut frame, scale, &bottom, &[damage])?;
+    if !scrim.is_empty() {
+        draw_render_elements::<GlesRenderer, _, _>(&mut frame, scale, &scrim, &[damage])?;
+    }
     draw_render_elements(&mut frame, scale, &apps, &[damage])?;
     for (card_scale, card) in &overview {
         draw_render_elements(&mut frame, *card_scale, card, &[damage])?;
@@ -411,6 +542,23 @@ pub fn run(_compositor: &mut PenumbraCompositor) -> Result<(), Box<dyn Error>> {
         phone_logical_size: (phone::PHONE_W, phone::PHONE_H),
         screen_blanked: false,
         saved_brightness: 2500,
+        nav_gesture_active: false,
+        nav_gesture_progress: 0.0,
+        nav_gesture_dy: 0.0,
+        nav_gesture_vy: 0.0,
+        nav_switch_active: false,
+        nav_switch_dx: 0.0,
+        nav_switch_vx: 0.0,
+        nav_spring: None,
+        nav_target: None,
+        nav_switch_spring: None,
+        nav_switch_target: None,
+        last_nav_spring_tick: None,
+        blurred_wallpaper: Some(crate::wallpaper_blur::BlurredWallpaperCache::load_and_blur(
+            None,
+            phone::PHONE_W,
+            phone::PHONE_H,
+        )),
     };
     let _ = std::fs::remove_file(runtime_path(phone::SHELL_STATE_FILE));
     let _ = std::fs::remove_file(runtime_path(phone::SHELL_CMD_FILE));
@@ -479,12 +627,14 @@ pub fn run(_compositor: &mut PenumbraCompositor) -> Result<(), Box<dyn Error>> {
         }
         state.server.space.refresh();
 
-        // Shell state arrives through files; poll faster while the overview animates.
+        // Shell state arrives through files; poll faster while the overview animates or gesture is active.
         let is_overview = state.server.shell_state.mode == PhoneMode::Overview;
-        if is_overview || state.last_ipc_poll.elapsed() >= Duration::from_millis(30) {
+        let is_animating = state.server.is_nav_animating();
+        if is_overview || is_animating || state.last_ipc_poll.elapsed() >= Duration::from_millis(16) {
             state.server.poll_shell_ipc();
             state.last_ipc_poll = Instant::now();
         }
+        state.server.advance_nav_spring();
         state.server.advance_overview_scroll();
 
         if let Some(press_time) = state.input.power_press_time {

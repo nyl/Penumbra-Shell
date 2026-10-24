@@ -33,9 +33,6 @@ path = "src/bin/quick_settings.rs"
 name = "penumbra-quicksettings"
 path = "src/bin/quicksettings.rs"
 
-[[bin]]
-name = "penumbra-nav-pill"
-path = "src/bin/nav_pill.rs"
 
 [dependencies]
 layer-shell-slint = { path = "../layer-shell-slint" }

@@ -81,7 +81,10 @@ use crate::phone::{
     ShellCommand, ShellState, APP_H, APP_Y, NAV_BAR_H, NAV_BAR_Y, PHONE_H, PHONE_W, STATUS_BAR_H,
 };
 use crate::policy::{AsymmetricOutputManager, OutputRole};
-use penumbra_gestures::{GestureStateMachine, NavigationGesture, Spring};
+use penumbra_gestures::{
+    arbitrate_horizontal_release, arbitrate_release, compute_scrim_alpha, compute_window_scale,
+    GestureStateMachine, NavigationGesture, NavigationTarget, Spring, SpringSolver,
+};
 
 /// Client-specific compositor state.
 #[derive(Default)]
@@ -130,6 +133,33 @@ pub struct PenumbraServerState {
     pub phone_logical_size: (i32, i32),
     pub screen_blanked: bool,
     pub saved_brightness: u32,
+
+    /// Whether a bottom nav bar gesture is currently active (finger down and dragging).
+    pub nav_gesture_active: bool,
+    /// Normalized gesture progress t in [0.0, 1.05].
+    pub nav_gesture_progress: f64,
+    /// Vertical drag displacement (pixels, negative = dragging up).
+    pub nav_gesture_dy: f64,
+    /// Instantaneous vertical velocity (pixels/second).
+    pub nav_gesture_vy: f64,
+    /// Whether user is currently swiping horizontally along nav bar (Quick Switch).
+    pub nav_switch_active: bool,
+    /// Horizontal offset during Quick Switch drag or spring animation (pixels).
+    pub nav_switch_dx: f64,
+    /// Instantaneous horizontal velocity (pixels/second).
+    pub nav_switch_vx: f64,
+    /// Spring solver animating vertical progress towards 1.0 (Overview/Home) or 0.0 (Fullscreen).
+    pub nav_spring: Option<SpringSolver>,
+    /// Target state when nav_spring settles.
+    pub nav_target: Option<NavigationTarget>,
+    /// Spring solver animating horizontal offset dx during lateral card switching.
+    pub nav_switch_spring: Option<SpringSolver>,
+    /// Target state when nav_switch_spring settles.
+    pub nav_switch_target: Option<NavigationTarget>,
+    /// Last timestamp the nav spring was updated.
+    pub last_nav_spring_tick: Option<Instant>,
+    /// Pre-blurred wallpaper cache for fast zero-cost background compositing.
+    pub blurred_wallpaper: Option<crate::wallpaper_blur::BlurredWallpaperCache>,
 }
 
 /// A Wayland toplevel living on the phone output.
@@ -237,10 +267,161 @@ impl PenumbraServerState {
         }
     }
 
+    /// Returns true if a navigation gesture or spring settling animation is currently active.
+    pub(crate) fn is_nav_animating(&self) -> bool {
+        self.nav_gesture_active
+            || self.nav_spring.is_some()
+            || self.nav_gesture_progress > 0.001
+            || self.nav_switch_active
+            || self.nav_switch_spring.is_some()
+            || self.nav_switch_dx.abs() > 0.5
+    }
+
+    /// Advances the inertial spring solver governing Overview / Home / Fullscreen
+    /// and horizontal Quick Switch window cycling transitions.
+    pub(crate) fn advance_nav_spring(&mut self) {
+        let now = Instant::now();
+        let dt = if let Some(last) = self.last_nav_spring_tick {
+            now.duration_since(last).as_secs_f64().min(0.05)
+        } else {
+            0.016
+        };
+        self.last_nav_spring_tick = Some(now);
+
+        // 1. Advance vertical gesture spring
+        if let Some(ref mut spring) = self.nav_spring {
+            spring.step_analytical(dt);
+            self.nav_gesture_progress = spring.position.clamp(0.0, 1.15);
+
+            if spring.is_settled_default() {
+                let target = self.nav_target.take();
+                self.nav_spring = None;
+                match target {
+                    Some(NavigationTarget::Overview) => {
+                        self.nav_gesture_progress = 0.0;
+                        self.shell_state.mode = PhoneMode::Overview;
+                        let _ = write_atomic(
+                            &runtime_path(phone::SHELL_STATE_FILE),
+                            &self.shell_state.serialize(),
+                        );
+                    }
+                    Some(NavigationTarget::Home) => {
+                        self.nav_gesture_progress = 0.0;
+                        self.shell_state.mode = PhoneMode::Home;
+                        let _ = write_atomic(
+                            &runtime_path(phone::SHELL_STATE_FILE),
+                            &self.shell_state.serialize(),
+                        );
+                    }
+                    Some(NavigationTarget::Fullscreen) | _ => {
+                        self.nav_gesture_progress = 0.0;
+                        self.shell_state.mode = PhoneMode::App;
+                        let _ = write_atomic(
+                            &runtime_path(phone::SHELL_STATE_FILE),
+                            &self.shell_state.serialize(),
+                        );
+                    }
+                }
+            }
+        }
+
+        // 2. Advance horizontal Quick Switch card transition spring
+        if let Some(ref mut spring) = self.nav_switch_spring {
+            spring.step_analytical(dt);
+            self.nav_switch_dx = spring.position;
+
+            if spring.is_settled(2.0, 20.0) {
+                let target = self.nav_switch_target.take();
+                self.nav_switch_spring = None;
+                self.nav_switch_dx = 0.0;
+                match target {
+                    Some(NavigationTarget::NextApp) => {
+                        if self.phone_tasks.len() > 1 {
+                            let task = self.phone_tasks.remove(0);
+                            self.phone_tasks.push(task);
+                        }
+                    }
+                    Some(NavigationTarget::PrevApp) => {
+                        if self.phone_tasks.len() > 1 {
+                            let task = self.phone_tasks.pop().unwrap();
+                            self.phone_tasks.insert(0, task);
+                        }
+                    }
+                    _ => {}
+                }
+                self.shell_state.mode = PhoneMode::App;
+                let _ = write_atomic(
+                    &runtime_path(phone::SHELL_STATE_FILE),
+                    &self.shell_state.serialize(),
+                );
+            }
+        }
+    }
+
     /// Reads shell state + commands and publishes the phone task list.
     pub(crate) fn poll_shell_ipc(&mut self) {
         if let Ok(text) = std::fs::read_to_string(runtime_path(phone::SHELL_STATE_FILE)) {
             let new_state = ShellState::parse(&text);
+
+            if new_state.nav_switch_active && new_state.nav_gesture_active {
+                // Real-time horizontal Quick Switch drag
+                self.nav_switch_active = true;
+                self.nav_switch_dx = new_state.nav_gesture_dx;
+                self.nav_switch_vx = new_state.nav_gesture_vx;
+                self.nav_switch_spring = None;
+                self.nav_gesture_active = false;
+                self.nav_spring = None;
+            } else if self.nav_switch_active && !new_state.nav_gesture_active {
+                // Horizontal contact released -> launch lateral switch spring
+                self.nav_switch_active = false;
+                let dx = new_state.nav_gesture_dx;
+                let vx = new_state.nav_gesture_vx;
+                let target = arbitrate_horizontal_release(dx, vx, PHONE_W as f64);
+                let target_dx = match target {
+                    NavigationTarget::NextApp => -(PHONE_W as f64),
+                    NavigationTarget::PrevApp => PHONE_W as f64,
+                    _ => 0.0,
+                };
+                let mut spring = SpringSolver::horizontal_switch();
+                spring.reset(dx);
+                spring.set_target(target_dx);
+                spring.set_velocity(vx.clamp(-3000.0, 3000.0));
+                self.nav_switch_spring = Some(spring);
+                self.nav_switch_target = Some(target);
+                self.last_nav_spring_tick = Some(Instant::now());
+            } else if new_state.nav_gesture_active {
+                // Real-time vertical drag
+                self.nav_gesture_active = true;
+                self.nav_switch_active = false;
+                self.nav_gesture_progress = new_state.nav_gesture_progress;
+                self.nav_gesture_dy = new_state.nav_gesture_dy;
+                self.nav_gesture_vy = new_state.nav_gesture_vy;
+                self.nav_spring = None;
+            } else if self.nav_gesture_active {
+                // Vertical contact released -> arbitrate into Home, Overview, or Fullscreen
+                self.nav_gesture_active = false;
+                let target = arbitrate_release(
+                    self.nav_gesture_progress,
+                    self.nav_gesture_vy,
+                );
+                let target_pos = match target {
+                    NavigationTarget::Overview | NavigationTarget::Home => 1.0,
+                    _ => 0.0,
+                };
+                let mut spring = match target {
+                    NavigationTarget::Home => SpringSolver::home_dismiss(),
+                    _ => SpringSolver::overview(),
+                };
+                spring.reset(self.nav_gesture_progress);
+                spring.set_target(target_pos);
+                let denom = (PHONE_H as f64) * 0.45;
+                let v_norm = if denom > 0.0 { (-self.nav_gesture_vy / denom).clamp(-15.0, 15.0) } else { 0.0 };
+                spring.set_velocity(v_norm);
+                self.nav_spring = Some(spring);
+                self.nav_target = Some(target);
+                self.last_nav_spring_tick = Some(Instant::now());
+            }
+
             if new_state != self.shell_state {
                 info!("Shell state changed: {:?}", new_state);
                 self.shell_state = new_state;
@@ -986,6 +1167,23 @@ impl PenumbraCompositor {
             phone_logical_size: (mode_a.size.w, mode_a.size.h),
             screen_blanked: false,
             saved_brightness: 2500,
+            nav_gesture_active: false,
+            nav_gesture_progress: 0.0,
+            nav_gesture_dy: 0.0,
+            nav_gesture_vy: 0.0,
+            nav_switch_active: false,
+            nav_switch_dx: 0.0,
+            nav_switch_vx: 0.0,
+            nav_spring: None,
+            nav_target: None,
+            nav_switch_spring: None,
+            nav_switch_target: None,
+            last_nav_spring_tick: None,
+            blurred_wallpaper: Some(crate::wallpaper_blur::BlurredWallpaperCache::load_and_blur(
+                None,
+                mode_a.size.w,
+                mode_a.size.h,
+            )),
         };
 
         // Reset IPC files from any previous session.
@@ -1281,13 +1479,15 @@ impl PenumbraCompositor {
             display.dispatch_clients(&mut state)?;
             state.space.refresh();
             let is_overview = state.shell_state.mode == PhoneMode::Overview;
-            if is_overview || last_ipc_poll.elapsed() >= Duration::from_millis(30) {
+            let is_animating = state.is_nav_animating();
+            if is_overview || is_animating || last_ipc_poll.elapsed() >= Duration::from_millis(16) {
                 state.poll_shell_ipc();
                 last_ipc_poll = Instant::now();
             }
             display.flush_clients()?;
 
-            // Track overview carousel scroll (1:1 while dragging, eased on release).
+            // Advance gesture spring physics and overview carousel scroll
+            state.advance_nav_spring();
             state.advance_overview_scroll();
 
             // 4. Render.
@@ -1393,10 +1593,114 @@ impl PenumbraCompositor {
                     }
                 }
 
-                // Phone Layer 1: active application inside the system insets
+                // Phone Layer 0.5: Dimming Scrim (#0b0a0e, max 45% alpha) modulated by gesture progress
+                let nav_progress = if state.is_nav_animating() {
+                    state.nav_gesture_progress
+                } else {
+                    0.0
+                };
+                let mut scrim_elements: Vec<smithay::backend::renderer::element::solid::SolidColorRenderElement> = Vec::new();
+                if nav_progress > 0.001 {
+                    let max_scrim = if state.nav_target == Some(NavigationTarget::Home) {
+                        0.25 * (1.0 - nav_progress).max(0.0)
+                    } else {
+                        compute_scrim_alpha(nav_progress)
+                    };
+                    let scrim_alpha = max_scrim as f32;
+                    if scrim_alpha > 0.001 {
+                        let scrim_buf = smithay::backend::renderer::element::solid::SolidColorBuffer::new(
+                            (PHONE_W, PHONE_H),
+                            Color32F::new(0.0431, 0.0392, 0.0549, scrim_alpha),
+                        );
+                        scrim_elements = smithay::backend::renderer::element::AsRenderElements::<GlesRenderer>::render_elements(
+                            &scrim_buf,
+                            renderer,
+                            (0, 0).into(),
+                            smithay::utils::Scale::from(1.0),
+                            1.0,
+                        );
+                    }
+                }
+
+                // Phone Layer 1: active application inside the system insets (transformed dynamically during gesture)
                 let mut app_elements = Vec::new();
                 if state.phone_app_visible() {
-                    if let Some(surface) = state.active_phone_surface() {
+                    let switch_dx = state.nav_switch_dx;
+                    if switch_dx.abs() > 0.5 {
+                        // Horizontal Quick Switch: render active and adjacent task sliding laterally
+                        let cur_x = switch_dx.round() as i32;
+                        let cur_scale = (1.0 - (switch_dx.abs() / (PHONE_W as f64 * 3.0))).clamp(0.92, 1.0);
+                        if let Some(cur_surface) = state.active_phone_surface() {
+                            let rect = phys_rect(cur_x, APP_Y, PHONE_W, APP_H);
+                            if let Some(clip) = rect.intersection(phone_rect) {
+                                app_elements.extend(cropped(
+                                    surface_elements(renderer, &cur_surface, (cur_x, APP_Y), cur_scale),
+                                    clip,
+                                ));
+                            }
+                        }
+                        if state.phone_tasks.len() > 1 {
+                            if switch_dx > 0.0 {
+                                // Dragging right -> previous task enters from left
+                                if let Some(prev_task) = state.phone_tasks.last() {
+                                    if let Some(toplevel) = prev_task.window.toplevel() {
+                                        let prev_x = (switch_dx - PHONE_W as f64).round() as i32;
+                                        let rect = phys_rect(prev_x, APP_Y, PHONE_W, APP_H);
+                                        if let Some(clip) = rect.intersection(phone_rect) {
+                                            app_elements.extend(cropped(
+                                                surface_elements(renderer, toplevel.wl_surface(), (prev_x, APP_Y), cur_scale),
+                                                clip,
+                                            ));
+                                        }
+                                    }
+                                }
+                            } else {
+                                // Dragging left -> next task enters from right
+                                if let Some(next_task) = state.phone_tasks.get(1) {
+                                    if let Some(toplevel) = next_task.window.toplevel() {
+                                        let next_x = (switch_dx + PHONE_W as f64).round() as i32;
+                                        let rect = phys_rect(next_x, APP_Y, PHONE_W, APP_H);
+                                        if let Some(clip) = rect.intersection(phone_rect) {
+                                            app_elements.extend(cropped(
+                                                surface_elements(renderer, toplevel.wl_surface(), (next_x, APP_Y), cur_scale),
+                                                clip,
+                                            ));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else if nav_progress > 0.001 {
+                        if let Some(surface) = state.active_phone_surface() {
+                            if state.nav_target == Some(NavigationTarget::Home) {
+                                // Dismiss to home: shrink smoothly into homescreen launcher
+                                let scale = (1.0 - nav_progress * 0.75).max(0.15);
+                                let w = (PHONE_W as f64 * scale).round() as i32;
+                                let h = (APP_H as f64 * scale).round() as i32;
+                                let x = ((PHONE_W - w) / 2).max(0);
+                                let target_y = (APP_Y as f64 + (APP_H as f64 * 0.35)).round() as i32;
+                                let y = (APP_Y as f64 * (1.0 - nav_progress) + target_y as f64 * nav_progress).round() as i32;
+                                let app_rect = phys_rect(x, y, w, h);
+                                app_elements = cropped(
+                                    surface_elements(renderer, &surface, (x, y), scale),
+                                    app_rect,
+                                );
+                            } else {
+                                // Overview card transform: scale to 0.68, center at y = 172
+                                let scale = compute_window_scale(nav_progress);
+                                let w = (PHONE_W as f64 * scale).round() as i32;
+                                let h = (APP_H as f64 * scale).round() as i32;
+                                let x = ((PHONE_W - w) / 2).max(0);
+                                let target_y = 172.0;
+                                let y = (APP_Y as f64 * (1.0 - nav_progress) + target_y * nav_progress).round() as i32;
+                                let app_rect = phys_rect(x, y, w, h);
+                                app_elements = cropped(
+                                    surface_elements(renderer, &surface, (x, y), scale),
+                                    app_rect,
+                                );
+                            }
+                        }
+                    } else if let Some(surface) = state.active_phone_surface() {
                         let app_rect = phys_rect(0, APP_Y, PHONE_W, APP_H);
                         app_elements = cropped(
                             surface_elements(renderer, &surface, (0, APP_Y), 1.0),
@@ -1491,7 +1795,9 @@ impl PenumbraCompositor {
                 draw_render_elements(&mut frame, 1.0, &shell_base, &[damage])?;
                 // Output B floating windows
                 draw_render_elements(&mut frame, 1.0, &desktop_elements, &[damage])?;
-                // Phone Layer 1: applications workspace
+                // Phone Layer 0.5: Dimming scrim modulated by gesture progress
+                draw_render_elements::<GlesRenderer, _, _>(&mut frame, 1.0, &scrim_elements, &[damage])?;
+                // Phone Layer 1: applications workspace (fullscreen or transformed card)
                 draw_render_elements(&mut frame, 1.0, &app_elements, &[damage])?;
                 // Phone Layer 2: recents / overview
                 draw_render_elements(&mut frame, 1.0, &overview_elements, &[damage])?;

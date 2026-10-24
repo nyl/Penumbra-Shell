@@ -70,6 +70,7 @@ pub(crate) struct InputState {
     started: std::time::Instant,
     touch: Option<TouchContact>,
     edge_gesture: Option<EdgeBackGesture>,
+    pub nav_tracker: Option<(i32, Point<f64, Logical>, penumbra_gestures::VelocityTracker)>,
     pub power_press_time: Option<std::time::Instant>,
     pub power_dialog_triggered: bool,
     pub last_tap_time: Option<std::time::Instant>,
@@ -90,6 +91,7 @@ impl InputState {
             started: std::time::Instant::now(),
             touch: None,
             edge_gesture: None,
+            nav_tracker: None,
             power_press_time: None,
             power_dialog_triggered: false,
             last_tap_time: None,
@@ -334,6 +336,19 @@ pub(crate) fn handle(
                 return;
             }
 
+            // Bottom navigation gesture: immediate 1:1 tracking on first pixel from nav region
+            if pos.y >= NAV_BAR_Y as f64 && server.phone_app_visible() && input.nav_tracker.is_none() {
+                let mut tracker = penumbra_gestures::VelocityTracker::new(0.8);
+                tracker.start(pos.x, pos.y, std::time::Duration::ZERO);
+                input.nav_tracker = Some((slot, pos, tracker));
+                server.nav_gesture_active = true;
+                server.nav_gesture_progress = 0.0;
+                server.nav_gesture_dy = 0.0;
+                server.nav_gesture_vy = 0.0;
+                server.nav_spring = None;
+                return;
+            }
+
             // Only the first finger drives the emulated pointer.
             if input.touch.is_some() {
                 return;
@@ -356,6 +371,32 @@ pub(crate) fn handle(
                 event.x_transformed(width),
                 event.y_transformed(height),
             );
+
+            if let Some((tracked_slot, start_pos, ref mut tracker)) = input.nav_tracker {
+                if tracked_slot == slot {
+                    let elapsed = input.started.elapsed();
+                    let (vx, vy) = tracker.update(pos.x, pos.y, elapsed);
+                    let dx = pos.x - start_pos.x;
+                    let dy = pos.y - start_pos.y;
+
+                    let is_horizontal = dx.abs() > 15.0 && dx.abs() > dy.abs() * 1.1;
+                    if is_horizontal {
+                        server.nav_switch_active = true;
+                        server.nav_switch_dx = dx;
+                        server.nav_switch_vx = vx;
+                        server.nav_gesture_active = false;
+                        server.nav_gesture_progress = 0.0;
+                    } else {
+                        server.nav_switch_active = false;
+                        server.nav_gesture_active = true;
+                        let progress = penumbra_gestures::compute_normalized_progress(dy, PHONE_H as f64);
+                        server.nav_gesture_progress = progress;
+                        server.nav_gesture_dy = dy;
+                        server.nav_gesture_vy = vy;
+                    }
+                    return;
+                }
+            }
 
             if let Some(ref mut edge) = input.edge_gesture {
                 if edge.slot == slot {
@@ -382,6 +423,55 @@ pub(crate) fn handle(
                 return;
             }
             let slot: i32 = event.slot().into();
+            if let Some((tracked_slot, _start_pos, tracker)) = input.nav_tracker.take() {
+                if tracked_slot == slot {
+                    let vx = tracker.velocity_x();
+                    let vy = tracker.velocity_y();
+                    let dx = server.nav_switch_dx;
+
+                    if server.nav_switch_active || (dx.abs() > 20.0 && dx.abs() > server.nav_gesture_dy.abs() * 1.1) {
+                        server.nav_switch_active = false;
+                        let target = penumbra_gestures::arbitrate_horizontal_release(dx, vx, PHONE_W as f64);
+                        let target_dx = match target {
+                            penumbra_gestures::NavigationTarget::NextApp => -(PHONE_W as f64),
+                            penumbra_gestures::NavigationTarget::PrevApp => PHONE_W as f64,
+                            _ => 0.0,
+                        };
+                        let mut spring = penumbra_gestures::SpringSolver::horizontal_switch();
+                        spring.reset(dx);
+                        spring.set_target(target_dx);
+                        spring.set_velocity(vx.clamp(-3000.0, 3000.0));
+                        server.nav_switch_spring = Some(spring);
+                        server.nav_switch_target = Some(target);
+                        server.last_nav_spring_tick = Some(std::time::Instant::now());
+                        return;
+                    }
+
+                    server.nav_gesture_active = false;
+                    let target = penumbra_gestures::arbitrate_release(
+                        server.nav_gesture_progress,
+                        vy,
+                    );
+                    let target_pos = match target {
+                        penumbra_gestures::NavigationTarget::Overview | penumbra_gestures::NavigationTarget::Home => 1.0,
+                        _ => 0.0,
+                    };
+                    let mut spring = match target {
+                        penumbra_gestures::NavigationTarget::Home => penumbra_gestures::SpringSolver::home_dismiss(),
+                        _ => penumbra_gestures::SpringSolver::overview(),
+                    };
+                    spring.reset(server.nav_gesture_progress);
+                    spring.set_target(target_pos);
+                    let denom = (PHONE_H as f64) * 0.45;
+                    let v_norm = if denom > 0.0 { (-vy / denom).clamp(-15.0, 15.0) } else { 0.0 };
+                    spring.set_velocity(v_norm);
+                    server.nav_spring = Some(spring);
+                    server.nav_target = Some(target);
+                    server.last_nav_spring_tick = Some(std::time::Instant::now());
+                    return;
+                }
+            }
+
             if let Some(edge) = input.edge_gesture.take() {
                 if edge.slot == slot {
                     if edge.triggered {
@@ -401,6 +491,17 @@ pub(crate) fn handle(
                 return;
             }
             let slot: i32 = event.slot().into();
+            if let Some((tracked_slot, _, _)) = input.nav_tracker.take() {
+                if tracked_slot == slot {
+                    server.nav_gesture_active = false;
+                    server.nav_switch_active = false;
+                    server.nav_gesture_progress = 0.0;
+                    server.nav_switch_dx = 0.0;
+                    server.nav_spring = None;
+                    server.nav_switch_spring = None;
+                    return;
+                }
+            }
             input.edge_gesture = None;
             end_touch(server, input, slot);
         }

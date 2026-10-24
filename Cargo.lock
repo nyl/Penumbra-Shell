@@ -3810,6 +3810,7 @@ name = "penumbra-comp"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "image",
  "penumbra-gestures",
  "smithay",
  "tracing",

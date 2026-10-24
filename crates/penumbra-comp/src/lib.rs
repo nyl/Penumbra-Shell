@@ -8,6 +8,7 @@ mod native_input;
 pub mod phone;
 pub mod policy;
 pub mod server;
+pub mod wallpaper_blur;
 
 pub use args::CliArgs;
 pub use policy::{AsymmetricOutputManager, OutputConfig, OutputRole, SurfaceDisplayMode};

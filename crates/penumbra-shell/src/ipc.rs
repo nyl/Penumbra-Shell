@@ -25,7 +25,7 @@ pub enum PhoneMode {
 }
 
 /// Snapshot of shell UI state relevant to compositing.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ShellState {
     pub mode: PhoneMode,
     pub drawer_open: bool,
@@ -38,12 +38,43 @@ pub struct ShellState {
     pub power_dialog_open: bool,
     pub volume_modal_open: bool,
     pub volume_level: f32,
+    pub nav_gesture_active: bool,
+    pub nav_gesture_dy: f64,
+    pub nav_gesture_progress: f64,
+    pub nav_gesture_vy: f64,
+    pub nav_gesture_dx: f64,
+    pub nav_gesture_vx: f64,
+    pub nav_switch_active: bool,
+}
+
+impl Default for ShellState {
+    fn default() -> Self {
+        Self {
+            mode: PhoneMode::Home,
+            drawer_open: false,
+            drawer_pull_dy: 0.0,
+            drawer_dragging: false,
+            overview_index: 0,
+            overview_scroll: 0.0,
+            is_dragging: false,
+            active_card_dy: 0.0,
+            power_dialog_open: false,
+            volume_modal_open: false,
+            volume_level: 0.65,
+            nav_gesture_active: false,
+            nav_gesture_dy: 0.0,
+            nav_gesture_progress: 0.0,
+            nav_gesture_vy: 0.0,
+            nav_gesture_dx: 0.0,
+            nav_gesture_vx: 0.0,
+            nav_switch_active: false,
+        }
+    }
 }
 
 impl ShellState {
     pub fn parse(text: &str) -> Self {
         let mut s = ShellState::default();
-        s.volume_level = 0.65;
         let mut has_scroll = false;
         for line in text.lines() {
             let Some((k, v)) = line.split_once('=') else {
@@ -59,6 +90,13 @@ impl ShellState {
                 ("power_dialog", v) => s.power_dialog_open = v == "1" || v == "true",
                 ("volume_modal", v) => s.volume_modal_open = v == "1" || v == "true",
                 ("volume_level", v) => s.volume_level = v.parse().unwrap_or(0.65),
+                ("nav_gesture_active", v) => s.nav_gesture_active = v == "1" || v == "true",
+                ("nav_gesture_dy", v) => s.nav_gesture_dy = v.parse().unwrap_or(0.0),
+                ("nav_gesture_progress", v) => s.nav_gesture_progress = v.parse().unwrap_or(0.0),
+                ("nav_gesture_vy", v) => s.nav_gesture_vy = v.parse().unwrap_or(0.0),
+                ("nav_gesture_dx", v) => s.nav_gesture_dx = v.parse().unwrap_or(0.0),
+                ("nav_gesture_vx", v) => s.nav_gesture_vx = v.parse().unwrap_or(0.0),
+                ("nav_switch_active", v) => s.nav_switch_active = v == "1" || v == "true",
                 ("overview_index", v) => s.overview_index = v.parse().unwrap_or(0),
                 ("overview_scroll", v) => {
                     s.overview_scroll = v.parse().unwrap_or(0.0);
@@ -82,7 +120,7 @@ impl ShellState {
             PhoneMode::Overview => "overview",
         };
         format!(
-            "mode={}\ndrawer={}\ndrawer_pull_dy={:.1}\ndrawer_dragging={}\npower_dialog={}\nvolume_modal={}\nvolume_level={:.2}\noverview_index={}\noverview_scroll={:.3}\nis_dragging={}\nactive_card_dy={:.1}\n",
+            "mode={}\ndrawer={}\ndrawer_pull_dy={:.1}\ndrawer_dragging={}\npower_dialog={}\nvolume_modal={}\nvolume_level={:.2}\nnav_gesture_active={}\nnav_gesture_dy={:.1}\nnav_gesture_progress={:.3}\nnav_gesture_vy={:.1}\nnav_gesture_dx={:.1}\nnav_gesture_vx={:.1}\nnav_switch_active={}\noverview_index={}\noverview_scroll={:.3}\nis_dragging={}\nactive_card_dy={:.1}\n",
             mode,
             if self.drawer_open { 1 } else { 0 },
             self.drawer_pull_dy,
@@ -90,6 +128,13 @@ impl ShellState {
             if self.power_dialog_open { 1 } else { 0 },
             if self.volume_modal_open { 1 } else { 0 },
             self.volume_level,
+            if self.nav_gesture_active { 1 } else { 0 },
+            self.nav_gesture_dy,
+            self.nav_gesture_progress,
+            self.nav_gesture_vy,
+            self.nav_gesture_dx,
+            self.nav_gesture_vx,
+            if self.nav_switch_active { 1 } else { 0 },
             self.overview_index,
             self.overview_scroll,
             if self.is_dragging { 1 } else { 0 },
