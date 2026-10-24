@@ -3830,6 +3830,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "penumbra-keyboard"
+version = "0.1.0"
+dependencies = [
+ "i-slint-core",
+ "layer-shell-slint",
+ "libc",
+ "penumbra-services",
+ "slint",
+ "slint-build",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "penumbra-services"
 version = "0.1.0"
 dependencies = [

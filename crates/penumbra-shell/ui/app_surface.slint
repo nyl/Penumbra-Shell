@@ -87,6 +87,7 @@ export component AppSurface inherits Rectangle {
     in-out property <string> app-search-query: "";
     callback app-search-query-changed(string);
     callback app-search-accepted(string);
+    callback app-search-focused();
 
     // Wallpaper properties
     in property <bool> has-wallpaper: false;
@@ -941,6 +942,9 @@ export component AppSurface inherits Rectangle {
             }
             search-accepted(q) => {
                 root.app-search-accepted(q);
+            }
+            search-focused => {
+                root.app-search-focused();
             }
             app-clicked(id) => {
                 root.app-clicked(id);

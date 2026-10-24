@@ -106,6 +106,7 @@ required_bins=(
     penumbra-homescreen
     penumbra-nav-bar
     penumbra-settings
+    penumbra-keyboard
 )
 for binary in "${required_bins[@]}"; do
     [[ -x "$release_dir/$binary" ]] || {
@@ -125,7 +126,7 @@ fi
 
 "${ssh_base[@]}" "$remote" "mkdir -p '$staging_dir/bin' '$staging_dir/assets'"
 "${scp_base[@]}" "${required_bins[@]/#/$release_dir/}" "$remote:$staging_dir/bin/"
-"${scp_base[@]}" "$repo_root/scripts/penumbra-session" "$repo_root/scripts/penumbra-nested-session" "$repo_root/scripts/penumbra-native-session" "$repo_root/data/penumbra.desktop" "$repo_root/data/penumbra-settings.desktop" "$remote:$staging_dir/"
+"${scp_base[@]}" "$repo_root/scripts/penumbra-session" "$repo_root/scripts/penumbra-nested-session" "$repo_root/scripts/penumbra-native-session" "$repo_root/data/penumbra.desktop" "$repo_root/data/penumbra-settings.desktop" "$repo_root/data/penumbra-keyboard.desktop" "$remote:$staging_dir/"
 if [[ -d "$repo_root/assets" ]]; then
     "${scp_base[@]}" -r "$repo_root/assets/." "$remote:$staging_dir/assets/"
 fi
@@ -150,6 +151,7 @@ install -m 0755 penumbra-deploy/penumbra-nested-session /usr/local/bin/penumbra-
 install -m 0755 penumbra-deploy/penumbra-native-session /usr/local/bin/penumbra-native-session
 install -m 0644 penumbra-deploy/penumbra.desktop /usr/share/wayland-sessions/penumbra.desktop
 install -m 0644 penumbra-deploy/penumbra-settings.desktop /usr/share/applications/penumbra-settings.desktop
+install -m 0644 penumbra-deploy/penumbra-keyboard.desktop /usr/share/applications/penumbra-keyboard.desktop
 cp -a penumbra-deploy/assets/. /usr/share/penumbra/assets/
 
 mkdir -p /etc/udev/rules.d
@@ -208,6 +210,7 @@ install -m 0755 penumbra-deploy/penumbra-nested-session /usr/local/bin/penumbra-
 install -m 0755 penumbra-deploy/penumbra-native-session /usr/local/bin/penumbra-native-session
 install -m 0644 penumbra-deploy/penumbra.desktop /usr/share/wayland-sessions/penumbra.desktop
 install -m 0644 penumbra-deploy/penumbra-settings.desktop /usr/share/applications/penumbra-settings.desktop
+install -m 0644 penumbra-deploy/penumbra-keyboard.desktop /usr/share/applications/penumbra-keyboard.desktop
 cp -a penumbra-deploy/assets/. /usr/share/penumbra/assets/
 
 if [[ -f /etc/phrog/greetd-config.toml ]]; then

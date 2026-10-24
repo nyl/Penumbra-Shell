@@ -340,6 +340,31 @@ pub static SEARCH_CATALOG: &[SearchEntry] = &[
         target_page: "about",
         keywords: "license open source apache mit copyright legal notices",
     },
+
+    // =========================================================================
+    // Keyboard & Input Methods
+    // =========================================================================
+    SearchEntry {
+        category: "Keyboard",
+        title: "On-screen keyboard",
+        breadcrumb: "System > Keyboard > On-screen keyboard",
+        target_page: "keyboard",
+        keywords: "keyboard osk on-screen virtual typing input method touch maliit penumbra kde",
+    },
+    SearchEntry {
+        category: "Keyboard",
+        title: "Physical keyboard",
+        breadcrumb: "System > Keyboard > Physical keyboard",
+        target_page: "keyboard",
+        keywords: "physical keyboard usb bluetooth typing hardware external input hide",
+    },
+    SearchEntry {
+        category: "Keyboard",
+        title: "Hide keyboard on physical connection",
+        breadcrumb: "System > Keyboard > Preferences",
+        target_page: "keyboard",
+        keywords: "auto-hide retract keyboard physical connected external",
+    },
 ];
 
 /// Curated suggestions across all categories shown before the user types.

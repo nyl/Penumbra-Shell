@@ -8,8 +8,9 @@ import { PageDisplay } from "pages/page_display.slint";
 import { PageBattery } from "pages/page_battery.slint";
 import { PageSound } from "pages/page_sound.slint";
 import { PageAbout } from "pages/page_about.slint";
+import { PageKeyboard, VirtualKeyboardData, PhysicalKeyboardData } from "pages/page_keyboard.slint";
 
-export { WifiApData, BtDeviceData, SearchResultData }
+export { WifiApData, BtDeviceData, SearchResultData, VirtualKeyboardData, PhysicalKeyboardData }
 
 // ==============================================================================
 // Component: SettingsWindow
@@ -39,7 +40,7 @@ export { WifiApData, BtDeviceData, SearchResultData }
 export component SettingsWindow inherits Window {
     title: "Penumbra Settings";
     width: 412px;
-    height: 915px;
+    height: 841px;
     background: Theme.base-surface;
     default-font-family: "Droid Sans";
 
@@ -116,6 +117,8 @@ export component SettingsWindow inherits Window {
     // --------------------------------------------------------------------------
     in property <[SearchResultData]> search-results: [];
     callback search-query-changed(string);
+    callback search-focused();
+    callback search-unfocused();
 
     // --------------------------------------------------------------------------
     // Real Hardware & System Telemetry Properties
@@ -134,6 +137,13 @@ export component SettingsWindow inherits Window {
     in property <string> display-resolution: "1920 × 1080 Display";
     in property <string> battery-health: "Normal";
     in property <string> battery-model: "Li-ion Battery";
+
+    // --------------------------------------------------------------------------
+    // Reactive Hardware Properties - Keyboard (KDE Virtual Keyboard & Physical)
+    // --------------------------------------------------------------------------
+    in property <[VirtualKeyboardData]> virtual-keyboards: [];
+    in property <[PhysicalKeyboardData]> physical-keyboards: [];
+    in-out property <bool> hide-on-physical-keyboard: true;
 
     // --------------------------------------------------------------------------
     // Navigation Callbacks
@@ -174,6 +184,10 @@ export component SettingsWindow inherits Window {
     callback ring-volume-changed(float);
     // Do Not Disturb toggle event callback.
     callback toggle-dnd(bool);
+    // Keyboard action callbacks.
+    callback toggle-hide-on-physical(bool);
+    callback select-virtual-keyboard(string);
+    callback refresh-keyboard-scan();
 
     // Dynamic Title Computation based on active subpage ID.
     property <string> current-title: root.active-page == "wifi" ? "Network & internet"
@@ -182,6 +196,7 @@ export component SettingsWindow inherits Window {
         : root.active-page == "battery" ? "Battery"
         : root.active-page == "sound" ? "Sound & vibration"
         : root.active-page == "about" ? "About phone"
+        : root.active-page == "keyboard" ? "Keyboard"
         : "Settings";
 
     // Animated sliding transition progress (0.0 = Main catalog, 1.0 = Subpage).
@@ -218,6 +233,7 @@ export component SettingsWindow inherits Window {
         // Viewport stack hosting Main and Subpages
         Rectangle {
             vertical-stretch: 1;
+            background: Theme.base-surface;
             clip: true;
 
             // Main Catalog View
@@ -238,6 +254,8 @@ export component SettingsWindow inherits Window {
                     device-summary: root.device-model + " • " + root.os-version;
                     search-results: root.search-results;
                     search-query-changed(q) => { root.search-query-changed(q); }
+                    search-focused => { root.search-focused(); }
+                    search-unfocused => { root.search-unfocused(); }
                     navigate-to(page) => {
                         root.active-page = page;
                         root.navigate-to(page);
@@ -330,6 +348,17 @@ export component SettingsWindow inherits Window {
                     storage-info: root.storage-info;
                     uptime-info: root.uptime-info;
                     compositor-info: root.compositor-info;
+                }
+
+                if root.active-page == "keyboard": PageKeyboard {
+                    width: 100%;
+                    height: 100%;
+                    virtual-keyboards: root.virtual-keyboards;
+                    physical-keyboards: root.physical-keyboards;
+                    hide-on-physical <=> root.hide-on-physical-keyboard;
+                    toggle-hide-on-physical(v) => { root.toggle-hide-on-physical(v); }
+                    select-virtual-keyboard(id) => { root.select-virtual-keyboard(id); }
+                    refresh-scan => { root.refresh-keyboard-scan(); }
                 }
             }
         }

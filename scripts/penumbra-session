@@ -112,6 +112,29 @@ penumbra-quicksettings &
 shell_pids+=("$!")
 penumbra-nav-bar &
 shell_pids+=("$!")
+# Launch configured virtual keyboard (defaults to penumbra-keyboard, but dynamically
+# supports any selected 3rd-party Wayland keyboard such as squeekboard, maliit, wvkbd)
+keyboard_conf="${XDG_CONFIG_HOME:-$HOME/.config}/penumbra/keyboard.conf"
+active_keyboard="penumbra-keyboard"
+if [[ -f "$keyboard_conf" ]]; then
+    saved_cmd="$(grep -E '^command=' "$keyboard_conf" | cut -d= -f2- | awk '{print $1}' | tr -d ' \r\n' || true)"
+    if [[ -n "$saved_cmd" ]]; then
+        active_keyboard="$saved_cmd"
+    fi
+fi
+
+if command -v "$active_keyboard" >/dev/null 2>&1; then
+    printf '%s starting active virtual keyboard: %s\n' "$(date -Iseconds)" "$active_keyboard"
+    "$active_keyboard" &
+    shell_pids+=("$!")
+else
+    printf '%s configured keyboard %s not found in PATH, falling back to penumbra-keyboard\n' \
+        "$(date -Iseconds)" "$active_keyboard"
+    if command -v penumbra-keyboard >/dev/null 2>&1; then
+        penumbra-keyboard &
+        shell_pids+=("$!")
+    fi
+fi
 
 set +e
 wait "$penumbra_comp_pid"

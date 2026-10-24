@@ -14,6 +14,7 @@ export component NavBar inherits Rectangle {
     callback touch-down(float, float);
     callback touch-move(float, float);
     callback touch-up(float, float);
+    callback keyboard-toggle-clicked();
 
     height: 32px;
     background: root.solid ? #000000 : transparent;
@@ -33,7 +34,45 @@ export component NavBar inherits Rectangle {
         animate background { duration: 120ms; easing: ease-out; }
     }
 
+    // Right-aligned keyboard toggle button (Android 17 Material You style)
+    Rectangle {
+        x: parent.width - 52px;
+        y: (parent.height - 24px) / 2;
+        width: 44px;
+        height: 24px;
+        border-radius: 12px;
+        background: kbd-ta.pressed ? #ffffff33 : #ffffff18;
+        border-width: 1px;
+        border-color: #ffffff26;
+
+        animate background { duration: 100ms; }
+
+        Path {
+            width: 18px;
+            height: 14px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            viewbox-width: 24;
+            viewbox-height: 24;
+            commands: "M4 6 H20 A 2 2 0 0 1 22 8 V16 A 2 2 0 0 1 20 18 H4 A 2 2 0 0 1 2 16 V8 A 2 2 0 0 1 4 6 Z M6 9 H8 V11 H6 Z M10 9 H12 V11 H10 Z M14 9 H16 V11 H14 Z M18 9 H18.01 V11 H18 Z M6 13 H8 V15 H6 Z M10 14 H14 V15 H10 Z M16 13 H18 V15 H16 Z";
+            stroke: #a8c7fa;
+            stroke-width: 1.8px;
+            fill: transparent;
+        }
+
+        kbd-ta := TouchArea {
+            clicked => {
+                root.keyboard-toggle-clicked();
+            }
+        }
+    }
+
     touch-area := TouchArea {
+        x: 0px;
+        y: 0px;
+        width: parent.width - 60px;
+        height: 100%;
+
         pointer-event(event) => {
             if (event.kind == PointerEventKind.down) {
                 root.is-pressed = true;

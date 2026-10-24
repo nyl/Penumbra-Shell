@@ -59,6 +59,13 @@ pub(crate) fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bar = NavBarWindow::new()?;
     let ui_weak = bar.as_weak();
 
+    // Wire keyboard toggle button on navigation bar
+    bar.on_keyboard_toggle_clicked(|| {
+        let path = penumbra_shell::ipc::runtime_path("penumbra-keyboard-cmd");
+        let _ = std::fs::write(path, "toggle");
+        info!("Toggled virtual keyboard via navigation bar button");
+    });
+
     // 3. Continuous Navigation Gesture Tracker (Zero hold timers, EMA alpha = 0.8)
     let tracker = Rc::new(RefCell::new(VelocityTracker::new(0.8)));
     let active_touch = Rc::new(RefCell::new(Option::<TouchSession>::None));

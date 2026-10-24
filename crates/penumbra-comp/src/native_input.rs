@@ -345,10 +345,19 @@ pub(crate) fn handle(
                 return;
             }
 
+            // Dedicated bottom-right keyboard button (x >= 350.0, y >= 883.0)
+            if pos.y >= 883.0 && pos.x >= 350.0 {
+                let runtime_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
+                let cmd_file = std::path::PathBuf::from(runtime_dir).join("penumbra-keyboard-cmd");
+                let _ = std::fs::write(cmd_file, "toggle");
+                tracing::info!("Bottom-right keyboard button tapped -> toggling virtual keyboard");
+                return;
+            }
+
             // Navigation bar or Overview gesture tracking:
-            // Intercept if touching the bottom navigation area (y >= 883.0, strictly 32px navbar height)
+            // Intercept if touching the bottom navigation swipe area (y >= 883.0, x < 350.0)
             // OR if already in Overview mode (where the entire screen is an interactive task switcher).
-            let is_nav_zone = pos.y >= 883.0;
+            let is_nav_zone = pos.y >= 883.0 && pos.x < 350.0;
             let is_overview = server.shell_state.mode == PhoneMode::Overview;
 
             if (is_nav_zone && (server.phone_app_visible() || is_overview || server.shell_state.mode == PhoneMode::App)) || is_overview {
@@ -382,8 +391,25 @@ pub(crate) fn handle(
                 slot,
                 focus: focus.clone(),
             });
-            send_motion(server, input, pos, focus);
+            send_motion(server, input, pos, focus.clone());
             send_button(server, input, BTN_LEFT, ButtonState::Pressed);
+
+            let serial = input.next_serial();
+            if let Some((ref target_surf, _)) = focus {
+                let is_kbd = smithay::desktop::layer_map_for_output(&server.output_a)
+                    .layers()
+                    .find(|l| l.wl_surface() == target_surf)
+                    .map(|l| {
+                        let ns = l.namespace();
+                        ns.contains("keyboard") || ns.contains("osk") || ns.contains("squeekboard") || ns.contains("maliit")
+                    })
+                    .unwrap_or(false);
+                if !is_kbd {
+                    if let Some(keyboard) = server.seat.get_keyboard() {
+                        keyboard.set_focus(server, Some(target_surf.clone()), serial);
+                    }
+                }
+            }
         }
         InputEvent::TouchMotion { event } => {
             if server.screen_blanked {

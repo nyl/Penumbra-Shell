@@ -1,0 +1,452 @@
+// ==============================================================================
+// Penumbra Keyboard: Material 3 / Android 17 On-Screen Virtual Keyboard
+// ==============================================================================
+// Standalone on-screen layer-shell keyboard built with Slint for Penumbra Mobile DE.
+//
+// Aesthetic & Ergonomic Principles:
+// 1. Android 17 Deep Night Palette:
+//    - Base Surface: `#141218`
+//    - Normal key surface: `#2b2930` (elevated squircle pill)
+//    - Functional keys (Shift, Backspace, Symbols): `#36343b`
+//    - Action key (Enter / Return): Pastel accent `#a8c7fa` with deep navy tint `#042b59`
+//    - Pressed feedback: `#48464f` with micro-animations
+// 2. High-performance touch responsiveness:
+//    - 12px squircle corner radius
+//    - Touch target dimensions: ~42px to ~46px height per key
+//    - Seamless layout switching between Letters (QWERTY), Shift/Caps, and Symbols
+// 3. Physical Keyboard Coexistence:
+//    - Reactively hides when a physical hardware keyboard is detected.
+// ==============================================================================
+
+component KeyButton inherits Rectangle {
+    in property <string> text: "";
+    in property <bool> is-accent: false;
+    in property <bool> is-functional: false;
+    in property <bool> is-active: false;
+    in property <length> custom-font-size: 19px;
+
+    callback clicked();
+
+    border-radius: 8px;
+    background: touch.pressed
+        ? (root.is-accent ? #8ab4f8 : #4a4852)
+        : (root.is-active
+            ? #a8c7fa
+            : (root.is-accent
+                ? #a8c7fa
+                : (root.is-functional ? #36343b : #2b2930)));
+
+    animate background { duration: 90ms; easing: ease-out; }
+
+    HorizontalLayout {
+        alignment: center;
+        Text {
+            text: root.text;
+            color: root.is-active || (root.is-accent && !touch.pressed)
+                ? #042b59
+                : #e6e1e5;
+            font-size: root.custom-font-size;
+            font-weight: root.is-accent || root.is-functional ? 600 : 400;
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+    }
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+export component KeyboardWindow inherits Window {
+    title: "Penumbra Keyboard";
+    no-frame: true;
+    default-font-family: "Droid Sans";
+    background: transparent;
+
+    // Fixed layer-shell dimensions
+    width: 412px;
+    height: 280px;
+
+    // --------------------------------------------------------------------------
+    // State Properties
+    // --------------------------------------------------------------------------
+    // Whether the keyboard is currently expanded and visible.
+    in-out property <bool> is-open: true;
+    // Whether a physical keyboard is currently connected and active.
+    in-out property <bool> physical-keyboard-connected: false;
+    // Name of the detected physical keyboard.
+    in-out property <string> physical-keyboard-name: "";
+    // Layout mode: 0 = Lowercase Letters, 1 = Uppercase/Shift, 2 = CapsLock, 3 = Symbols, 4 = More Symbols
+    in-out property <int> layout-mode: 0;
+    property <bool> effectively-open: root.is-open && !root.physical-keyboard-connected;
+
+    // Callbacks emitted to the Rust Wayland / UInput driver
+    callback key-clicked(string);
+    callback backspace-clicked();
+    callback space-clicked();
+    callback enter-clicked();
+    callback toggle-hide();
+
+    // Container background
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        clip: true;
+
+        // Main Animated Sheet
+        keyboard-sheet := Rectangle {
+            width: 100%;
+            height: 280px;
+            y: root.effectively-open ? 0px : 280px;
+            background: #141218;
+            border-top-left-radius: 20px;
+            border-top-right-radius: 20px;
+            border-width: 1px;
+            border-color: #ffffff14;
+
+            animate y { duration: 220ms; easing: ease-out; }
+
+            VerticalLayout {
+                padding-left: 6px;
+                padding-right: 6px;
+                padding-top: 6px;
+                padding-bottom: 8px;
+                spacing: 6px;
+
+                // --------------------------------------------------------------
+                // Header Bar (Pill Handle + Dismiss / Status)
+                // --------------------------------------------------------------
+                Rectangle {
+                    height: 28px;
+
+                    // Centered drag handle pill
+                    Rectangle {
+                        width: 40px;
+                        height: 4px;
+                        border-radius: 2px;
+                        background: #ffffff33;
+                        x: (parent.width - self.width) / 2;
+                        y: 4px;
+                    }
+
+                    // Left Side: Status / Indicator
+                    HorizontalLayout {
+                        x: 8px;
+                        y: 2px;
+                        spacing: 8px;
+                        alignment: start;
+
+                        if root.physical-keyboard-connected: Text {
+                            text: "⌨ " + root.physical-keyboard-name;
+                            color: #a8c7fa;
+                            font-size: 11px;
+                            vertical-alignment: center;
+                        }
+
+                        if !root.physical-keyboard-connected: Text {
+                            text: root.layout-mode == 0 || root.layout-mode == 1 || root.layout-mode == 2
+                                ? "EN • US"
+                                : "?123";
+                            color: #938f99;
+                            font-size: 11px;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    // Right Side: Hide / Toggle Keyboard Button
+                    Rectangle {
+                        width: 32px;
+                        height: 24px;
+                        x: parent.width - self.width - 6px;
+                        y: 2px;
+                        border-radius: 6px;
+                        background: hide-touch.pressed ? #36343b : transparent;
+
+                        // Down Chevron Path (Hide Keyboard)
+                        Path {
+                            width: 14px;
+                            height: 14px;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            viewbox-width: 24;
+                            viewbox-height: 24;
+                            commands: "M6 9 L12 15 L18 9";
+                            stroke: #c4c7c5;
+                            stroke-width: 2.2px;
+                            fill: transparent;
+                        }
+
+                        hide-touch := TouchArea {
+                            clicked => {
+                                root.is-open = !root.is-open;
+                                root.toggle-hide();
+                            }
+                        }
+                    }
+                }
+
+                // ==============================================================
+                // Key Row 1
+                // ==============================================================
+                HorizontalLayout {
+                    spacing: 5px;
+                    height: 46px;
+
+                    // QWERTY Mode (0, 1, 2)
+                    if root.layout-mode <= 2: KeyButton { text: root.layout-mode == 0 ? "q" : "Q"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode <= 2: KeyButton { text: root.layout-mode == 0 ? "w" : "W"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode <= 2: KeyButton { text: root.layout-mode == 0 ? "e" : "E"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode <= 2: KeyButton { text: root.layout-mode == 0 ? "r" : "R"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode <= 2: KeyButton { text: root.layout-mode == 0 ? "t" : "T"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode <= 2: KeyButton { text: root.layout-mode == 0 ? "y" : "Y"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode <= 2: KeyButton { text: root.layout-mode == 0 ? "u" : "U"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode <= 2: KeyButton { text: root.layout-mode == 0 ? "i" : "I"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode <= 2: KeyButton { text: root.layout-mode == 0 ? "o" : "O"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode <= 2: KeyButton { text: root.layout-mode == 0 ? "p" : "P"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+
+                    // Symbols Mode 3
+                    if root.layout-mode == 3: KeyButton { text: "1"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 3: KeyButton { text: "2"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 3: KeyButton { text: "3"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 3: KeyButton { text: "4"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 3: KeyButton { text: "5"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 3: KeyButton { text: "6"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 3: KeyButton { text: "7"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 3: KeyButton { text: "8"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 3: KeyButton { text: "9"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 3: KeyButton { text: "0"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+
+                    // More Symbols Mode 4
+                    if root.layout-mode == 4: KeyButton { text: "~"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 4: KeyButton { text: "`"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 4: KeyButton { text: "|"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 4: KeyButton { text: "^"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 4: KeyButton { text: "="; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 4: KeyButton { text: "{"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 4: KeyButton { text: "}"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 4: KeyButton { text: "["; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 4: KeyButton { text: "]"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 4: KeyButton { text: "\\"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                }
+
+                // ==============================================================
+                // Key Row 2
+                // ==============================================================
+                HorizontalLayout {
+                    spacing: 5px;
+                    height: 46px;
+
+                    // Margin spacers for standard staggered keyboard layout
+                    Rectangle { width: 14px; background: transparent; }
+
+                    // QWERTY Mode (0, 1, 2)
+                    if root.layout-mode <= 2: KeyButton { text: root.layout-mode == 0 ? "a" : "A"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode <= 2: KeyButton { text: root.layout-mode == 0 ? "s" : "S"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode <= 2: KeyButton { text: root.layout-mode == 0 ? "d" : "D"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode <= 2: KeyButton { text: root.layout-mode == 0 ? "f" : "F"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode <= 2: KeyButton { text: root.layout-mode == 0 ? "g" : "G"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode <= 2: KeyButton { text: root.layout-mode == 0 ? "h" : "H"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode <= 2: KeyButton { text: root.layout-mode == 0 ? "j" : "J"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode <= 2: KeyButton { text: root.layout-mode == 0 ? "k" : "K"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode <= 2: KeyButton { text: root.layout-mode == 0 ? "l" : "L"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+
+                    // Symbols Mode 3
+                    if root.layout-mode == 3: KeyButton { text: "@"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 3: KeyButton { text: "#"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 3: KeyButton { text: "$"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 3: KeyButton { text: "%"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 3: KeyButton { text: "&"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 3: KeyButton { text: "-"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 3: KeyButton { text: "+"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 3: KeyButton { text: "("; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 3: KeyButton { text: ")"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+
+                    // More Symbols Mode 4
+                    if root.layout-mode == 4: KeyButton { text: "<"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 4: KeyButton { text: ">"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 4: KeyButton { text: "*"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 4: KeyButton { text: "\""; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 4: KeyButton { text: "'"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 4: KeyButton { text: ":"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 4: KeyButton { text: ";"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 4: KeyButton { text: "/"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 4: KeyButton { text: "_"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+
+                    Rectangle { width: 14px; background: transparent; }
+                }
+
+                // ==============================================================
+                // Key Row 3 (Shift / Symbols Toggle + Letters + Backspace)
+                // ==============================================================
+                HorizontalLayout {
+                    spacing: 5px;
+                    height: 46px;
+
+                    // Shift Key (QWERTY) or Mode Key (Symbols)
+                    if root.layout-mode <= 2: KeyButton {
+                        text: root.layout-mode == 2 ? "⇪" : "⇧";
+                        is-functional: true;
+                        is-active: root.layout-mode == 1 || root.layout-mode == 2;
+                        horizontal-stretch: 1.4;
+                        custom-font-size: 20px;
+                        clicked => {
+                            if root.layout-mode == 0 {
+                                root.layout-mode = 1; // Shift
+                            } else if root.layout-mode == 1 {
+                                root.layout-mode = 2; // CapsLock
+                            } else {
+                                root.layout-mode = 0; // Normal
+                            }
+                        }
+                    }
+
+                    if root.layout-mode == 3: KeyButton {
+                        text: "=\\<";
+                        is-functional: true;
+                        horizontal-stretch: 1.4;
+                        custom-font-size: 15px;
+                        clicked => { root.layout-mode = 4; }
+                    }
+
+                    if root.layout-mode == 4: KeyButton {
+                        text: "?123";
+                        is-functional: true;
+                        horizontal-stretch: 1.4;
+                        custom-font-size: 15px;
+                        clicked => { root.layout-mode = 3; }
+                    }
+
+                    // QWERTY Mode (0, 1, 2)
+                    if root.layout-mode <= 2: KeyButton { text: root.layout-mode == 0 ? "z" : "Z"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); if root.layout-mode == 1 { root.layout-mode = 0; } } }
+                    if root.layout-mode <= 2: KeyButton { text: root.layout-mode == 0 ? "x" : "X"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); if root.layout-mode == 1 { root.layout-mode = 0; } } }
+                    if root.layout-mode <= 2: KeyButton { text: root.layout-mode == 0 ? "c" : "C"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); if root.layout-mode == 1 { root.layout-mode = 0; } } }
+                    if root.layout-mode <= 2: KeyButton { text: root.layout-mode == 0 ? "v" : "V"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); if root.layout-mode == 1 { root.layout-mode = 0; } } }
+                    if root.layout-mode <= 2: KeyButton { text: root.layout-mode == 0 ? "b" : "B"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); if root.layout-mode == 1 { root.layout-mode = 0; } } }
+                    if root.layout-mode <= 2: KeyButton { text: root.layout-mode == 0 ? "n" : "N"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); if root.layout-mode == 1 { root.layout-mode = 0; } } }
+                    if root.layout-mode <= 2: KeyButton { text: root.layout-mode == 0 ? "m" : "M"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); if root.layout-mode == 1 { root.layout-mode = 0; } } }
+
+                    // Symbols Mode 3
+                    if root.layout-mode == 3: KeyButton { text: "*"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 3: KeyButton { text: "\""; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 3: KeyButton { text: "'"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 3: KeyButton { text: ":"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 3: KeyButton { text: ";"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 3: KeyButton { text: "!"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 3: KeyButton { text: "?"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+
+                    // More Symbols Mode 4
+                    if root.layout-mode == 4: KeyButton { text: "!"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 4: KeyButton { text: "?"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 4: KeyButton { text: "$"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 4: KeyButton { text: "%"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 4: KeyButton { text: "^"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 4: KeyButton { text: "&"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+                    if root.layout-mode == 4: KeyButton { text: "€"; horizontal-stretch: 1; clicked => { root.key-clicked(self.text); } }
+
+                    // Backspace Key
+                    KeyButton {
+                        text: "⌫";
+                        is-functional: true;
+                        horizontal-stretch: 1.4;
+                        custom-font-size: 18px;
+                        clicked => { root.backspace-clicked(); }
+                    }
+                }
+
+                // ==============================================================
+                // Key Row 4 (Mode Switch + Comma + Space + Period + Enter)
+                // ==============================================================
+                HorizontalLayout {
+                    spacing: 5px;
+                    height: 46px;
+
+                    // Mode Switcher (?123 / ABC)
+                    KeyButton {
+                        text: root.layout-mode <= 2 ? "?123" : "ABC";
+                        is-functional: true;
+                        horizontal-stretch: 1.4;
+                        custom-font-size: 15px;
+                        clicked => {
+                            if root.layout-mode <= 2 {
+                                root.layout-mode = 3;
+                            } else {
+                                root.layout-mode = 0;
+                            }
+                        }
+                    }
+
+                    // Comma Key
+                    KeyButton {
+                        text: ",";
+                        is-functional: false;
+                        horizontal-stretch: 1;
+                        custom-font-size: 18px;
+                        clicked => { root.key-clicked(","); }
+                    }
+
+                    // Spacebar (Expanded Pill)
+                    KeyButton {
+                        text: "Space";
+                        is-functional: false;
+                        horizontal-stretch: 4.6;
+                        custom-font-size: 14px;
+                        clicked => { root.space-clicked(); }
+                    }
+
+                    // Period Key
+                    KeyButton {
+                        text: ".";
+                        is-functional: false;
+                        horizontal-stretch: 1;
+                        custom-font-size: 18px;
+                        clicked => { root.key-clicked("."); }
+                    }
+
+                    // Enter / Action Key (Accent Blue with Dark Tone)
+                    KeyButton {
+                        text: "↵";
+                        is-accent: true;
+                        horizontal-stretch: 1.8;
+                        custom-font-size: 20px;
+                        clicked => { root.enter-clicked(); }
+                    }
+                }
+            }
+        }
+
+        // ----------------------------------------------------------------------
+        // Floating Restore Capsule (Shown when collapsed without physical keyboard)
+        // ----------------------------------------------------------------------
+        if !root.effectively-open && !root.physical-keyboard-connected: Rectangle {
+            width: 48px;
+            height: 38px;
+            x: parent.width - self.width - 12px;
+            y: parent.height - self.height - 8px;
+            border-radius: 19px;
+            background: restore-touch.pressed ? #3b3d45 : #2b2930;
+            border-width: 1px;
+            border-color: #ffffff20;
+
+            // Mini Keyboard Icon
+            Path {
+                width: 22px;
+                height: 22px;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                viewbox-width: 24;
+                viewbox-height: 24;
+                commands: "M4 6 H20 A 2 2 0 0 1 22 8 V16 A 2 2 0 0 1 20 18 H4 A 2 2 0 0 1 2 16 V8 A 2 2 0 0 1 4 6 Z M6 9 H8 V11 H6 Z M10 9 H12 V11 H10 Z M14 9 H16 V11 H14 Z M18 9 H18.01 V11 H18 Z M6 13 H8 V15 H6 Z M10 14 H14 V15 H10 Z M16 13 H18 V15 H16 Z";
+                stroke: #a8c7fa;
+                stroke-width: 1.8px;
+                fill: transparent;
+            }
+
+            restore-touch := TouchArea {
+                clicked => {
+                    root.is-open = true;
+                    root.toggle-hide();
+                }
+            }
+        }
+    }
+}

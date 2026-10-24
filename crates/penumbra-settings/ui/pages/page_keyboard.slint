@@ -1,0 +1,373 @@
+import { Theme } from "../theme.slint";
+import { Icon } from "../icon.slint";
+import { SettingsTile, M3Switch } from "../components/settings_tile.slint";
+import { SettingsSectionCard } from "../components/settings_section.slint";
+
+// ==============================================================================
+// Data Structure: VirtualKeyboardData
+// ==============================================================================
+// Representation of a KDE-compliant virtual keyboard detected from .desktop files.
+export struct VirtualKeyboardData {
+    name: string,
+    comment: string,
+    desktop-id: string,
+    is-active: bool,
+}
+
+// ==============================================================================
+// Data Structure: PhysicalKeyboardData
+// ==============================================================================
+// Representation of an active physical input keyboard detected via /proc/bus/input/devices.
+export struct PhysicalKeyboardData {
+    name: string,
+    bus: string,
+}
+
+// ==============================================================================
+// Component: PageKeyboard
+// ==============================================================================
+// Settings subpage for managing On-Screen Virtual Keyboards and Physical Keyboards.
+// Adheres strictly to Android 17 / Pixel Material You design standards:
+// 1. Tonal elevation cards with 24-28px continuous squircle corner radii.
+// 2. Clear visual groupings without extraneous chevrons.
+// 3. Real-time discovery of KDE-compliant virtual keyboards and connected hardware.
+export component PageKeyboard inherits Rectangle {
+    // List of installed KDE-compliant virtual keyboards
+    in property <[VirtualKeyboardData]> virtual-keyboards: [
+        {
+            name: "Penumbra Keyboard",
+            comment: "Penumbra On-Screen Virtual Keyboard",
+            desktop-id: "penumbra-keyboard.desktop",
+            is-active: true,
+        }
+    ];
+
+    // List of connected physical hardware keyboards
+    in property <[PhysicalKeyboardData]> physical-keyboards: [];
+
+    // Whether to auto-hide the virtual keyboard when a physical keyboard is attached
+    in-out property <bool> hide-on-physical: true;
+
+    // Emitted when the user toggles the auto-hide switch
+    callback toggle-hide-on-physical(bool);
+    // Emitted when the user selects a virtual keyboard as primary
+    callback select-virtual-keyboard(string);
+    // Emitted to refresh hardware scans
+    callback refresh-scan();
+
+    background: Theme.base-surface;
+
+    Flickable {
+        width: 100%;
+        height: 100%;
+
+        VerticalLayout {
+            padding-left: 16px;
+            padding-right: 16px;
+            padding-top: 10px;
+            padding-bottom: 96px;
+            spacing: 14px;
+
+            // ==================================================================
+            // Section 1: On-Screen Virtual Keyboards
+            // ==================================================================
+            SettingsSectionCard {
+                VerticalLayout {
+                    padding-top: 4px;
+                    padding-bottom: 4px;
+
+                    // Section Header
+                    HorizontalLayout {
+                        padding-left: 18px;
+                        padding-right: 18px;
+                        padding-top: 14px;
+                        padding-bottom: 8px;
+
+                        Text {
+                            text: "On-screen keyboard";
+                            font-size: 14px;
+                            font-weight: 600;
+                            color: #a8c7fa;
+                            horizontal-alignment: left;
+                        }
+                    }
+
+                    // Virtual Keyboard Entries
+                    for vk[idx] in root.virtual-keyboards: Rectangle {
+                        min-height: 68px;
+                        background: vk-touch.pressed ? #282a30 : transparent;
+
+                        HorizontalLayout {
+                            padding-left: 18px;
+                            padding-right: 18px;
+                            spacing: 16px;
+
+                            // Pastel Teal Icon Badge with Dark Tone
+                            Rectangle {
+                                width: 40px;
+                                height: 40px;
+                                border-radius: 20px;
+                                background: #80cbc4;
+                                y: (parent.height - self.height) / 2;
+
+                                Icon {
+                                    name: "keyboard";
+                                    icon-size: 20px;
+                                    icon-color: #004d40;
+                                    x: (parent.width - self.width) / 2;
+                                    y: (parent.height - self.height) / 2;
+                                }
+                            }
+
+                            // Text details
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                alignment: center;
+                                spacing: 3px;
+
+                                Text {
+                                    text: vk.name;
+                                    font-size: 16px;
+                                    font-weight: 500;
+                                    color: Theme.on-surface;
+                                    horizontal-alignment: left;
+                                }
+
+                                Text {
+                                    text: vk.is-active ? "Default • " + vk.comment : vk.comment;
+                                    font-size: 13px;
+                                    color: Theme.on-surface-variant;
+                                    horizontal-alignment: left;
+                                    overflow: elide;
+                                }
+                            }
+
+                            // Active Checkmark Indicator
+                            if vk.is-active: Rectangle {
+                                width: 28px;
+                                height: 28px;
+                                border-radius: 14px;
+                                background: #a8c7fa;
+                                y: (parent.height - self.height) / 2;
+
+                                Icon {
+                                    name: "check";
+                                    icon-size: 16px;
+                                    icon-color: #042b59;
+                                    x: (parent.width - self.width) / 2;
+                                    y: (parent.height - self.height) / 2;
+                                }
+                            }
+                        }
+
+                        vk-touch := TouchArea {
+                            clicked => {
+                                root.select-virtual-keyboard(vk.desktop-id);
+                            }
+                        }
+                    }
+
+                    // Divider Hairline
+                    HorizontalLayout {
+                        padding-left: 18px;
+                        padding-right: 18px;
+                        Rectangle {
+                            height: 1px;
+                            background: #ffffff0a;
+                        }
+                    }
+
+                    // Auto-Hide on Physical Keyboard Switch
+                    Rectangle {
+                        min-height: 68px;
+
+                        HorizontalLayout {
+                            padding-left: 18px;
+                            padding-right: 18px;
+                            spacing: 16px;
+
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                alignment: center;
+                                spacing: 3px;
+
+                                Text {
+                                    text: "Hide on physical keyboard";
+                                    font-size: 15px;
+                                    font-weight: 500;
+                                    color: Theme.on-surface;
+                                    horizontal-alignment: left;
+                                }
+
+                                Text {
+                                    text: "Retracts on-screen keyboard when a hardware keyboard is connected";
+                                    font-size: 12px;
+                                    color: Theme.on-surface-variant;
+                                    horizontal-alignment: left;
+                                    wrap: word-wrap;
+                                }
+                            }
+
+                            M3Switch {
+                                checked <=> root.hide-on-physical;
+                                y: (parent.height - self.height) / 2;
+                                toggled(val) => {
+                                    root.toggle-hide-on-physical(val);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ==================================================================
+            // Section 2: Physical Hardware Keyboards
+            // ==================================================================
+            SettingsSectionCard {
+                VerticalLayout {
+                    padding-top: 4px;
+                    padding-bottom: 4px;
+
+                    // Section Header
+                    HorizontalLayout {
+                        padding-left: 18px;
+                        padding-right: 18px;
+                        padding-top: 14px;
+                        padding-bottom: 8px;
+
+                        Text {
+                            text: "Physical keyboards";
+                            font-size: 14px;
+                            font-weight: 600;
+                            color: #a8c7fa;
+                            horizontal-alignment: left;
+                        }
+                    }
+
+                    // Physical Keyboard List
+                    for pk in root.physical-keyboards: Rectangle {
+                        min-height: 64px;
+
+                        HorizontalLayout {
+                            padding-left: 18px;
+                            padding-right: 18px;
+                            spacing: 16px;
+
+                            // Connected Hardware Icon Badge
+                            Rectangle {
+                                width: 40px;
+                                height: 40px;
+                                border-radius: 20px;
+                                background: #a3e8b0; // pastel mint
+                                y: (parent.height - self.height) / 2;
+
+                                Icon {
+                                    name: "keyboard";
+                                    icon-size: 20px;
+                                    icon-color: #073919;
+                                    x: (parent.width - self.width) / 2;
+                                    y: (parent.height - self.height) / 2;
+                                }
+                            }
+
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                alignment: center;
+                                spacing: 3px;
+
+                                Text {
+                                    text: pk.name;
+                                    font-size: 15px;
+                                    font-weight: 500;
+                                    color: Theme.on-surface;
+                                    horizontal-alignment: left;
+                                }
+
+                                Text {
+                                    text: "Connected • " + pk.bus;
+                                    font-size: 13px;
+                                    color: #a3e8b0;
+                                    horizontal-alignment: left;
+                                }
+                            }
+                        }
+                    }
+
+                    // Empty State: No physical keyboard detected
+                    if root.physical-keyboards.length == 0: Rectangle {
+                        min-height: 56px;
+
+                        HorizontalLayout {
+                            padding-left: 18px;
+                            padding-right: 18px;
+                            spacing: 16px;
+
+                            Rectangle {
+                                width: 40px;
+                                height: 40px;
+                                border-radius: 20px;
+                                background: #36343b;
+                                y: (parent.height - self.height) / 2;
+
+                                Icon {
+                                    name: "keyboard";
+                                    icon-size: 20px;
+                                    icon-color: #938f99;
+                                    x: (parent.width - self.width) / 2;
+                                    y: (parent.height - self.height) / 2;
+                                }
+                            }
+
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                alignment: center;
+                                spacing: 3px;
+
+                                Text {
+                                    text: "No physical keyboard detected";
+                                    font-size: 15px;
+                                    font-weight: 500;
+                                    color: Theme.on-surface-variant;
+                                    horizontal-alignment: left;
+                                }
+
+                                Text {
+                                    text: "Connect a USB or Bluetooth typing keyboard";
+                                    font-size: 12px;
+                                    color: #938f99;
+                                    horizontal-alignment: left;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ==================================================================
+            // Section 3: KDE Virtual Keyboard Specification Info Card
+            // ==================================================================
+            SettingsSectionCard {
+                VerticalLayout {
+                    padding: 18px;
+                    spacing: 8px;
+
+                    Text {
+                        text: "Virtual Keyboard Integration";
+                        font-size: 14px;
+                        font-weight: 600;
+                        color: Theme.on-surface;
+                        horizontal-alignment: left;
+                    }
+
+                    Text {
+                        text: "Penumbra Settings automatically detects Wayland virtual keyboards following the KDE Plasma specification (X-KDE-Wayland-VirtualKeyboard=true in .desktop entry files).";
+                        font-size: 12px;
+                        color: Theme.on-surface-variant;
+                        wrap: word-wrap;
+                        horizontal-alignment: left;
+                    }
+                }
+            }
+        }
+    }
+}

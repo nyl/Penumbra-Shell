@@ -8,6 +8,7 @@ members = [
     "crates/layer-shell-slint",
     "crates/penumbra-greeter",
     "crates/penumbra-settings",
+    "crates/penumbra-keyboard",
 ]
 
 [workspace.package]

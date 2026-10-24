@@ -17,6 +17,7 @@ export component NavBarWindow inherits Window {
     callback touch-down(float, float);
     callback touch-move(float, float);
     callback touch-up(float, float);
+    callback keyboard-toggle-clicked();
 
     nav-bar := NavBar {
         width: 100%;
@@ -33,6 +34,10 @@ export component NavBarWindow inherits Window {
 
         touch-up(x, y) => {
             root.touch-up(x, y);
+        }
+
+        keyboard-toggle-clicked => {
+            root.keyboard-toggle-clicked();
         }
 
         gesture-triggered(kind) => {

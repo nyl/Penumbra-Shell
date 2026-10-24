@@ -126,6 +126,7 @@ export component AppDrawer inherits Rectangle {
     callback app-clicked(string);
     callback search-query-changed(string);
     callback search-accepted(string);
+    callback search-focused();
     callback start-drag(string, AppItem, length, length);
     callback drag-moved(length, length);
     callback drag-ended(string, length, length);
@@ -264,9 +265,17 @@ export component AppDrawer inherits Rectangle {
 
                             edited => {
                                 root.search-query-changed(self.text);
+                                root.search-focused();
                             }
                             accepted => {
                                 root.search-accepted(self.text);
+                            }
+                        }
+
+                        TouchArea {
+                            clicked => {
+                                search-input.focus();
+                                root.search-focused();
                             }
                         }
                     }

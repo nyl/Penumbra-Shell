@@ -15,6 +15,7 @@ export component HomescreenWindow inherits Window {
     in-out property <string> app-search-query: "";
     callback app-search-query-changed(string);
     callback app-search-accepted(string);
+    callback app-search-focused();
     in property <[AppItem]> dock-apps: [];
     in property <[HomescreenItem]> homescreen-items: [];
     in-out property <int> current-page: 0;
@@ -161,6 +162,7 @@ export component HomescreenWindow inherits Window {
         save-file(path, content) => { return root.save-file(path, content); }
         app-search-query-changed(q) => { root.app-search-query-changed(q); }
         app-search-accepted(q) => { root.app-search-accepted(q); }
+        app-search-focused => { root.app-search-focused(); }
         select-wallpaper(path) => { root.select-wallpaper(path); }
         clear-wallpaper() => { root.clear-wallpaper(); }
         browse-to(path) => { root.browse-to(path); }

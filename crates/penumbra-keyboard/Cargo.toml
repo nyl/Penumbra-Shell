@@ -1,0 +1,24 @@
+[package]
+name = "penumbra-keyboard"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Android 17 / Material You standalone on-screen layer-shell keyboard for Penumbra Mobile DE"
+
+[[bin]]
+name = "penumbra-keyboard"
+path = "src/main.rs"
+
+[dependencies]
+layer-shell-slint = { path = "../layer-shell-slint" }
+penumbra-services = { path = "../penumbra-services" }
+slint = { version = "1.18", default-features = false, features = ["compat-1-2", "renderer-software", "std"] }
+i-slint-core = { version = "1.18", features = ["image-decoders", "image-default-formats", "svg"] }
+tokio = { version = "1.38", features = ["rt", "rt-multi-thread", "sync", "time", "macros"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+libc = "0.2"
+
+[build-dependencies]
+slint-build = "1.18"

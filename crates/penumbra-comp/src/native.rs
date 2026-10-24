@@ -33,6 +33,7 @@ use smithay::{
     utils::{DeviceFd, Logical, Physical, Point, Rectangle, Size, Transform},
     wayland::{
         compositor::CompositorState,
+        input_method::InputMethodManagerState,
         output::OutputManagerState,
         selection::data_device::DataDeviceState,
         shell::{
@@ -40,6 +41,8 @@ use smithay::{
             xdg::XdgShellState,
         },
         shm::ShmState,
+        text_input::TextInputManagerState,
+        virtual_keyboard::VirtualKeyboardManagerState,
     },
 };
 
@@ -120,7 +123,17 @@ fn layer_elements(
 ) -> Vec<SurfaceElement> {
     let layer_map = layer_map_for_output(output);
     let mut elements = Vec::new();
+    let keyboard_open = if layer == Layer::Top {
+        let path = runtime_path(phone::SHELL_STATE_FILE).with_file_name("penumbra-keyboard-state");
+        std::fs::read_to_string(path).map(|c| c.contains("open=1")).unwrap_or(false)
+    } else {
+        true
+    };
+
     for surface in layer_map.layers().filter(|surface| surface.layer() == layer) {
+        if surface.namespace().contains("keyboard") && !keyboard_open {
+            continue;
+        }
         let Some(geometry) = layer_map.layer_geometry(surface) else {
             continue;
         };
@@ -540,6 +553,9 @@ pub fn run(_compositor: &mut PenumbraCompositor) -> Result<(), Box<dyn Error>> {
     let layer_shell_state = WlrLayerShellState::new::<PenumbraServerState>(&dh);
     let data_device_state = DataDeviceState::new::<PenumbraServerState>(&dh);
     let output_manager_state = OutputManagerState::new_with_xdg_output::<PenumbraServerState>(&dh);
+    let text_input_state = TextInputManagerState::new::<PenumbraServerState>(&dh);
+    let input_method_state = InputMethodManagerState::new::<PenumbraServerState, _>(&dh, |_client| true);
+    let virtual_keyboard_state = VirtualKeyboardManagerState::new::<PenumbraServerState, _>(&dh, |_client| true);
     let output_a = Output::new(
         "DSI-1".to_string(),
         PhysicalProperties {
@@ -573,6 +589,10 @@ pub fn run(_compositor: &mut PenumbraCompositor) -> Result<(), Box<dyn Error>> {
         seat_state,
         data_device_state,
         output_manager_state,
+        text_input_state,
+        input_method_state,
+        virtual_keyboard_state,
+        last_text_input_active: false,
         seat,
         space,
         root_shell: None,
@@ -683,6 +703,7 @@ pub fn run(_compositor: &mut PenumbraCompositor) -> Result<(), Box<dyn Error>> {
         if let Err(error) = state.display.dispatch_clients(&mut state.server) {
             tracing::error!(?error, "Wayland client dispatch failed");
         }
+        state.server.update_text_input_state();
         state.server.space.refresh();
 
         // Shell state arrives through files; poll faster while the overview animates or gesture is active.

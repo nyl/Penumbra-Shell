@@ -25,8 +25,9 @@ use smithay::{
         },
         winit::{self, WinitEvent},
     },
-    delegate_compositor, delegate_data_device, delegate_layer_shell, delegate_output,
-    delegate_seat, delegate_shm, delegate_xdg_shell,
+    delegate_compositor, delegate_data_device, delegate_input_method_manager,
+    delegate_layer_shell, delegate_output, delegate_seat, delegate_shm,
+    delegate_text_input_manager, delegate_virtual_keyboard_manager, delegate_xdg_shell,
     desktop::{layer_map_for_output, space::Space, LayerSurface, Window},
     input::{
         keyboard::FilterResult,
@@ -55,6 +56,7 @@ use smithay::{
             with_states, with_surface_tree_downward, CompositorClientState, CompositorHandler,
             CompositorState, SurfaceAttributes, TraversalAction,
         },
+        input_method::{InputMethodHandler, InputMethodManagerState, PopupSurface as ImPopupSurface},
         output::{OutputHandler, OutputManagerState},
         selection::{
             data_device::{
@@ -72,6 +74,8 @@ use smithay::{
             },
         },
         shm::{ShmHandler, ShmState},
+        text_input::{TextInputManagerState, TextInputSeat},
+        virtual_keyboard::VirtualKeyboardManagerState,
     },
 };
 
@@ -113,6 +117,10 @@ pub struct PenumbraServerState {
     pub seat_state: SeatState<Self>,
     pub data_device_state: DataDeviceState,
     pub output_manager_state: OutputManagerState,
+    pub text_input_state: TextInputManagerState,
+    pub input_method_state: InputMethodManagerState,
+    pub virtual_keyboard_state: VirtualKeyboardManagerState,
+    pub last_text_input_active: bool,
 
     pub seat: Seat<Self>,
     pub space: Space<Window>,
@@ -243,13 +251,31 @@ impl PenumbraServerState {
             }
         }
 
-        // 2. Top layer (e.g. status bar: penumbra-top-bar)
+        // 2. Top layer (e.g. status bar: penumbra-top-bar, nav bar, keyboard)
         if let Some(l) = map_a.layer_under(Layer::Top, pos) {
-            let geo = map_a.layer_geometry(l).unwrap_or_default();
-            return Some((
-                l.wl_surface().clone(),
-                (geo.loc.x as f64, geo.loc.y as f64).into(),
-            ));
+            let ns = l.namespace();
+            let is_penumbra_osk = ns == "penumbra-keyboard";
+            if is_penumbra_osk {
+                let keyboard_open = {
+                    let path = runtime_path(phone::SHELL_STATE_FILE).with_file_name("penumbra-keyboard-state");
+                    std::fs::read_to_string(path).map(|c| c.contains("open=1")).unwrap_or(false)
+                };
+                if self.shell_state.drawer_open || !keyboard_open {
+                    // Do not focus keyboard when drawer is open or keyboard is hidden
+                } else {
+                    let geo = map_a.layer_geometry(l).unwrap_or_default();
+                    return Some((
+                        l.wl_surface().clone(),
+                        (geo.loc.x as f64, geo.loc.y as f64).into(),
+                    ));
+                }
+            } else {
+                let geo = map_a.layer_geometry(l).unwrap_or_default();
+                return Some((
+                    l.wl_surface().clone(),
+                    (geo.loc.x as f64, geo.loc.y as f64).into(),
+                ));
+            }
         }
 
         // 3. Normal window (running phone app in the inset)
@@ -522,6 +548,31 @@ impl PenumbraServerState {
             &runtime_path(phone::SHELL_STATE_FILE),
             &self.shell_state.serialize(),
         );
+        let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+        if let Some(keyboard) = self.seat.get_keyboard() {
+            keyboard.set_focus(self, None, serial);
+        }
+    }
+
+    /// Checks if any connected Wayland application currently has an active text input focus.
+    pub fn is_text_input_active(&self) -> bool {
+        let mut active = false;
+        self.seat.text_input().with_active_text_input(|_, _| {
+            active = true;
+        });
+        active
+    }
+
+    /// Reactively detects transitions in text input focus and notifies virtual keyboard daemons.
+    pub fn update_text_input_state(&mut self) {
+        let active = self.is_text_input_active();
+        if active != self.last_text_input_active {
+            self.last_text_input_active = active;
+            let cmd = if active { "show" } else { "hide" };
+            let cmd_path = runtime_path(phone::SHELL_STATE_FILE).with_file_name("penumbra-keyboard-cmd");
+            let _ = std::fs::write(cmd_path, cmd);
+            info!(active, "Text input active state changed -> notified OSK daemon ({})", cmd);
+        }
     }
 
     pub fn focus_task_by_id(&mut self, id: u32) {
@@ -535,6 +586,21 @@ impl PenumbraServerState {
                 &runtime_path(phone::SHELL_STATE_FILE),
                 &self.shell_state.serialize(),
             );
+
+            let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+            if let Some(first) = self.phone_tasks.first() {
+                let window = first.window.clone();
+                if let Some(toplevel) = window.toplevel() {
+                    toplevel.with_pending_state(|state| {
+                        state.states.set(xdg_toplevel::State::Activated);
+                    });
+                    toplevel.send_configure();
+                    let surf = toplevel.wl_surface().clone();
+                    if let Some(keyboard) = self.seat.get_keyboard() {
+                        keyboard.set_focus(self, Some(surf), serial);
+                    }
+                }
+            }
         }
     }
 
@@ -796,6 +862,7 @@ impl XdgShellHandler for PenumbraServerState {
             self.space.map_element(window.clone(), (0, APP_Y), false);
             let id = self.next_task_id;
             self.next_task_id += 1;
+            let window_clone = window.clone();
             self.phone_tasks.insert(0, PhoneTask { id, window });
 
             // Automatically switch to App mode and save state
@@ -805,6 +872,18 @@ impl XdgShellHandler for PenumbraServerState {
                 &runtime_path(phone::SHELL_STATE_FILE),
                 &self.shell_state.serialize(),
             );
+
+            let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+            if let Some(toplevel) = window_clone.toplevel() {
+                toplevel.with_pending_state(|state| {
+                    state.states.set(xdg_toplevel::State::Activated);
+                });
+                toplevel.send_configure();
+                let surf = toplevel.wl_surface().clone();
+                if let Some(keyboard) = self.seat.get_keyboard() {
+                    keyboard.set_focus(self, Some(surf), serial);
+                }
+            }
             return;
         } else {
             info!(
@@ -912,6 +991,8 @@ impl WlrLayerShellHandler for PenumbraServerState {
             Some((output_size.w.max(1), STATUS_BAR_H))
         } else if ns.contains("quick") {
             Some((output_size.w.max(1), output_size.h.max(1)))
+        } else if ns.contains("keyboard") {
+            Some((output_size.w.max(1), 280))
         } else {
             None
         };
@@ -1025,6 +1106,15 @@ impl SeatHandler for PenumbraServerState {
     }
 }
 
+impl InputMethodHandler for PenumbraServerState {
+    fn new_popup(&mut self, _surface: ImPopupSurface) {}
+    fn dismiss_popup(&mut self, _surface: ImPopupSurface) {}
+    fn popup_repositioned(&mut self, _surface: ImPopupSurface) {}
+    fn parent_geometry(&self, _parent: &WlSurface) -> Rectangle<i32, smithay::utils::Logical> {
+        Rectangle::default()
+    }
+}
+
 delegate_xdg_shell!(PenumbraServerState);
 delegate_layer_shell!(PenumbraServerState);
 delegate_compositor!(PenumbraServerState);
@@ -1032,6 +1122,9 @@ delegate_shm!(PenumbraServerState);
 delegate_seat!(PenumbraServerState);
 delegate_data_device!(PenumbraServerState);
 delegate_output!(PenumbraServerState);
+delegate_text_input_manager!(PenumbraServerState);
+delegate_input_method_manager!(PenumbraServerState);
+delegate_virtual_keyboard_manager!(PenumbraServerState);
 
 /// Compositor server coordinator and runner.
 pub struct PenumbraCompositor {
@@ -1170,6 +1263,11 @@ impl PenumbraCompositor {
         let data_device_state = DataDeviceState::new::<PenumbraServerState>(&dh);
         let output_manager_state =
             OutputManagerState::new_with_xdg_output::<PenumbraServerState>(&dh);
+        let text_input_state = TextInputManagerState::new::<PenumbraServerState>(&dh);
+        let input_method_state =
+            InputMethodManagerState::new::<PenumbraServerState, _>(&dh, |_client| true);
+        let virtual_keyboard_state =
+            VirtualKeyboardManagerState::new::<PenumbraServerState, _>(&dh, |_client| true);
 
         let mut space = Space::<Window>::default();
 
@@ -1236,6 +1334,10 @@ impl PenumbraCompositor {
             seat_state,
             data_device_state,
             output_manager_state,
+            text_input_state,
+            input_method_state,
+            virtual_keyboard_state,
+            last_text_input_active: false,
             seat,
             space,
             root_shell: None,
@@ -1573,6 +1675,7 @@ impl PenumbraCompositor {
 
             // 3. Dispatch & flush clients
             display.dispatch_clients(&mut state)?;
+            state.update_text_input_state();
             state.space.refresh();
             let is_overview = state.shell_state.mode == PhoneMode::Overview;
             let is_animating = state.is_nav_animating();
@@ -1615,8 +1718,15 @@ impl PenumbraCompositor {
                      layer_kind: Layer|
                      -> Vec<WaylandSurfaceRenderElement<GlesRenderer>> {
                         let map = layer_map_for_output(output);
+                        let keyboard_open = if layer_kind == Layer::Top {
+                            let path = runtime_path(phone::SHELL_STATE_FILE).with_file_name("penumbra-keyboard-state");
+                            std::fs::read_to_string(path).map(|c| c.contains("open=1")).unwrap_or(false)
+                        } else {
+                            true
+                        };
                         map.layers()
                             .filter(|l| l.layer() == layer_kind)
+                            .filter(|l| l.namespace() != "penumbra-keyboard" || keyboard_open)
                             .flat_map(|l| {
                                 if let Some(geo) = map.layer_geometry(l) {
                                     let (loc_x, loc_y) = if layer_kind == Layer::Background {

@@ -646,6 +646,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let ui_weak = ui_weak.clone();
         let cached_all_apps = Rc::clone(&cached_all_apps);
         ui.on_app_search_query_changed(move |query_slint| {
+            let path = penumbra_shell::ipc::runtime_path("penumbra-keyboard-cmd");
+            let _ = std::fs::write(path, "show");
             let query = query_slint.as_str().trim().to_lowercase();
             if let Some(ui) = ui_weak.upgrade() {
                 let filtered: Vec<AppItem> = cached_all_apps
@@ -659,6 +661,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .collect();
                 ui.set_installed_apps(ModelRc::from(Rc::new(VecModel::from(filtered))));
             }
+        });
+
+        ui.on_app_search_focused(|| {
+            let path = penumbra_shell::ipc::runtime_path("penumbra-keyboard-cmd");
+            let _ = std::fs::write(path, "show");
+            info!("Search input focused in homescreen -> showing virtual keyboard");
         });
     }
 
@@ -1074,6 +1082,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let animate_drawer_to = Rc::clone(&animate_drawer_to);
         ui.on_drawer_open_requested(move || {
+            let path = penumbra_shell::ipc::runtime_path("penumbra-keyboard-cmd");
+            let _ = std::fs::write(path, "show");
             animate_drawer_to(1.0, 1.5);
         });
     }
@@ -1081,6 +1091,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let animate_drawer_to = Rc::clone(&animate_drawer_to);
         ui.on_drawer_close_requested(move || {
+            let path = penumbra_shell::ipc::runtime_path("penumbra-keyboard-cmd");
+            let _ = std::fs::write(path, "hide");
             animate_drawer_to(0.0, -1.5);
         });
     }

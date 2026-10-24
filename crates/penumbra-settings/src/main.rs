@@ -25,6 +25,7 @@
 
 mod app;
 mod dbus;
+pub mod keyboard_backend;
 mod routes;
 mod search;
 mod system_info;

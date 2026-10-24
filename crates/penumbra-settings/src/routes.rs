@@ -36,6 +36,8 @@ pub enum Page {
     Sound,
     /// System details, hardware specifications, kernel release, and license info.
     About,
+    /// Virtual and physical keyboard management and input methods.
+    Keyboard,
 }
 
 impl Page {
@@ -52,6 +54,7 @@ impl Page {
             Page::Battery => "battery",
             Page::Sound => "sound",
             Page::About => "about",
+            Page::Keyboard => "keyboard",
         }
     }
 
@@ -69,6 +72,7 @@ impl Page {
             Page::Battery => "Battery",
             Page::Sound => "Sound & vibration",
             Page::About => "About phone",
+            Page::Keyboard => "Keyboard",
         }
     }
 }
@@ -93,6 +97,7 @@ impl FromStr for Page {
     /// * `"battery"`, `"power"`, `"battery_saver"` $\to$ [`Page::Battery`]
     /// * `"sound"`, `"audio"`, `"volume"` $\to$ [`Page::Sound`]
     /// * `"about"`, `"system"`, `"device"`, `"info"` $\to$ [`Page::About`]
+    /// * `"keyboard"`, `"osk"`, `"input"`, `"virtualkeyboard"` $\to$ [`Page::Keyboard`]
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let normalized = s.trim().to_lowercase();
         let page = match normalized.as_str() {
@@ -102,6 +107,7 @@ impl FromStr for Page {
             "battery" | "power" | "battery_saver" => Page::Battery,
             "sound" | "audio" | "volume" => Page::Sound,
             "about" | "system" | "device" | "info" => Page::About,
+            "keyboard" | "osk" | "input" | "virtualkeyboard" => Page::Keyboard,
             _ => Page::Main,
         };
         Ok(page)
