@@ -32,15 +32,15 @@ pub const APP_H: i32 = PHONE_H - STATUS_BAR_H - NAV_BAR_H;
 pub const NAV_BAR_Y: i32 = PHONE_H - NAV_BAR_H;
 
 /// Scale applied to app surfaces when shown as overview cards.
-pub const OVERVIEW_SCALE: f64 = 0.70;
-/// Overview card width (412 * 0.70, rounded).
-pub const CARD_W: i32 = 288;
-/// Overview card height (851 * 0.70, rounded).
-pub const CARD_H: i32 = 596;
+pub const OVERVIEW_SCALE: f64 = 0.67;
+/// Overview card width (412 * 0.67, rounded).
+pub const CARD_W: i32 = 276;
+/// Overview card height (841 * 0.67, rounded).
+pub const CARD_H: i32 = 563;
 /// Overview card top edge.
-pub const CARD_Y: i32 = (PHONE_H - CARD_H) / 2;
+pub const CARD_Y: i32 = 176;
 /// Horizontal distance between adjacent cards.
-pub const CARD_STEP: i32 = 312;
+pub const CARD_STEP: i32 = 298;
 
 pub const SHELL_STATE_FILE: &str = "penumbra-shell-state";
 pub const SHELL_CMD_FILE: &str = "penumbra-shell-cmd";
@@ -224,25 +224,22 @@ pub fn card_x(index: usize, scroll: f64) -> i32 {
 pub fn card_transform(
     index: usize,
     scroll: f64,
-    _active_index: usize,
+    active_index: usize,
     active_card_dy: f64,
 ) -> (i32, i32, i32, i32, f64) {
     let dist = (index as f64) - scroll;
-    // Flat uniform scale — no fake 3D depth effect.
     let scale = OVERVIEW_SCALE;
     let w = CARD_W;
     let h = CARD_H;
     let base_centered_x = ((PHONE_W - w) / 2) as f64;
     let target_x = base_centered_x - (dist * CARD_STEP as f64);
     let x = target_x.round() as i32;
-    let dy = if index == scroll.round() as usize {
+    let dy = if index == active_index {
         active_card_dy
     } else {
         0.0
     };
-    let base_centered_y = ((PHONE_H - h) / 2) as f64;
-    let target_y = base_centered_y + dy;
-    let y = target_y.round() as i32;
+    let y = (CARD_Y as f64 + dy).round() as i32;
     (x, y, w, h, scale)
 }
 

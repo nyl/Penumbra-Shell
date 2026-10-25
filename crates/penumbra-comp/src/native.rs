@@ -226,18 +226,13 @@ fn app_elements(
         return elements;
     }
 
-    if server.shell_state.mode == PhoneMode::Overview
-        && server.nav_target != Some(penumbra_gestures::NavigationTarget::Fullscreen)
-        && !server.nav_gesture_active
-    {
+    // In Overview mode, all rendering (including card expansion to fullscreen)
+    // is cleanly handled by overview_elements without split rendering or ghost windows.
+    if server.shell_state.mode == PhoneMode::Overview {
         return Vec::new();
     }
 
-    let expanding_task = if server.shell_state.mode == PhoneMode::Overview {
-        server.phone_tasks.get(server.shell_state.overview_index).or_else(|| server.phone_tasks.first())
-    } else {
-        server.phone_tasks.first()
-    };
+    let expanding_task = server.phone_tasks.first();
     let Some(surface) = expanding_task.and_then(|t| t.window.toplevel()).map(|tl| tl.wl_surface().clone()) else {
         return Vec::new();
     };
@@ -346,11 +341,15 @@ fn compute_carousel_transform(server: &PenumbraServerState) -> (f64, i32) {
 }
 
 /// Overview carousel cards, clipped to the phone canvas.
+/// Returns (background_cards, optional_expanding_active_card_with_scale).
 fn overview_elements(
     renderer: &mut GlesRenderer,
     server: &PenumbraServerState,
     canvas: Canvas,
-) -> Vec<CropRenderElement<SurfaceElement>> {
+) -> (
+    Vec<CropRenderElement<SurfaceElement>>,
+    Option<(Vec<CropRenderElement<SurfaceElement>>, f64)>,
+) {
     let mut cards = Vec::new();
     let is_spring_to_overview = server.nav_target == Some(penumbra_gestures::NavigationTarget::Overview);
     let is_dragging_to_overview = server.nav_gesture_active
@@ -360,7 +359,7 @@ fn overview_elements(
     if (server.shell_state.mode != PhoneMode::Overview && !is_spring_to_overview && !is_dragging_to_overview)
         || server.shell_state.drawer_open
     {
-        return cards;
+        return (cards, None);
     }
     let phone_clip = canvas.rect(0, 0, PHONE_W, PHONE_H);
     let (scale, base_y) = compute_carousel_transform(server);
@@ -368,6 +367,7 @@ fn overview_elements(
     let w = (PHONE_W as f64 * scale).round() as i32;
     let h = (APP_H as f64 * scale).round() as i32;
     let step = ((CARD_STEP as f64) * (scale / OVERVIEW_SCALE)).round() as i32;
+
     let center_x = ((PHONE_W - w) / 2) as f64;
 
     let is_expanding_to_fullscreen = server.shell_state.mode == PhoneMode::Overview
@@ -376,39 +376,29 @@ fn overview_elements(
 
     // Expansion progress: 0.0 at rest (Overview), 1.0 when expanded (Fullscreen)
     let p_expand = if is_expanding_to_fullscreen {
-        (1.0 - server.nav_gesture_progress).clamp(0.0, 1.0)
+        if server.nav_target == Some(penumbra_gestures::NavigationTarget::Fullscreen) {
+            (1.0 - server.nav_gesture_progress).clamp(0.0, 1.0)
+        } else {
+            let denom = (PHONE_H as f64) * 0.40;
+            (server.nav_gesture_dy / denom).clamp(0.0, 1.0)
+        }
     } else {
         0.0
     };
 
-    // If active card has expanded into near-fullscreen (>= 85%), all adjacent cards are offscreen
-    if is_expanding_to_fullscreen && p_expand >= 0.85 {
-        return cards;
-    }
-
+    // 1. Render background (non-active) carousel cards first
     for (index, task) in server.phone_tasks.iter().enumerate() {
         if is_expanding_to_fullscreen && index == server.shell_state.overview_index {
             continue;
         }
 
         let dist = (index as f64) - server.overview_scroll;
-        let mut x = (center_x - dist * (step as f64)).round() as i32;
-
+        let x = (center_x - dist * (step as f64)).round() as i32;
         let y = if index == server.shell_state.overview_index && server.shell_state.mode == PhoneMode::Overview {
             base_y + server.shell_state.active_card_dy.round() as i32
         } else {
             base_y
         };
-
-        // Disperse adjacent cards horizontally away from expanding center card
-        if is_expanding_to_fullscreen {
-            let push_dist = (p_expand * (PHONE_W as f64 * 0.95)).round() as i32;
-            if index < server.shell_state.overview_index {
-                x -= push_dist;
-            } else if index > server.shell_state.overview_index {
-                x += push_dist;
-            }
-        }
 
         if x + w <= 0 || x >= PHONE_W {
             continue;
@@ -426,7 +416,32 @@ fn overview_elements(
             cards.extend(elements);
         }
     }
-    cards
+
+    // 2. When expanding to fullscreen, render the active card ON TOP smoothly scaling to fullscreen
+    let mut expanding_card = None;
+    if is_expanding_to_fullscreen {
+        if let Some(task) = server.phone_tasks.get(server.shell_state.overview_index) {
+            if let Some(toplevel) = task.window.toplevel() {
+                let expand_scale = scale * (1.0 - p_expand) + 1.0 * p_expand;
+                let ew = (PHONE_W as f64 * expand_scale).round() as i32;
+                let eh = (APP_H as f64 * expand_scale).round() as i32;
+                let ex = ((PHONE_W - ew) / 2).max(0);
+                let ey = (base_y as f64 * (1.0 - p_expand) + APP_Y as f64 * p_expand).round() as i32;
+                let draw_scale = expand_scale * canvas.scale;
+
+                let card = canvas.rect(ex, ey, ew, eh);
+                if let Some(clip) = card.intersection(phone_clip) {
+                    let elements = cropped(
+                        surface_elements(renderer, toplevel.wl_surface(), canvas.loc(ex, ey), draw_scale),
+                        draw_scale,
+                        clip,
+                    );
+                    expanding_card = Some((elements, draw_scale));
+                }
+            }
+        }
+    }
+    (cards, expanding_card)
 }
 
 /// Composes one frame in paint order (bottom to top) and queues it on the panel.
@@ -478,7 +493,7 @@ fn render_frame(state: &mut NativeState, buffer: &mut Dmabuf) -> Result<(), Box<
     };
 
     // Phone Layer 1: overview carousel thumbnails.
-    let overview = overview_elements(renderer, server, canvas);
+    let (overview, expanding_app) = overview_elements(renderer, server, canvas);
     // Phone Layer 2: active application inside the system insets (drawn above carousel so expanding card sits on top).
     let apps = app_elements(renderer, server, canvas);
 
@@ -512,6 +527,9 @@ fn render_frame(state: &mut NativeState, buffer: &mut Dmabuf) -> Result<(), Box<
     let (carousel_s, _) = compute_carousel_transform(server);
     let overview_scale = carousel_s * canvas.scale;
     draw_render_elements(&mut frame, overview_scale, &overview, &[damage])?;
+    if let Some((expanding_card, expanding_scale)) = expanding_app {
+        draw_render_elements(&mut frame, expanding_scale, &expanding_card, &[damage])?;
+    }
 
     let active_app_scale = if (server.is_nav_animating() || server.nav_gesture_active)
         && server.nav_target == Some(penumbra_gestures::NavigationTarget::Home)
@@ -706,6 +724,7 @@ pub fn run(_compositor: &mut PenumbraCompositor) -> Result<(), Box<dyn Error>> {
         nav_gesture_active: false,
         nav_gesture_progress: 0.0,
         nav_gesture_dy: 0.0,
+        nav_gesture_dx: 0.0,
         nav_gesture_vy: 0.0,
         nav_switch_active: false,
         nav_switch_dx: 0.0,
@@ -809,8 +828,7 @@ pub fn run(_compositor: &mut PenumbraCompositor) -> Result<(), Box<dyn Error>> {
             state.server.poll_shell_ipc();
             state.last_ipc_poll = Instant::now();
         }
-        state.server.advance_nav_spring();
-        state.server.advance_overview_scroll();
+        state.server.advance_animations();
 
         if let Some(press_time) = state.input.power_press_time {
             if !state.input.power_dialog_triggered && press_time.elapsed() >= Duration::from_millis(500) {

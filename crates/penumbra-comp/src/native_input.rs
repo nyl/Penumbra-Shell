@@ -352,53 +352,64 @@ pub(crate) fn handle(
             // Intercept if touching the generous bottom navigation swipe area (y >= 835.0, full width)
             // OR if already in Overview mode (where the entire screen is an interactive task switcher).
             let is_nav_zone = pos.y >= (NAV_BAR_Y as f64 - 48.0);
-            let is_overview = server.shell_state.mode == PhoneMode::Overview;
-            let in_overview_zone = is_overview && pos.y >= STATUS_BAR_H as f64;
+                    let is_overview = server.shell_state.mode == PhoneMode::Overview;
+                    let in_overview_zone = is_overview && pos.y >= STATUS_BAR_H as f64;
 
-            if (is_nav_zone && (!server.phone_tasks.is_empty() || server.phone_app_visible() || is_overview || server.shell_state.mode == PhoneMode::App)) || in_overview_zone {
-                if input.nav_tracker.is_none() {
-                    let mut grabbed_card = None;
-                    if is_overview {
-                        for (index, _) in server.phone_tasks.iter().enumerate() {
-                            let (cx, cy, cw, ch, _) = card_transform(
-                                index,
-                                server.overview_scroll,
-                                server.shell_state.overview_index,
-                                0.0,
-                            );
-                            if pos.x >= cx as f64
-                                && pos.x <= (cx + cw) as f64
-                                && pos.y >= cy as f64
-                                && pos.y <= (cy + ch) as f64
-                            {
-                                grabbed_card = Some(index);
-                                break;
+                    if (is_nav_zone && (!server.phone_tasks.is_empty() || server.phone_app_visible() || is_overview || server.shell_state.mode == PhoneMode::App)) || in_overview_zone {
+                        if input.nav_tracker.is_none() {
+                            let mut grabbed_card = None;
+                            if is_overview {
+                                // Immediately stop any active coasting spring on contact
+                                server.overview_scroll_spring = None;
+                                server.shell_state.is_dragging = false;
+                                server.shell_state.active_card_dy = 0.0;
+                                server.shell_state.overview_scroll = server.overview_scroll;
+
+                                for (index, _) in server.phone_tasks.iter().enumerate() {
+                                    let (cx, cy, cw, ch, _) = card_transform(
+                                        index,
+                                        server.overview_scroll,
+                                        server.shell_state.overview_index,
+                                        0.0,
+                                    );
+                                    if pos.x >= cx as f64
+                                        && pos.x <= (cx + cw) as f64
+                                        && pos.y >= cy as f64
+                                        && pos.y <= (cy + ch) as f64
+                                    {
+                                        grabbed_card = Some(index);
+                                        break;
+                                    }
+                                }
                             }
+
+                            let mut tracker = penumbra_gestures::VelocityTracker::new(0.8);
+                            tracker.start(pos.x, pos.y, std::time::Duration::ZERO);
+                            input.nav_tracker = Some(NavTouchTracker {
+                                slot,
+                                start_pos: pos,
+                                start_mode: server.shell_state.mode,
+                                start_scroll: if is_overview { server.shell_state.overview_scroll } else { 0.0 },
+                                grabbed_card,
+                                is_vertical_dismiss: false,
+                                is_horizontal_scrub: false,
+                                tracker,
+                            });
+                            if !is_overview {
+                                server.nav_gesture_active = true;
+                                server.nav_gesture_progress = 0.0;
+                                server.nav_gesture_dy = 0.0;
+                                server.nav_gesture_dx = 0.0;
+                                server.nav_gesture_vy = 0.0;
+                                server.nav_spring = None;
+                                server.shell_state.overview_index = 0;
+                                server.shell_state.overview_scroll = 0.0;
+                                server.overview_scroll = 0.0;
+                                server.overview_scroll_spring = None;
+                            }
+                            return;
                         }
                     }
-
-                    let mut tracker = penumbra_gestures::VelocityTracker::new(0.8);
-                    tracker.start(pos.x, pos.y, std::time::Duration::ZERO);
-                    input.nav_tracker = Some(NavTouchTracker {
-                        slot,
-                        start_pos: pos,
-                        start_mode: server.shell_state.mode,
-                        start_scroll: server.shell_state.overview_scroll,
-                        grabbed_card,
-                        is_vertical_dismiss: false,
-                        is_horizontal_scrub: false,
-                        tracker,
-                    });
-                    if !is_overview {
-                        server.nav_gesture_active = true;
-                        server.nav_gesture_progress = 0.0;
-                        server.nav_gesture_dy = 0.0;
-                        server.nav_gesture_vy = 0.0;
-                        server.nav_spring = None;
-                    }
-                    return;
-                }
-            }
 
             // Only the first finger drives the emulated pointer.
             if input.touch.is_some() {
@@ -448,32 +459,38 @@ pub(crate) fn handle(
                     let dy = pos.y - nav.start_pos.y;
 
                     if nav.start_mode == PhoneMode::Overview {
+                        let abs_dx = dx.abs();
+                        let abs_dy = dy.abs();
+
                         // Case A: Downward pull gesture to restore active application to fullscreen
-                        if dy > 15.0 && dy > dx.abs() * 1.1 && !nav.is_horizontal_scrub && !nav.is_vertical_dismiss {
-                            if let Some(card_idx) = nav.grabbed_card {
-                                server.shell_state.overview_index = card_idx;
-                                server.shell_state.overview_scroll = card_idx as f64;
-                                server.overview_scroll = card_idx as f64;
-                            }
+                        if dy > 20.0 && dy > abs_dx * 1.2 && !nav.is_horizontal_scrub && !nav.is_vertical_dismiss {
+                            let card_idx = nav.grabbed_card.unwrap_or(server.shell_state.overview_index);
+                            server.shell_state.overview_index = card_idx;
+                            server.shell_state.overview_scroll = card_idx as f64;
+                            server.overview_scroll = card_idx as f64;
                             server.nav_gesture_active = true;
                             server.shell_state.is_dragging = false;
                             server.shell_state.active_card_dy = 0.0;
-                            let denom = (PHONE_H as f64) * 0.45;
-                            let active_dy = (dy - 15.0).max(0.0);
+                            let denom = (PHONE_H as f64) * 0.40;
+                            let active_dy = (dy - 20.0).max(0.0);
                             let t = (1.0 - (active_dy / denom)).clamp(0.0, 1.0);
                             server.nav_gesture_progress = t;
                             server.nav_gesture_dy = dy;
                             server.nav_gesture_vy = vy;
                         }
-                        // Case B: Upward drag to dismiss active card ONLY if grabbed_card is Some and purely vertical
-                        else if nav.grabbed_card.is_some() && dy < -18.0 && (-dy) > dx.abs() * 1.5 && !nav.is_horizontal_scrub {
+                        // Case B: Upward drag to dismiss active card ONLY if grabbed center card and decisively vertical
+                        else if nav.grabbed_card == Some(server.shell_state.overview_index)
+                            && dy < -30.0
+                            && (-dy) > abs_dx * 2.2
+                            && !nav.is_horizontal_scrub
+                        {
                             nav.is_vertical_dismiss = true;
                             server.nav_gesture_active = false;
                             server.shell_state.is_dragging = true;
                             server.shell_state.active_card_dy = dy;
                         }
                         // Case B2: Upward drag from bottom nav bar in Overview mode -> cancel switcher to Home
-                        else if nav.grabbed_card.is_none() && nav.start_pos.y >= (NAV_BAR_Y as f64 - 48.0) && dy < -15.0 && (-dy) > dx.abs() * 1.2 && !nav.is_horizontal_scrub {
+                        else if nav.grabbed_card.is_none() && nav.start_pos.y >= (NAV_BAR_Y as f64 - 48.0) && dy < -18.0 && (-dy) > abs_dx * 1.2 && !nav.is_horizontal_scrub {
                             server.shell_state.is_dragging = false;
                             server.nav_gesture_active = true;
                             let denom = (PHONE_H as f64) * 0.35;
@@ -482,9 +499,10 @@ pub(crate) fn handle(
                             server.nav_gesture_dy = dy;
                             server.nav_gesture_vy = vy;
                         }
-                        // Case C: Horizontal carousel scrubbing (free play)
-                        else if dx.abs() > 8.0 && !nav.is_vertical_dismiss {
+                        // Case C: Horizontal carousel scrubbing (prize wheel drag)
+                        else if (abs_dx > 8.0 && abs_dx > abs_dy * 0.7) || nav.is_horizontal_scrub {
                             nav.is_horizontal_scrub = true;
+                            nav.is_vertical_dismiss = false;
                             server.nav_gesture_active = false;
                             server.shell_state.is_dragging = true;
                             server.shell_state.active_card_dy = 0.0;
@@ -513,17 +531,10 @@ pub(crate) fn handle(
                         server.nav_gesture_progress = progress;
                         server.nav_gesture_dy = dy;
                         server.nav_gesture_vy = vy;
-
-                        // Free play: as user pulls up towards overview (progress >= 0.15),
-                        // horizontal finger movement scrubs through recent cards!
-                        if progress >= 0.15 && !server.phone_tasks.is_empty() {
-                            let delta_cards = dx / (CARD_STEP as f64);
-                            let max_idx = server.phone_tasks.len().saturating_sub(1) as f64;
-                            let new_scroll = (nav.start_scroll + delta_cards).clamp(-0.25, max_idx + 0.25);
-                            server.shell_state.overview_scroll = new_scroll;
-                            server.shell_state.overview_index = new_scroll.round().clamp(0.0, max_idx) as usize;
-                            server.overview_scroll = new_scroll;
-                        }
+                        // Keep the active card (index 0) centered — no horizontal carousel scrub during pull-up.
+                        server.shell_state.overview_index = 0;
+                        server.shell_state.overview_scroll = 0.0;
+                        server.overview_scroll = 0.0;
                     }
                     return;
                 }
@@ -566,8 +577,9 @@ pub(crate) fn handle(
                         // 1. If pulling down to return to fullscreen
                         if server.nav_gesture_active && server.nav_gesture_dy > 0.0 {
                             server.nav_gesture_active = false;
-                            let t = server.nav_gesture_progress;
-                            let to_fullscreen = vy > 350.0 || (vy > -200.0 && t < 0.70);
+                            let denom = (PHONE_H as f64) * 0.40;
+                            let p_expand = (server.nav_gesture_dy / denom).clamp(0.0, 1.0);
+                            let to_fullscreen = vy > 350.0 || (vy > -200.0 && p_expand > 0.35);
                             let target = if to_fullscreen {
                                 penumbra_gestures::NavigationTarget::Fullscreen
                             } else {
@@ -575,9 +587,8 @@ pub(crate) fn handle(
                             };
                             let target_pos = if to_fullscreen { 0.0 } else { 1.0 };
                             let mut spring = penumbra_gestures::SpringSolver::overview();
-                            spring.reset(t);
+                            spring.reset(1.0 - p_expand);
                             spring.set_target(target_pos);
-                            let denom = (PHONE_H as f64) * 0.45;
                             let v_norm = if denom > 0.0 { (-vy / denom).clamp(-15.0, 15.0) } else { 0.0 };
                             spring.set_velocity(v_norm);
                             server.nav_spring = Some(spring);
@@ -587,18 +598,16 @@ pub(crate) fn handle(
                         }
 
                         // 2. If dragging carousel or swiping up to dismiss
-                        if server.shell_state.is_dragging {
+                        if server.shell_state.is_dragging || nav.is_horizontal_scrub || nav.is_vertical_dismiss {
                             server.shell_state.is_dragging = false;
-                            let dismissed = if nav.is_vertical_dismiss {
-                                if let Some(card_idx) = nav.grabbed_card {
-                                    if server.shell_state.active_card_dy < -100.0 || (server.shell_state.active_card_dy < -50.0 && vy < -600.0 && vy.abs() > vx.abs() * 1.5) {
-                                        if let Some(task) = server.phone_tasks.get(card_idx) {
-                                            let id = task.id;
-                                            server.close_task_by_id(id);
-                                            true
-                                        } else {
-                                            false
-                                        }
+                            let dismissed = if nav.is_vertical_dismiss && !nav.is_horizontal_scrub {
+                                if server.shell_state.active_card_dy < -140.0
+                                    || (server.shell_state.active_card_dy < -70.0 && vy < -800.0 && vy.abs() > vx.abs() * 2.2)
+                                {
+                                    if let Some(task) = server.phone_tasks.get(server.shell_state.overview_index) {
+                                        let id = task.id;
+                                        server.close_task_by_id(id);
+                                        true
                                     } else {
                                         false
                                     }
@@ -610,29 +619,25 @@ pub(crate) fn handle(
                             };
 
                             if !dismissed {
-                                if nav.is_horizontal_scrub || dx.abs() > 10.0 || vx.abs() > 150.0 {
-                                    // Material 3 fling: calculate target card based on flick velocity
-                                    let max_idx = server.phone_tasks.len().saturating_sub(1) as f64;
-                                    let current_scroll = server.overview_scroll;
-                                    let target_idx = if vx.abs() > 350.0 {
-                                        let dir = if vx > 0.0 { 1.0 } else { -1.0 };
-                                        let extra = if vx.abs() > 1500.0 { 2.0 * dir } else { 1.0 * dir };
-                                        (current_scroll + extra).round().clamp(0.0, max_idx)
-                                    } else {
-                                        current_scroll.round().clamp(0.0, max_idx)
-                                    };
+                                // Prize-wheel horizontal fling:
+                                // Decelerates naturally according to flick velocity,
+                                // and always magnetically settles dead-center on a card.
+                                let max_idx = server.phone_tasks.len().saturating_sub(1) as f64;
+                                let current_scroll = server.overview_scroll;
+                                let v_cards = vx / (CARD_STEP as f64);
+                                let coast_distance = v_cards / 4.2;
+                                let projected_scroll = current_scroll + coast_distance;
+                                let target_idx = projected_scroll.round().clamp(0.0, max_idx);
 
-                                    server.shell_state.overview_index = target_idx as usize;
-                                    server.shell_state.overview_scroll = target_idx;
+                                server.shell_state.overview_index = target_idx as usize;
+                                server.shell_state.overview_scroll = target_idx;
 
-                                    let mut spring = penumbra_gestures::SpringSolver::expressive();
-                                    spring.reset(current_scroll);
-                                    spring.set_target(target_idx);
-                                    let v_cards = (vx / (CARD_STEP as f64)).clamp(-8.0, 8.0);
-                                    spring.set_velocity(v_cards);
-                                    server.overview_scroll_spring = Some(spring);
-                                    server.last_nav_spring_tick = Some(std::time::Instant::now());
-                                }
+                                let mut spring = penumbra_gestures::SpringSolver::new(160.0, 0.94, 1.0);
+                                spring.reset(current_scroll);
+                                spring.set_target(target_idx);
+                                spring.set_velocity(v_cards.clamp(-12.0, 12.0));
+                                server.overview_scroll_spring = Some(spring);
+                                server.last_nav_spring_tick = Some(std::time::Instant::now());
                             }
                             server.shell_state.active_card_dy = 0.0;
                             let _ = write_atomic(
@@ -765,7 +770,7 @@ pub(crate) fn handle(
                     if target == penumbra_gestures::NavigationTarget::Overview {
                         let max_idx = server.phone_tasks.len().saturating_sub(1) as f64;
                         let target_idx = server.overview_scroll.round().clamp(0.0, max_idx);
-                        let mut scroll_spring = penumbra_gestures::SpringSolver::expressive();
+                        let mut scroll_spring = penumbra_gestures::SpringSolver::new(160.0, 0.94, 1.0);
                         scroll_spring.reset(server.overview_scroll);
                         scroll_spring.set_target(target_idx);
                         let v_cards = (vx / (CARD_STEP as f64)).clamp(-8.0, 8.0);

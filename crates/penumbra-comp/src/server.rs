@@ -151,6 +151,8 @@ pub struct PenumbraServerState {
     pub nav_gesture_progress: f64,
     /// Vertical drag displacement (pixels, negative = dragging up).
     pub nav_gesture_dy: f64,
+    /// Horizontal rubber-band displacement while pulling up (pixels).
+    pub nav_gesture_dx: f64,
     /// Instantaneous vertical velocity (pixels/second).
     pub nav_gesture_vy: f64,
     /// Whether user is currently swiping horizontally along nav bar (Quick Switch).
@@ -311,21 +313,27 @@ impl PenumbraServerState {
         self.root_surface().map(|s| (s, (0.0, 0.0).into()))
     }
 
+    /// Advances all navigation and overview spring animations in lockstep.
+    pub(crate) fn advance_animations(&mut self) {
+        let now = Instant::now();
+        let dt = if let Some(last) = self.last_nav_spring_tick {
+            now.duration_since(last).as_secs_f64().clamp(0.001, 0.05)
+        } else {
+            0.016
+        };
+        self.last_nav_spring_tick = Some(now);
+        self.advance_nav_spring(dt);
+        self.advance_overview_scroll(dt);
+    }
+
     /// Eases the animated overview carousel towards the shell's target index.
     /// While the user drags, it tracks the finger 1:1; on release it decelerates
     /// using Material 3 Expressive spring physics into a magnetic lock.
-    pub(crate) fn advance_overview_scroll(&mut self) {
+    pub(crate) fn advance_overview_scroll(&mut self, dt: f64) {
         if self.shell_state.is_dragging {
             self.overview_scroll = self.shell_state.overview_scroll;
             self.overview_scroll_spring = None;
         } else if let Some(ref mut spring) = self.overview_scroll_spring {
-            let now = Instant::now();
-            let dt = if let Some(last) = self.last_nav_spring_tick {
-                now.duration_since(last).as_secs_f64().min(0.05)
-            } else {
-                0.016
-            };
-            self.last_nav_spring_tick = Some(now);
             spring.step_analytical(dt);
             self.overview_scroll = spring.position;
             let is_settled = spring.is_settled(0.005, 0.05);
@@ -341,11 +349,12 @@ impl PenumbraServerState {
                 );
             }
         } else {
-            let scroll_diff = self.shell_state.overview_scroll - self.overview_scroll;
+            let target = self.shell_state.overview_scroll;
+            let scroll_diff = target - self.overview_scroll;
             if scroll_diff.abs() > 0.001 {
                 self.overview_scroll += scroll_diff * 0.18;
             } else {
-                self.overview_scroll = self.shell_state.overview_scroll;
+                self.overview_scroll = target;
             }
         }
     }
@@ -359,19 +368,12 @@ impl PenumbraServerState {
             || self.nav_switch_active
             || self.nav_switch_spring.is_some()
             || self.nav_switch_dx.abs() > 0.5
+            || (self.shell_state.overview_scroll - self.overview_scroll).abs() > 0.001
     }
 
     /// Advances the inertial spring solver governing Overview / Home / Fullscreen
     /// and horizontal Quick Switch window cycling transitions.
-    pub(crate) fn advance_nav_spring(&mut self) {
-        let now = Instant::now();
-        let dt = if let Some(last) = self.last_nav_spring_tick {
-            now.duration_since(last).as_secs_f64().min(0.05)
-        } else {
-            0.016
-        };
-        self.last_nav_spring_tick = Some(now);
-
+    pub(crate) fn advance_nav_spring(&mut self, dt: f64) {
         // 1. Advance vertical gesture spring
         if let Some(ref mut spring) = self.nav_spring {
             spring.step_analytical(dt);
@@ -392,6 +394,9 @@ impl PenumbraServerState {
                     Some(NavigationTarget::Home) => {
                         self.nav_gesture_progress = 0.0;
                         self.shell_state.mode = PhoneMode::Home;
+                        self.shell_state.overview_index = 0;
+                        self.shell_state.overview_scroll = 0.0;
+                        self.overview_scroll = 0.0;
                         let _ = write_atomic(
                             &runtime_path(phone::SHELL_STATE_FILE),
                             &self.shell_state.serialize(),
@@ -402,6 +407,9 @@ impl PenumbraServerState {
                         self.nav_gesture_progress = 0.0;
                         self.nav_gesture_dy = 0.0;
                         self.shell_state.mode = PhoneMode::App;
+                        self.shell_state.overview_index = 0;
+                        self.shell_state.overview_scroll = 0.0;
+                        self.overview_scroll = 0.0;
                         if let Some(id) = target_id {
                             self.focus_task_by_id(id);
                         }
@@ -439,6 +447,9 @@ impl PenumbraServerState {
                     _ => {}
                 }
                 self.shell_state.mode = PhoneMode::App;
+                self.shell_state.overview_index = 0;
+                self.shell_state.overview_scroll = 0.0;
+                self.overview_scroll = 0.0;
                 let _ = write_atomic(
                     &runtime_path(phone::SHELL_STATE_FILE),
                     &self.shell_state.serialize(),
@@ -597,6 +608,9 @@ impl PenumbraServerState {
     }
     pub fn set_phone_home(&mut self) {
         self.shell_state.mode = PhoneMode::Home;
+        self.shell_state.overview_index = 0;
+        self.shell_state.overview_scroll = 0.0;
+        self.overview_scroll = 0.0;
         let _ = write_atomic(
             &runtime_path(phone::SHELL_STATE_FILE),
             &self.shell_state.serialize(),
@@ -633,6 +647,7 @@ impl PenumbraServerState {
             let task = self.phone_tasks.remove(idx);
             self.phone_tasks.insert(0, task);
             self.overview_scroll = 0.0;
+            self.shell_state.overview_scroll = 0.0;
             self.shell_state.overview_index = 0;
             self.shell_state.mode = PhoneMode::App;
             let _ = write_atomic(
@@ -921,6 +936,9 @@ impl XdgShellHandler for PenumbraServerState {
 
             // Automatically switch to App mode and save state
             self.shell_state.mode = PhoneMode::App;
+            self.shell_state.overview_index = 0;
+            self.shell_state.overview_scroll = 0.0;
+            self.overview_scroll = 0.0;
             self.shell_state.drawer_open = false;
             let _ = write_atomic(
                 &runtime_path(phone::SHELL_STATE_FILE),
@@ -1412,6 +1430,7 @@ impl PenumbraCompositor {
             nav_gesture_active: false,
             nav_gesture_progress: 0.0,
             nav_gesture_dy: 0.0,
+            nav_gesture_dx: 0.0,
             nav_gesture_vy: 0.0,
             nav_switch_active: false,
             nav_switch_dx: 0.0,
@@ -1793,8 +1812,7 @@ impl PenumbraCompositor {
             display.flush_clients()?;
 
             // Advance gesture spring physics and overview carousel scroll
-            state.advance_nav_spring();
-            state.advance_overview_scroll();
+            state.advance_animations();
 
             // 4. Render.
             //
