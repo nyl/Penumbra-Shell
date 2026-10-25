@@ -64,4 +64,10 @@ impl TargetPixel for Argb8888Pixel {
     fn from_rgb(r: u8, g: u8, b: u8) -> Self {
         Self { b, g, r, a: 255 }
     }
+
+    /// Pixel which will be filled as the background in case the slint view has transparency.
+    #[inline]
+    fn background() -> Self {
+        Self { b: 0, g: 0, r: 0, a: 0 }
+    }
 }

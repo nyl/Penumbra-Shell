@@ -145,20 +145,26 @@ pub(crate) fn main() -> Result<(), Box<dyn std::error::Error>> {
                         ui.set_expansion_progress(progress);
                     }
 
-                    if sp.snap_if_settled(1.0, 5.0) {
+                    let is_settled = sp.snap_if_settled(1.0, 5.0);
+                    let mut state = ShellState::load();
+                    if is_settled {
                         spring_timer_inner.borrow().stop();
                         let target = sp.target;
+                        let final_progress = ((target + 915.0) / 915.0).clamp(0.0, 1.0) as f32;
                         if let Some(ui) = ui_weak.upgrade() {
                             ui.set_slide_offset_y(target as f32);
-                            let final_progress = ((target + 915.0) / 915.0).clamp(0.0, 1.0) as f32;
                             ui.set_expansion_progress(final_progress);
                         }
-                        let mut state = ShellState::load();
                         state.drawer_open = target > -900.0;
-                        state.drawer_pull_dy = 0.0;
+                        state.drawer_pull_dy = if state.drawer_open { 915.0 } else { 0.0 };
+                        state.drawer_progress = if state.drawer_open { 1.0 } else { 0.0 };
                         state.drawer_dragging = false;
-                        let _ = state.save();
+                    } else {
+                        state.drawer_open = true;
+                        state.drawer_pull_dy = (new_y + 915.0).clamp(0.0, 915.0);
+                        state.drawer_progress = progress as f64;
                     }
+                    let _ = state.save();
                 },
             );
         }
@@ -547,10 +553,11 @@ pub(crate) fn main() -> Result<(), Box<dyn std::error::Error>> {
                 sp.velocity = 0.0;
 
                 let mut state = ShellState::load();
-                if !state.drawer_open && new_y > -910.0 {
-                    state.drawer_open = true;
-                    let _ = state.save();
-                }
+                state.drawer_open = true;
+                state.drawer_dragging = true;
+                state.drawer_pull_dy = new_disp;
+                state.drawer_progress = progress as f64;
+                let _ = state.save();
             }
         });
     }
@@ -615,14 +622,22 @@ pub(crate) fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 .clamp(0.0, 915.0);
                 let new_y = shade_disp - 915.0;
+                let progress = (shade_disp / 915.0).clamp(0.0, 1.0) as f32;
 
                 if let Some(ui) = ui_weak.upgrade() {
                     ui.set_slide_offset_y(new_y as f32);
-                    ui.set_expansion_progress((shade_disp / 915.0).clamp(0.0, 1.0) as f32);
+                    ui.set_expansion_progress(progress);
                 }
                 let mut sp = spring_state.borrow_mut();
                 sp.position = new_y;
                 sp.velocity = 0.0;
+
+                if (state.drawer_progress - progress as f64).abs() > 0.001 {
+                    let mut s = ShellState::load();
+                    s.drawer_progress = progress as f64;
+                    s.drawer_open = true;
+                    let _ = s.save();
+                }
             } else if !state.drawer_dragging {
                 *last_pull = state.drawer_pull_dy;
             }

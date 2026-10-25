@@ -261,12 +261,30 @@ fn is_binary_available(bin: &str) -> bool {
 }
 
 fn sync_shell_state(mode_str: &str, drawer_open: bool, overview_idx: usize) {
+    sync_shell_state_ext(
+        mode_str,
+        drawer_open,
+        overview_idx,
+        if drawer_open { 1.0 } else { 0.0 },
+        false,
+    );
+}
+
+fn sync_shell_state_ext(
+    mode_str: &str,
+    drawer_open: bool,
+    overview_idx: usize,
+    progress: f64,
+    dragging: bool,
+) {
     let runtime_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
     let path = std::path::Path::new(&runtime_dir).join("penumbra-shell-state");
     let content = format!(
-        "mode={}\ndrawer={}\noverview_index={}\n",
+        "mode={}\ndrawer={}\ndrawer_dragging={}\ndrawer_progress={:.3}\noverview_index={}\n",
         mode_str,
         if drawer_open { 1 } else { 0 },
+        if dragging { 1 } else { 0 },
+        progress.clamp(0.0, 1.0),
         overview_idx
     );
     let tmp = path.with_extension("tmp");
@@ -534,10 +552,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     let mut spring = drawer_spring.borrow_mut();
                     let new_y = spring.step(dt);
+                    let progress = ((new_y - DRAWER_CLOSED_Y) / (DRAWER_OPEN_Y - DRAWER_CLOSED_Y)).clamp(0.0, 1.0);
 
                     if let Some(ui) = ui_weak.upgrade() {
                         ui.set_drawer_y(new_y as f32);
                         ui.set_drawer_open(new_y > DRAWER_CLOSED_Y + 10.0);
+                        let mode_str = match ui.get_active_mode() {
+                            1 => "overview",
+                            3 => "app",
+                            _ => "home",
+                        };
+                        sync_shell_state_ext(mode_str, new_y > DRAWER_CLOSED_Y + 10.0, 0, progress, true);
                     }
 
                     // Settle check
@@ -599,10 +624,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let delta_y = (y as f64 - start_y).max(0.0);
                 let drag_y =
                     (DRAWER_CLOSED_Y + delta_y * 1.5).clamp(DRAWER_CLOSED_Y, DRAWER_OPEN_Y);
+                let progress = ((drag_y - DRAWER_CLOSED_Y) / (DRAWER_OPEN_Y - DRAWER_CLOSED_Y)).clamp(0.0, 1.0);
                 drawer_spring.borrow_mut().set_position(drag_y);
                 if let Some(ui) = ui_weak.upgrade() {
                     ui.set_drawer_y(drag_y as f32);
                     ui.set_drawer_open(drag_y > DRAWER_CLOSED_Y + 10.0);
+                    let mode_str = match ui.get_active_mode() {
+                        1 => "overview",
+                        3 => "app",
+                        _ => "home",
+                    };
+                    sync_shell_state_ext(mode_str, drag_y > DRAWER_CLOSED_Y + 10.0, 0, progress, true);
                 }
             }
         });
@@ -642,10 +674,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let ui_weak = ui_weak.clone();
         ui.on_homescreen_pulled_down(move |dy| {
             let drag_y = (DRAWER_CLOSED_Y + dy as f64).clamp(DRAWER_CLOSED_Y, DRAWER_OPEN_Y);
+            let progress = ((drag_y - DRAWER_CLOSED_Y) / (DRAWER_OPEN_Y - DRAWER_CLOSED_Y)).clamp(0.0, 1.0);
             drawer_spring.borrow_mut().set_position(drag_y);
             if let Some(ui) = ui_weak.upgrade() {
                 ui.set_drawer_y(drag_y as f32);
                 ui.set_drawer_open(true);
+                let mode_str = match ui.get_active_mode() {
+                    1 => "overview",
+                    3 => "app",
+                    _ => "home",
+                };
+                sync_shell_state_ext(mode_str, true, 0, progress, true);
             }
         });
     }
@@ -682,10 +721,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Some((_, start_y)) = start_pos.get() {
                 let delta_y = y as f64 - start_y; // Negative when dragging up
                 let drag_y = (DRAWER_OPEN_Y + delta_y * 1.5).clamp(DRAWER_CLOSED_Y, DRAWER_OPEN_Y);
+                let progress = ((drag_y - DRAWER_CLOSED_Y) / (DRAWER_OPEN_Y - DRAWER_CLOSED_Y)).clamp(0.0, 1.0);
                 drawer_spring.borrow_mut().set_position(drag_y);
                 if let Some(ui) = ui_weak.upgrade() {
                     ui.set_drawer_y(drag_y as f32);
                     ui.set_drawer_open(drag_y > DRAWER_CLOSED_Y + 10.0);
+                    let mode_str = match ui.get_active_mode() {
+                        1 => "overview",
+                        3 => "app",
+                        _ => "home",
+                    };
+                    sync_shell_state_ext(mode_str, drag_y > DRAWER_CLOSED_Y + 10.0, 0, progress, true);
                 }
             }
         });

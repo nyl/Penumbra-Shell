@@ -176,6 +176,9 @@ impl LayerWindow {
             )
         };
 
+        // Zero-fill buffer to ensure regions not painted by Slint remain fully transparent
+        pixels.fill(Argb8888Pixel::default());
+
         // Render Slint UI elements into the Wayland shared memory buffer
         self.renderer.render(pixels, width as usize);
 

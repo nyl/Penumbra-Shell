@@ -10,6 +10,7 @@ pub mod policy;
 pub mod server;
 pub mod wallpaper_blur;
 pub mod card_rounding;
+pub mod render;
 
 pub use args::CliArgs;
 pub use policy::{AsymmetricOutputManager, OutputConfig, OutputRole, SurfaceDisplayMode};

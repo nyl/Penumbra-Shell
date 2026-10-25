@@ -256,7 +256,7 @@ export component QuickSettingsSlider inherits Rectangle {
     property <length> below-tiles: root.grid-top + root.tiles-h + 12px;
     property <length> qs-block-h: 48px + 8px + 48px + 8px + 72px + 12px;
 
-    background: #000000.with-alpha(Math.clamp(root.disp / 915px * 0.55, 0.0, 0.55));
+    background: transparent;
 
     // Tap or swipe up on the scrim below the shade to dismiss.
     scrim-touch := TouchArea {
@@ -285,7 +285,7 @@ export component QuickSettingsSlider inherits Rectangle {
         y: 0px;
         width: parent.width;
         height: root.disp;
-        background: #0f0e13.with-alpha(Math.clamp(root.disp / 400px, 0.0, 0.96));
+        background: transparent;
         border-bottom-left-radius: 28px;
         border-bottom-right-radius: 28px;
         clip: true;

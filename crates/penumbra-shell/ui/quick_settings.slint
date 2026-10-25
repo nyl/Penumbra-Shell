@@ -168,7 +168,7 @@ export component QuickSettingsDrawer inherits Rectangle {
     callback handle-moved(float, float);
     callback handle-up(float, float);
 
-    background: #0D0B10F5; // Pitch-black with frosted high-density backing
+    background: transparent; // Root container is transparent to allow compositor progressive blur backdrop
     border-radius: 0px;
     clip: true;
 

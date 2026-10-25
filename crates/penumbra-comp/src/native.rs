@@ -503,6 +503,8 @@ fn render_frame(state: &mut NativeState, buffer: &mut Dmabuf) -> Result<(), Box<
     let top = layer_elements(renderer, &server.output_a, canvas, Layer::Top);
     // Quick settings, Power dialog, and Volume modal sit on the Overlay layer.
     let overlay = if server.shell_state.drawer_open
+        || server.shell_state.drawer_dragging
+        || server.shell_state.drawer_progress > 0.001
         || server.shell_state.power_dialog_open
         || server.shell_state.volume_modal_open
     {
@@ -511,25 +513,18 @@ fn render_frame(state: &mut NativeState, buffer: &mut Dmabuf) -> Result<(), Box<
         Vec::new()
     };
 
+    let qs_progress = if server.shell_state.drawer_dragging || server.shell_state.drawer_progress > 0.001 {
+        server.shell_state.drawer_progress
+    } else if server.shell_state.drawer_open {
+        1.0
+    } else {
+        0.0
+    };
+
     // Canvas-space elements are drawn at the canvas scale so they fill the panel mapping.
     let scale = canvas.scale;
-    let mut framebuffer = renderer.bind(buffer)?;
-    let mut frame = renderer.render(&mut framebuffer, size, Transform::Normal)?;
-    frame.clear(Color32F::new(0.02, 0.02, 0.03, 1.0), &[damage])?;
-    draw_render_elements(&mut frame, scale, &background, &[damage])?;
-    draw_render_elements(&mut frame, scale, &bottom, &[damage])?;
-    if !blurred_bg.is_empty() {
-        draw_render_elements::<GlesRenderer, _, _>(&mut frame, scale, &blurred_bg, &[damage])?;
-    }
-    if !scrim.is_empty() {
-        draw_render_elements::<GlesRenderer, _, _>(&mut frame, scale, &scrim, &[damage])?;
-    }
     let (carousel_s, _) = compute_carousel_transform(server);
     let overview_scale = carousel_s * canvas.scale;
-    draw_render_elements(&mut frame, overview_scale, &overview, &[damage])?;
-    if let Some((expanding_card, expanding_scale)) = expanding_app {
-        draw_render_elements(&mut frame, expanding_scale, &expanding_card, &[damage])?;
-    }
 
     let active_app_scale = if (server.is_nav_animating() || server.nav_gesture_active)
         && server.nav_target == Some(penumbra_gestures::NavigationTarget::Home)
@@ -542,7 +537,60 @@ fn render_frame(state: &mut NativeState, buffer: &mut Dmabuf) -> Result<(), Box<
     } else {
         canvas.scale
     };
-    draw_render_elements(&mut frame, active_app_scale, &apps, &[damage])?;
+
+    // 1. Scene Capture Pass (when QuickSettings gesture is active):
+    // Render underlying phone layers (wallpaper, bottom, apps, overview) into offscreen scene_tex
+    let scene_tex_id = if qs_progress > 0.001 {
+        let scene_tex = server.qs_backdrop_pipeline.ensure_scene_texture(renderer, width as i32, height as i32)?;
+        let tex_id = scene_tex.tex_id();
+        {
+            let mut scene_target = renderer.bind(scene_tex)?;
+            let mut scene_frame = renderer.render(&mut scene_target, size, Transform::Normal)?;
+            scene_frame.clear(Color32F::new(0.02, 0.02, 0.03, 1.0), &[damage])?;
+            draw_render_elements(&mut scene_frame, scale, &background, &[damage])?;
+            draw_render_elements(&mut scene_frame, scale, &bottom, &[damage])?;
+            draw_render_elements(&mut scene_frame, overview_scale, &overview, &[damage])?;
+            if let Some((ref expanding_card, expanding_scale)) = expanding_app {
+                draw_render_elements(&mut scene_frame, expanding_scale, expanding_card, &[damage])?;
+            }
+            draw_render_elements(&mut scene_frame, active_app_scale, &apps, &[damage])?;
+            let _ = scene_frame.finish()?;
+        }
+        Some(tex_id)
+    } else {
+        None
+    };
+
+    let mut framebuffer = renderer.bind(buffer)?;
+    let mut frame = renderer.render(&mut framebuffer, size, Transform::Normal)?;
+    frame.clear(Color32F::new(0.02, 0.02, 0.03, 1.0), &[damage])?;
+
+    if let Some(scene_id) = scene_tex_id {
+        // 2. Downsample & Dual-Kawase Pass + 3. Progressive Cross-Fade Pass
+        frame.with_context(|gl| unsafe {
+            server.qs_backdrop_pipeline.render_blur_and_backdrop(
+                gl,
+                scene_id,
+                qs_progress,
+                width as i32,
+                height as i32,
+            );
+        })?;
+    } else {
+        draw_render_elements(&mut frame, scale, &background, &[damage])?;
+        draw_render_elements(&mut frame, scale, &bottom, &[damage])?;
+        if !blurred_bg.is_empty() {
+            draw_render_elements::<GlesRenderer, _, _>(&mut frame, scale, &blurred_bg, &[damage])?;
+        }
+        if !scrim.is_empty() {
+            draw_render_elements::<GlesRenderer, _, _>(&mut frame, scale, &scrim, &[damage])?;
+        }
+        draw_render_elements(&mut frame, overview_scale, &overview, &[damage])?;
+        if let Some((ref expanding_card, expanding_scale)) = expanding_app {
+            draw_render_elements(&mut frame, expanding_scale, expanding_card, &[damage])?;
+        }
+        draw_render_elements(&mut frame, active_app_scale, &apps, &[damage])?;
+    }
 
     draw_render_elements(&mut frame, scale, &top, &[damage])?;
     draw_render_elements(&mut frame, scale, &overlay, &[damage])?;
@@ -752,6 +800,7 @@ pub fn run(_compositor: &mut PenumbraCompositor) -> Result<(), Box<dyn Error>> {
             Some(cache.to_render_buffer())
         },
         card_corner_masks: crate::card_rounding::CardCornerMasks::default(),
+        qs_backdrop_pipeline: crate::render::QuickSettingsBackdropPipeline::new(),
     };
     let _ = std::fs::remove_file(runtime_path(phone::SHELL_STATE_FILE));
     let _ = std::fs::remove_file(runtime_path(phone::SHELL_CMD_FILE));
@@ -824,7 +873,10 @@ pub fn run(_compositor: &mut PenumbraCompositor) -> Result<(), Box<dyn Error>> {
         // Shell state arrives through files; poll faster while the overview animates or gesture is active.
         let is_overview = state.server.shell_state.mode == PhoneMode::Overview;
         let is_animating = state.server.is_nav_animating();
-        if is_overview || is_animating || state.last_ipc_poll.elapsed() >= Duration::from_millis(16) {
+        let is_qs_active = state.server.shell_state.drawer_dragging
+            || state.server.shell_state.drawer_open
+            || state.server.shell_state.drawer_progress > 0.001;
+        if is_overview || is_animating || is_qs_active || state.last_ipc_poll.elapsed() >= Duration::from_millis(16) {
             state.server.poll_shell_ipc();
             state.last_ipc_poll = Instant::now();
         }

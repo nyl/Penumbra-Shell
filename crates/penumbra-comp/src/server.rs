@@ -21,7 +21,7 @@ use smithay::{
             },
             gles::GlesRenderer,
             utils::{draw_render_elements, on_commit_buffer_handler},
-            Color32F, Frame, Renderer,
+            Color32F, Frame, Renderer, Bind,
         },
         winit::{self, WinitEvent},
     },
@@ -179,6 +179,8 @@ pub struct PenumbraServerState {
     pub blurred_wallpaper_buffer: Option<smithay::backend::renderer::element::memory::MemoryRenderBuffer>,
     /// Pre-computed 28px Material 3 squircle corner masks.
     pub card_corner_masks: crate::card_rounding::CardCornerMasks,
+    /// Progressive blur backdrop pipeline for QuickSettings drawer.
+    pub qs_backdrop_pipeline: crate::render::QuickSettingsBackdropPipeline,
 }
 
 /// A Wayland toplevel living on the phone output.
@@ -1458,6 +1460,7 @@ impl PenumbraCompositor {
                 Some(cache.to_render_buffer())
             },
             card_corner_masks: crate::card_rounding::CardCornerMasks::default(),
+            qs_backdrop_pipeline: crate::render::QuickSettingsBackdropPipeline::new(),
         };
 
         // Reset IPC files from any previous session.
@@ -1805,7 +1808,10 @@ impl PenumbraCompositor {
             state.space.refresh();
             let is_overview = state.shell_state.mode == PhoneMode::Overview;
             let is_animating = state.is_nav_animating();
-            if is_overview || is_animating || last_ipc_poll.elapsed() >= Duration::from_millis(16) {
+            let is_qs_active = state.shell_state.drawer_dragging
+                || state.shell_state.drawer_progress > 0.001
+                || state.shell_state.drawer_open;
+            if is_overview || is_animating || is_qs_active || last_ipc_poll.elapsed() >= Duration::from_millis(16) {
                 state.poll_shell_ipc();
                 last_ipc_poll = Instant::now();
             }
@@ -2140,7 +2146,15 @@ impl PenumbraCompositor {
                     top_elements.extend(render_layer_elements(renderer, out_b, 412, Layer::Top));
                 }
 
-                let mut overlay_elements = if state.shell_state.drawer_open {
+                let qs_progress = if state.shell_state.drawer_dragging || state.shell_state.drawer_progress > 0.001 {
+                    state.shell_state.drawer_progress.clamp(0.0, 1.0)
+                } else if state.shell_state.drawer_open {
+                    1.0
+                } else {
+                    0.0
+                };
+
+                let mut overlay_elements = if state.shell_state.drawer_open || state.shell_state.drawer_dragging || qs_progress > 0.001 {
                     render_layer_elements(renderer, &state.output_a, 0, Layer::Overlay)
                 } else {
                     Vec::new()
@@ -2154,6 +2168,28 @@ impl PenumbraCompositor {
                     ));
                 }
 
+                // 1. Scene Capture Pass (when QuickSettings gesture is active):
+                // Render underlying phone layers (wallpaper, homescreen, app, overview) into offscreen scene_tex
+                let scene_tex_id = if qs_progress > 0.001 {
+                    let scene_tex = state.qs_backdrop_pipeline.ensure_scene_texture(renderer, PHONE_W, PHONE_H)?;
+                    let tex_id = scene_tex.tex_id();
+                    {
+                        let mut scene_target = renderer.bind(scene_tex)?;
+                        let mut scene_frame = renderer.render(&mut scene_target, (PHONE_W, PHONE_H).into(), Transform::Flipped180)?;
+                        let phone_damage = Rectangle::from_size((PHONE_W, PHONE_H).into());
+                        scene_frame.clear(Color32F::new(0.038, 0.030, 0.055, 1.0), &[phone_damage])?;
+                        draw_render_elements(&mut scene_frame, 1.0, &bg_elements, &[phone_damage])?;
+                        draw_render_elements(&mut scene_frame, 1.0, &bottom_elements, &[phone_damage])?;
+                        draw_render_elements(&mut scene_frame, 1.0, &shell_base, &[phone_damage])?;
+                        draw_render_elements(&mut scene_frame, 1.0, &app_elements, &[phone_damage])?;
+                        draw_render_elements(&mut scene_frame, 1.0, &overview_elements, &[phone_damage])?;
+                        let _ = scene_frame.finish()?;
+                    }
+                    Some(tex_id)
+                } else {
+                    None
+                };
+
                 let mut frame =
                     renderer.render(&mut framebuffer, window_size, Transform::Flipped180)?;
 
@@ -2166,27 +2202,47 @@ impl PenumbraCompositor {
                     frame.clear(Color32F::new(0.35, 0.25, 0.50, 1.0), &[divider])?;
                 }
 
-                // Background / Bottom layer-shell (wallpaper, background surfaces)
-                draw_render_elements(&mut frame, 1.0, &bg_elements, &[damage])?;
-                draw_render_elements(&mut frame, 1.0, &bottom_elements, &[damage])?;
+                if let Some(scene_id) = scene_tex_id {
+                    // 2. Downsample & Dual-Kawase Pass + 3. Progressive Cross-Fade Pass
+                    // Interpolates between scene_fbo and blurred_fbo via smoothstep(0.05, 0.95, progress)
+                    // with dynamic dark scrim (#0b0a0e, alpha = progress * 0.40)
+                    frame.with_context(|gl| unsafe {
+                        state.qs_backdrop_pipeline.render_blur_and_backdrop(
+                            gl,
+                            scene_id,
+                            qs_progress,
+                            PHONE_W,
+                            PHONE_H,
+                        );
+                    })?;
 
-                // Phone Layer 0 + Output B desktop shell
-                draw_render_elements(&mut frame, 1.0, &shell_base, &[damage])?;
-                // Output B floating windows
-                draw_render_elements(&mut frame, 1.0, &desktop_elements, &[damage])?;
-                // Phone Layer 0.5: Dimming scrim modulated by gesture progress
-                draw_render_elements::<GlesRenderer, _, _>(&mut frame, 1.0, &scrim_elements, &[damage])?;
-                // Phone Layer 1: applications workspace (fullscreen or transformed card)
-                draw_render_elements(&mut frame, 1.0, &app_elements, &[damage])?;
-                // Phone Layer 2: recents / overview
-                draw_render_elements(&mut frame, 1.0, &overview_elements, &[damage])?;
+                    // Output B floating windows
+                    draw_render_elements(&mut frame, 1.0, &desktop_elements, &[damage])?;
+                } else {
+                    // Normal sharp rendering when QuickSettings is retracted:
+                    // Background / Bottom layer-shell (wallpaper, background surfaces)
+                    draw_render_elements(&mut frame, 1.0, &bg_elements, &[damage])?;
+                    draw_render_elements(&mut frame, 1.0, &bottom_elements, &[damage])?;
+
+                    // Phone Layer 0 + Output B desktop shell
+                    draw_render_elements(&mut frame, 1.0, &shell_base, &[damage])?;
+                    // Output B floating windows
+                    draw_render_elements(&mut frame, 1.0, &desktop_elements, &[damage])?;
+                    // Phone Layer 0.5: Dimming scrim modulated by gesture progress
+                    draw_render_elements::<GlesRenderer, _, _>(&mut frame, 1.0, &scrim_elements, &[damage])?;
+                    // Phone Layer 1: applications workspace (fullscreen or transformed card)
+                    draw_render_elements(&mut frame, 1.0, &app_elements, &[damage])?;
+                    // Phone Layer 2: recents / overview
+                    draw_render_elements(&mut frame, 1.0, &overview_elements, &[damage])?;
+                }
+
                 // Phone Layer 3: persistent system chrome
                 draw_render_elements(&mut frame, 1.0, &chrome_elements, &[damage])?;
 
                 // Top layer-shell (panels, docks, applets)
                 draw_render_elements(&mut frame, 1.0, &top_elements, &[damage])?;
 
-                // LAYER 5: Overlay (e.g. popups / lock / overview overlay)
+                // LAYER 5: Overlay (e.g. popups / lock / overview overlay, QuickSettings tiles)
                 draw_render_elements(&mut frame, 1.0, &overlay_elements, &[damage])?;
 
                 let _ = frame.finish()?;

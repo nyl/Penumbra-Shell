@@ -306,14 +306,13 @@ export component ShellRoot inherits Window {
             }
         }
 
-        // LAYER 4: Dimmer Overlay when Quick Settings is visible
+        // LAYER 4: Dismiss TouchArea when Quick Settings is visible (backdrop rendered by compositor)
         if root.drawer-y > -910.0: Rectangle {
             x: 0px;
             y: 0px;
             width: 412px;
             height: 915px;
-            background: #000000;
-            opacity: Math.clamp((root.drawer-y + 915.0) / 915.0 * 0.7, 0.0, 0.7);
+            background: transparent;
 
             TouchArea {
                 clicked => {
