@@ -349,9 +349,9 @@ pub(crate) fn handle(
             }
 
             // Navigation bar or Overview gesture tracking:
-            // Intercept if touching the generous bottom navigation swipe area (y >= 835.0, full width)
+            // Intercept if touching the bottom navigation swipe area (matching navbar height exactly, y >= NAV_BAR_Y)
             // OR if already in Overview mode (where the entire screen is an interactive task switcher).
-            let is_nav_zone = pos.y >= (NAV_BAR_Y as f64 - 48.0);
+            let is_nav_zone = pos.y >= NAV_BAR_Y as f64;
                     let is_overview = server.shell_state.mode == PhoneMode::Overview;
                     let in_overview_zone = is_overview && pos.y >= STATUS_BAR_H as f64;
 
@@ -490,7 +490,7 @@ pub(crate) fn handle(
                             server.shell_state.active_card_dy = dy;
                         }
                         // Case B2: Upward drag from bottom nav bar in Overview mode -> cancel switcher to Home
-                        else if nav.grabbed_card.is_none() && nav.start_pos.y >= (NAV_BAR_Y as f64 - 48.0) && dy < -18.0 && (-dy) > abs_dx * 1.2 && !nav.is_horizontal_scrub {
+                        else if nav.grabbed_card.is_none() && nav.start_pos.y >= NAV_BAR_Y as f64 && dy < -18.0 && (-dy) > abs_dx * 1.2 && !nav.is_horizontal_scrub {
                             server.shell_state.is_dragging = false;
                             server.nav_gesture_active = true;
                             let denom = (PHONE_H as f64) * 0.35;
@@ -648,7 +648,7 @@ pub(crate) fn handle(
                         }
 
                         // Bottom nav bar swipe up in Overview mode -> dismiss to Home
-                        if nav.grabbed_card.is_none() && nav.start_pos.y >= (NAV_BAR_Y as f64 - 48.0) && (dy < -35.0 || vy < -300.0) {
+                        if nav.grabbed_card.is_none() && nav.start_pos.y >= NAV_BAR_Y as f64 && (dy < -35.0 || vy < -300.0) {
                             tracing::info!("Bottom nav bar swiped up in Overview -> dismiss to Home");
                             server.set_phone_home();
                             server.nav_gesture_active = false;
