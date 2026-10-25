@@ -372,10 +372,11 @@ impl PenumbraServerState {
                         );
                     }
                     Some(NavigationTarget::Fullscreen) | _ => {
+                        let target_id = self.phone_tasks.get(self.shell_state.overview_index).map(|t| t.id);
                         self.nav_gesture_progress = 0.0;
+                        self.nav_gesture_dy = 0.0;
                         self.shell_state.mode = PhoneMode::App;
-                        if let Some(task) = self.phone_tasks.get(self.shell_state.overview_index) {
-                            let id = task.id;
+                        if let Some(id) = target_id {
                             self.focus_task_by_id(id);
                         }
                         let _ = write_atomic(

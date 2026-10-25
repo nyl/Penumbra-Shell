@@ -334,7 +334,20 @@ fn overview_elements(
 
     let start_index = if is_dragging_to_overview { 1 } else { 0 };
     let is_expanding_to_fullscreen = server.shell_state.mode == PhoneMode::Overview
-        && (server.nav_gesture_active || server.nav_target == Some(penumbra_gestures::NavigationTarget::Fullscreen));
+        && ((server.nav_gesture_active && server.nav_gesture_dy > 0.0)
+            || server.nav_target == Some(penumbra_gestures::NavigationTarget::Fullscreen));
+
+    // Expansion progress: 0.0 at rest (Overview), 1.0 when expanded (Fullscreen)
+    let p_expand = if is_expanding_to_fullscreen {
+        (1.0 - server.nav_gesture_progress).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+
+    // If active card has expanded into near-fullscreen (>= 85%), all adjacent cards are offscreen
+    if is_expanding_to_fullscreen && p_expand >= 0.85 {
+        return cards;
+    }
 
     for (index, task) in server.phone_tasks.iter().enumerate().skip(start_index) {
         if is_expanding_to_fullscreen && index == server.shell_state.overview_index {
@@ -346,7 +359,18 @@ fn overview_elements(
             server.shell_state.overview_index,
             server.shell_state.active_card_dy,
         );
-        let x = raw_x + entrance_offset_x;
+        let mut x = raw_x + entrance_offset_x;
+
+        // Disperse adjacent cards horizontally away from expanding center card
+        if is_expanding_to_fullscreen {
+            let push_dist = (p_expand * (PHONE_W as f64 * 0.95)).round() as i32;
+            if index < server.shell_state.overview_index {
+                x -= push_dist;
+            } else if index > server.shell_state.overview_index {
+                x += push_dist;
+            }
+        }
+
         if x + w <= 0 || x >= PHONE_W {
             continue;
         }
@@ -386,7 +410,7 @@ fn render_frame(state: &mut NativeState, buffer: &mut Dmabuf) -> Result<(), Box<
     let bottom = layer_elements(renderer, &server.output_a, canvas, Layer::Bottom);
 
     // Phone Layer 0.5: Dual-Kawase Blurred Wallpaper & Dimming Scrim modulated by gesture progress
-    let nav_progress = if server.is_nav_animating() {
+    let _nav_progress = if server.is_nav_animating() {
         server.nav_gesture_progress
     } else if server.shell_state.mode == PhoneMode::Overview {
         1.0
@@ -414,10 +438,10 @@ fn render_frame(state: &mut NativeState, buffer: &mut Dmabuf) -> Result<(), Box<
         Vec::new()
     };
 
-    // Phone Layer 1: active application inside the system insets (transformed dynamically during gestures).
-    let apps = app_elements(renderer, server, canvas);
-    // Phone Layer 2: overview carousel thumbnails.
+    // Phone Layer 1: overview carousel thumbnails.
     let overview = overview_elements(renderer, server, canvas);
+    // Phone Layer 2: active application inside the system insets (drawn above carousel so expanding card sits on top).
+    let apps = app_elements(renderer, server, canvas);
 
     // (Card corner masks removed — they were causing UI breakage. Flat card rendering is used instead.)
 
@@ -446,6 +470,9 @@ fn render_frame(state: &mut NativeState, buffer: &mut Dmabuf) -> Result<(), Box<
     if !scrim.is_empty() {
         draw_render_elements::<GlesRenderer, _, _>(&mut frame, scale, &scrim, &[damage])?;
     }
+    let overview_scale = OVERVIEW_SCALE * canvas.scale;
+    draw_render_elements(&mut frame, overview_scale, &overview, &[damage])?;
+
     let active_app_scale = if (server.is_nav_animating() || server.nav_gesture_active)
         && server.nav_target == Some(penumbra_gestures::NavigationTarget::Home)
     {
@@ -458,8 +485,6 @@ fn render_frame(state: &mut NativeState, buffer: &mut Dmabuf) -> Result<(), Box<
         canvas.scale
     };
     draw_render_elements(&mut frame, active_app_scale, &apps, &[damage])?;
-    let overview_scale = OVERVIEW_SCALE * canvas.scale;
-    draw_render_elements(&mut frame, overview_scale, &overview, &[damage])?;
 
     draw_render_elements(&mut frame, scale, &top, &[damage])?;
     draw_render_elements(&mut frame, scale, &overlay, &[damage])?;

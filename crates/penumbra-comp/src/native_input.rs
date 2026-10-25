@@ -444,14 +444,19 @@ pub(crate) fn handle(
                     let dy = pos.y - nav.start_pos.y;
 
                     if nav.start_mode == PhoneMode::Overview {
-                        // In Overview mode:
                         // Case A: Downward pull gesture to restore active application to fullscreen
                         if dy > 15.0 && dy > dx.abs() * 1.1 {
+                            if let Some(card_idx) = nav.grabbed_card {
+                                server.shell_state.overview_index = card_idx;
+                                server.shell_state.overview_scroll = card_idx as f64;
+                                server.overview_scroll = card_idx as f64;
+                            }
                             server.nav_gesture_active = true;
                             server.shell_state.is_dragging = false;
                             server.shell_state.active_card_dy = 0.0;
                             let denom = (PHONE_H as f64) * 0.45;
-                            let t = (1.0 - (dy / denom)).clamp(0.0, 1.05);
+                            let active_dy = (dy - 15.0).max(0.0);
+                            let t = (1.0 - (active_dy / denom)).clamp(0.0, 1.0);
                             server.nav_gesture_progress = t;
                             server.nav_gesture_dy = dy;
                             server.nav_gesture_vy = vy;
@@ -596,7 +601,7 @@ pub(crate) fn handle(
 
                     if nav.start_mode == PhoneMode::Overview {
                         // 1. If pulling down to return to fullscreen
-                        if server.nav_gesture_active {
+                        if server.nav_gesture_active && server.nav_gesture_dy > 0.0 {
                             server.nav_gesture_active = false;
                             let t = server.nav_gesture_progress;
                             let to_fullscreen = vy > 350.0 || (vy > -200.0 && t < 0.70);
@@ -672,7 +677,7 @@ pub(crate) fn handle(
 
                         // 3. Tap detection in Overview mode (using a 24px threshold for touchscreen tolerances)
                         if dx.abs() < 24.0 && dy.abs() < 24.0 {
-                            let mut tapped_task_id = None;
+                            let mut tapped_card = None;
                             for (i, task) in server.phone_tasks.iter().enumerate() {
                                 let (cx, cy, cw, ch, _) = card_transform(
                                     i,
@@ -685,14 +690,25 @@ pub(crate) fn handle(
                                     && last_y >= cy as f64
                                     && last_y <= (cy + ch) as f64
                                 {
-                                    tapped_task_id = Some(task.id);
+                                    tapped_card = Some((i, task.id));
                                     break;
                                 }
                             }
 
-                            if let Some(id) = tapped_task_id {
-                                tracing::info!(id, "Overview card tapped -> focus task");
-                                server.focus_task_by_id(id);
+                            if let Some((idx, id)) = tapped_card {
+                                tracing::info!(id, idx, "Overview card tapped -> restore fullscreen");
+                                server.shell_state.overview_index = idx;
+                                server.shell_state.overview_scroll = idx as f64;
+                                server.overview_scroll = idx as f64;
+                                let mut spring = penumbra_gestures::SpringSolver::overview();
+                                spring.reset(1.0);
+                                spring.set_target(0.0);
+                                spring.set_velocity(-6.0);
+                                server.nav_spring = Some(spring);
+                                server.nav_target = Some(penumbra_gestures::NavigationTarget::Fullscreen);
+                                server.nav_gesture_progress = 1.0;
+                                server.nav_gesture_dy = 1.0;
+                                server.last_nav_spring_tick = Some(std::time::Instant::now());
                             } else {
                                 tracing::info!("Overview background tapped -> return Home");
                                 server.set_phone_home();
