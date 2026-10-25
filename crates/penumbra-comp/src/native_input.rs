@@ -67,6 +67,8 @@ pub(crate) struct NavTouchTracker {
     pub start_mode: PhoneMode,
     pub start_scroll: f64,
     pub grabbed_card: Option<usize>,
+    pub is_vertical_dismiss: bool,
+    pub is_horizontal_scrub: bool,
     pub tracker: penumbra_gestures::VelocityTracker,
 }
 
@@ -383,6 +385,8 @@ pub(crate) fn handle(
                         start_mode: server.shell_state.mode,
                         start_scroll: server.shell_state.overview_scroll,
                         grabbed_card,
+                        is_vertical_dismiss: false,
+                        is_horizontal_scrub: false,
                         tracker,
                     });
                     if !is_overview {
@@ -445,7 +449,7 @@ pub(crate) fn handle(
 
                     if nav.start_mode == PhoneMode::Overview {
                         // Case A: Downward pull gesture to restore active application to fullscreen
-                        if dy > 15.0 && dy > dx.abs() * 1.1 {
+                        if dy > 15.0 && dy > dx.abs() * 1.1 && !nav.is_horizontal_scrub && !nav.is_vertical_dismiss {
                             if let Some(card_idx) = nav.grabbed_card {
                                 server.shell_state.overview_index = card_idx;
                                 server.shell_state.overview_scroll = card_idx as f64;
@@ -461,14 +465,15 @@ pub(crate) fn handle(
                             server.nav_gesture_dy = dy;
                             server.nav_gesture_vy = vy;
                         }
-                        // Case B: Upward drag to dismiss active card ONLY if grabbed_card is Some
-                        else if nav.grabbed_card.is_some() && dy < -15.0 && (-dy) > dx.abs() * 0.8 {
+                        // Case B: Upward drag to dismiss active card ONLY if grabbed_card is Some and purely vertical
+                        else if nav.grabbed_card.is_some() && dy < -18.0 && (-dy) > dx.abs() * 1.5 && !nav.is_horizontal_scrub {
+                            nav.is_vertical_dismiss = true;
                             server.nav_gesture_active = false;
                             server.shell_state.is_dragging = true;
                             server.shell_state.active_card_dy = dy;
                         }
                         // Case B2: Upward drag from bottom nav bar in Overview mode -> cancel switcher to Home
-                        else if nav.grabbed_card.is_none() && nav.start_pos.y >= (NAV_BAR_Y as f64 - 48.0) && dy < -15.0 && (-dy) > dx.abs() * 0.8 {
+                        else if nav.grabbed_card.is_none() && nav.start_pos.y >= (NAV_BAR_Y as f64 - 48.0) && dy < -15.0 && (-dy) > dx.abs() * 1.2 && !nav.is_horizontal_scrub {
                             server.shell_state.is_dragging = false;
                             server.nav_gesture_active = true;
                             let denom = (PHONE_H as f64) * 0.35;
@@ -477,8 +482,9 @@ pub(crate) fn handle(
                             server.nav_gesture_dy = dy;
                             server.nav_gesture_vy = vy;
                         }
-                        // Case C: Horizontal carousel scrubbing
-                        else if dx.abs() > 8.0 {
+                        // Case C: Horizontal carousel scrubbing (free play)
+                        else if dx.abs() > 8.0 && !nav.is_vertical_dismiss {
+                            nav.is_horizontal_scrub = true;
                             server.nav_gesture_active = false;
                             server.shell_state.is_dragging = true;
                             server.shell_state.active_card_dy = 0.0;
@@ -492,41 +498,9 @@ pub(crate) fn handle(
                         return;
                     }
 
-                    // Home screen mode:
-                    if nav.start_mode == PhoneMode::Home {
-                        let is_horizontal = dx.abs() > 24.0 && dx.abs() > dy.abs() * 1.2;
-                        if !is_horizontal {
-                            server.nav_gesture_active = true;
-                            let progress = penumbra_gestures::compute_normalized_progress(dy, PHONE_H as f64);
-                            server.nav_gesture_progress = progress;
-                            server.nav_gesture_dy = dy;
-                            server.nav_gesture_vy = vy;
-
-                            if progress >= 0.25 && vy > -550.0 {
-                                tracing::info!(progress, vy, "Bottom nav swipe up from Home -> promote to Overview");
-                                server.shell_state.mode = PhoneMode::Overview;
-                                server.shell_state.overview_index = 0;
-                                server.shell_state.overview_scroll = 0.0;
-                                server.overview_scroll = 0.0;
-                                server.nav_gesture_active = false;
-                                server.nav_gesture_progress = 0.0;
-                                server.shell_state.is_dragging = true;
-                                server.shell_state.active_card_dy = 0.0;
-                                nav.start_mode = PhoneMode::Overview;
-                                nav.start_scroll = 0.0;
-                                nav.start_pos = pos;
-                                let _ = write_atomic(
-                                    &runtime_path(phone::SHELL_STATE_FILE),
-                                    &server.shell_state.serialize(),
-                                );
-                            }
-                        }
-                        return;
-                    }
-
-                    // Active App mode:
-                    let is_horizontal = dx.abs() > 24.0 && dx.abs() > dy.abs() * 1.2;
-                    if is_horizontal {
+                    // Home screen or Active App mode:
+                    let is_horizontal_quickswitch = nav.start_mode == PhoneMode::App && dx.abs() > 24.0 && dx.abs() > dy.abs() * 1.2;
+                    if is_horizontal_quickswitch {
                         server.nav_switch_active = true;
                         server.nav_switch_dx = dx;
                         server.nav_switch_vx = vx;
@@ -540,26 +514,15 @@ pub(crate) fn handle(
                         server.nav_gesture_dy = dy;
                         server.nav_gesture_vy = vy;
 
-                        // Android dynamic transition: moving up at normal speed into overview zone
-                        // (progress >= 0.28 and vy > -550.0) seamlessly promotes gesture directly into live
-                        // Overview mode without releasing finger.
-                        if progress >= 0.28 && vy > -550.0 {
-                            tracing::info!(progress, vy, "Continuous pull-up promoted to live Overview under finger");
-                            server.shell_state.mode = PhoneMode::Overview;
-                            server.shell_state.overview_index = 0;
-                            server.shell_state.overview_scroll = 0.0;
-                            server.overview_scroll = 0.0;
-                            server.nav_gesture_active = false;
-                            server.nav_gesture_progress = 0.0;
-                            server.shell_state.is_dragging = true;
-                            server.shell_state.active_card_dy = 0.0;
-                            nav.start_mode = PhoneMode::Overview;
-                            nav.start_scroll = 0.0;
-                            nav.start_pos = pos;
-                            let _ = write_atomic(
-                                &runtime_path(phone::SHELL_STATE_FILE),
-                                &server.shell_state.serialize(),
-                            );
+                        // Free play: as user pulls up towards overview (progress >= 0.15),
+                        // horizontal finger movement scrubs through recent cards!
+                        if progress >= 0.15 && !server.phone_tasks.is_empty() {
+                            let delta_cards = dx / (CARD_STEP as f64);
+                            let max_idx = server.phone_tasks.len().saturating_sub(1) as f64;
+                            let new_scroll = (nav.start_scroll + delta_cards).clamp(-0.25, max_idx + 0.25);
+                            server.shell_state.overview_scroll = new_scroll;
+                            server.shell_state.overview_index = new_scroll.round().clamp(0.0, max_idx) as usize;
+                            server.overview_scroll = new_scroll;
                         }
                     }
                     return;
@@ -626,12 +589,16 @@ pub(crate) fn handle(
                         // 2. If dragging carousel or swiping up to dismiss
                         if server.shell_state.is_dragging {
                             server.shell_state.is_dragging = false;
-                            let dismissed = if let Some(card_idx) = nav.grabbed_card {
-                                if server.shell_state.active_card_dy < -70.0 || vy < -250.0 || dy < -70.0 {
-                                    if let Some(task) = server.phone_tasks.get(card_idx) {
-                                        let id = task.id;
-                                        server.close_task_by_id(id);
-                                        true
+                            let dismissed = if nav.is_vertical_dismiss {
+                                if let Some(card_idx) = nav.grabbed_card {
+                                    if server.shell_state.active_card_dy < -100.0 || (server.shell_state.active_card_dy < -50.0 && vy < -600.0 && vy.abs() > vx.abs() * 1.5) {
+                                        if let Some(task) = server.phone_tasks.get(card_idx) {
+                                            let id = task.id;
+                                            server.close_task_by_id(id);
+                                            true
+                                        } else {
+                                            false
+                                        }
                                     } else {
                                         false
                                     }
@@ -643,14 +610,29 @@ pub(crate) fn handle(
                             };
 
                             if !dismissed {
-                                // Horizontal settle with velocity-based momentum fling
-                                let max_idx = server.phone_tasks.len().saturating_sub(1) as f64;
-                                let fling_cards = vx / 550.0;
-                                let raw_target = nav.start_scroll + (dx / CARD_STEP as f64) + fling_cards;
-                                let target_idx = raw_target.round().clamp(0.0, max_idx);
-                                server.shell_state.overview_index = target_idx as usize;
-                                server.shell_state.overview_scroll = target_idx;
-                                // advance_overview_scroll() smoothly lerps server.overview_scroll to target_idx
+                                if nav.is_horizontal_scrub || dx.abs() > 10.0 || vx.abs() > 150.0 {
+                                    // Material 3 fling: calculate target card based on flick velocity
+                                    let max_idx = server.phone_tasks.len().saturating_sub(1) as f64;
+                                    let current_scroll = server.overview_scroll;
+                                    let target_idx = if vx.abs() > 350.0 {
+                                        let dir = if vx > 0.0 { 1.0 } else { -1.0 };
+                                        let extra = if vx.abs() > 1500.0 { 2.0 * dir } else { 1.0 * dir };
+                                        (current_scroll + extra).round().clamp(0.0, max_idx)
+                                    } else {
+                                        current_scroll.round().clamp(0.0, max_idx)
+                                    };
+
+                                    server.shell_state.overview_index = target_idx as usize;
+                                    server.shell_state.overview_scroll = target_idx;
+
+                                    let mut spring = penumbra_gestures::SpringSolver::expressive();
+                                    spring.reset(current_scroll);
+                                    spring.set_target(target_idx);
+                                    let v_cards = (vx / (CARD_STEP as f64)).clamp(-8.0, 8.0);
+                                    spring.set_velocity(v_cards);
+                                    server.overview_scroll_spring = Some(spring);
+                                    server.last_nav_spring_tick = Some(std::time::Instant::now());
+                                }
                             }
                             server.shell_state.active_card_dy = 0.0;
                             let _ = write_atomic(
@@ -727,38 +709,7 @@ pub(crate) fn handle(
                         return;
                     }
 
-                    // Home screen mode:
-                    if nav.start_mode == PhoneMode::Home {
-                        server.nav_gesture_active = false;
-                        if dy < -40.0 || vy < -350.0 {
-                            tracing::info!("TouchUp from Home -> open Overview");
-                            server.shell_state.mode = PhoneMode::Overview;
-                            server.shell_state.overview_index = 0;
-                            server.shell_state.overview_scroll = 0.0;
-                            server.overview_scroll = 0.0;
-                            server.nav_gesture_progress = 0.0;
-                            let _ = write_atomic(
-                                &runtime_path(phone::SHELL_STATE_FILE),
-                                &server.shell_state.serialize(),
-                            );
-                        } else {
-                            server.nav_gesture_progress = 0.0;
-                        }
-                        return;
-                    }
-
-                    // Active App mode:
-                    // If tap occurred in bottom-right keyboard button area without dragging:
-                    if nav.start_pos.y >= 880.0 && nav.start_pos.x >= 355.0 && dx.abs() < 15.0 && dy.abs() < 15.0 {
-                        let runtime_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
-                        let cmd_file = std::path::PathBuf::from(runtime_dir).join("penumbra-keyboard-cmd");
-                        let _ = std::fs::write(cmd_file, "toggle");
-                        tracing::info!("Bottom-right keyboard button tapped -> toggling virtual keyboard");
-                        server.nav_gesture_active = false;
-                        server.nav_gesture_progress = 0.0;
-                        return;
-                    }
-
+                    // Swipe up from bottom nav bar (from Home screen or Active App):
                     let switch_dx = server.nav_switch_dx;
                     if server.nav_switch_active || (switch_dx.abs() > 20.0 && switch_dx.abs() > server.nav_gesture_dy.abs() * 1.1) {
                         server.nav_switch_active = false;
@@ -775,6 +726,17 @@ pub(crate) fn handle(
                         server.nav_switch_spring = Some(spring);
                         server.nav_switch_target = Some(target);
                         server.last_nav_spring_tick = Some(std::time::Instant::now());
+                        return;
+                    }
+
+                    // If tap occurred in bottom-right keyboard button area without dragging:
+                    if nav.start_pos.y >= 880.0 && nav.start_pos.x >= 355.0 && dx.abs() < 15.0 && dy.abs() < 15.0 {
+                        let runtime_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
+                        let cmd_file = std::path::PathBuf::from(runtime_dir).join("penumbra-keyboard-cmd");
+                        let _ = std::fs::write(cmd_file, "toggle");
+                        tracing::info!("Bottom-right keyboard button tapped -> toggling virtual keyboard");
+                        server.nav_gesture_active = false;
+                        server.nav_gesture_progress = 0.0;
                         return;
                     }
 
@@ -799,6 +761,24 @@ pub(crate) fn handle(
                     server.nav_spring = Some(spring);
                     server.nav_target = Some(target);
                     server.last_nav_spring_tick = Some(std::time::Instant::now());
+
+                    if target == penumbra_gestures::NavigationTarget::Overview {
+                        let max_idx = server.phone_tasks.len().saturating_sub(1) as f64;
+                        let target_idx = server.overview_scroll.round().clamp(0.0, max_idx);
+                        let mut scroll_spring = penumbra_gestures::SpringSolver::expressive();
+                        scroll_spring.reset(server.overview_scroll);
+                        scroll_spring.set_target(target_idx);
+                        let v_cards = (vx / (CARD_STEP as f64)).clamp(-8.0, 8.0);
+                        scroll_spring.set_velocity(v_cards);
+                        server.overview_scroll_spring = Some(scroll_spring);
+                        server.shell_state.overview_index = target_idx as usize;
+                        server.shell_state.overview_scroll = target_idx;
+                        server.shell_state.mode = PhoneMode::Overview;
+                        let _ = write_atomic(
+                            &runtime_path(phone::SHELL_STATE_FILE),
+                            &server.shell_state.serialize(),
+                        );
+                    }
                     return;
                 }
             }

@@ -167,6 +167,8 @@ pub struct PenumbraServerState {
     pub nav_switch_spring: Option<SpringSolver>,
     /// Target state when nav_switch_spring settles.
     pub nav_switch_target: Option<NavigationTarget>,
+    /// Spring solver animating horizontal carousel scroll position with Material 3 physics.
+    pub overview_scroll_spring: Option<SpringSolver>,
     /// Last timestamp the nav spring was updated.
     pub last_nav_spring_tick: Option<Instant>,
     /// Pre-blurred wallpaper cache for fast zero-cost background compositing.
@@ -311,16 +313,39 @@ impl PenumbraServerState {
 
     /// Eases the animated overview carousel towards the shell's target index.
     /// While the user drags, it tracks the finger 1:1; on release it decelerates
-    /// into a magnetic lock.
+    /// using Material 3 Expressive spring physics into a magnetic lock.
     pub(crate) fn advance_overview_scroll(&mut self) {
-        let scroll_target = self.shell_state.overview_scroll;
         if self.shell_state.is_dragging {
-            self.overview_scroll = scroll_target;
+            self.overview_scroll = self.shell_state.overview_scroll;
+            self.overview_scroll_spring = None;
+        } else if let Some(ref mut spring) = self.overview_scroll_spring {
+            let now = Instant::now();
+            let dt = if let Some(last) = self.last_nav_spring_tick {
+                now.duration_since(last).as_secs_f64().min(0.05)
+            } else {
+                0.016
+            };
+            self.last_nav_spring_tick = Some(now);
+            spring.step_analytical(dt);
+            self.overview_scroll = spring.position;
+            let is_settled = spring.is_settled(0.005, 0.05);
+            let target = spring.target;
+            if is_settled {
+                self.overview_scroll = target;
+                self.overview_scroll_spring = None;
+                self.shell_state.overview_scroll = target;
+                self.shell_state.overview_index = target.round().max(0.0) as usize;
+                let _ = write_atomic(
+                    &runtime_path(phone::SHELL_STATE_FILE),
+                    &self.shell_state.serialize(),
+                );
+            }
         } else {
-            let scroll_diff = scroll_target - self.overview_scroll;
-            self.overview_scroll += scroll_diff * 0.22;
-            if scroll_diff.abs() < 0.002 {
-                self.overview_scroll = scroll_target;
+            let scroll_diff = self.shell_state.overview_scroll - self.overview_scroll;
+            if scroll_diff.abs() > 0.001 {
+                self.overview_scroll += scroll_diff * 0.18;
+            } else {
+                self.overview_scroll = self.shell_state.overview_scroll;
             }
         }
     }
@@ -329,6 +354,7 @@ impl PenumbraServerState {
     pub(crate) fn is_nav_animating(&self) -> bool {
         self.nav_gesture_active
             || self.nav_spring.is_some()
+            || self.overview_scroll_spring.is_some()
             || self.nav_gesture_progress > 0.001
             || self.nav_switch_active
             || self.nav_switch_spring.is_some()
@@ -1394,6 +1420,7 @@ impl PenumbraCompositor {
             nav_target: None,
             nav_switch_spring: None,
             nav_switch_target: None,
+            overview_scroll_spring: None,
             last_nav_spring_tick: None,
             blurred_wallpaper: {
                 let cache = crate::wallpaper_blur::BlurredWallpaperCache::load_and_blur(

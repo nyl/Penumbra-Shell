@@ -49,8 +49,8 @@ use smithay::{
 use crate::{
     native_input::{self, InputState},
     phone::{
-        self, card_transform, resolve_app_icon_target, runtime_path, write_atomic, PhoneMode,
-        ShellState, APP_H, APP_Y, CARD_H, OVERVIEW_SCALE, PHONE_H, PHONE_W,
+        self, resolve_app_icon_target, runtime_path, write_atomic, PhoneMode,
+        ShellState, APP_H, APP_Y, CARD_H, CARD_STEP, CARD_Y, OVERVIEW_SCALE, PHONE_H, PHONE_W,
     },
     server::{
         cropped, send_frames_surface_tree, surface_elements, ClientState, PenumbraCompositor,
@@ -275,8 +275,10 @@ fn app_elements(
                     clip,
                 ));
             }
-        } else if server.nav_target == Some(penumbra_gestures::NavigationTarget::Overview) {
-            // Handled smoothly by overview_elements spring entrance
+        } else if server.nav_target == Some(penumbra_gestures::NavigationTarget::Overview)
+            || (server.nav_gesture_active && server.shell_state.mode != PhoneMode::Overview)
+        {
+            // Handled smoothly by overview_elements carousel (all cards active and equal distance)
             return elements;
         } else {
             // Active window scaling down to card position during gesture pull-up
@@ -307,6 +309,42 @@ fn app_elements(
     elements
 }
 
+/// Computes the uniform scale and base Y coordinate for the overview carousel.
+/// As the user pulls up higher towards the top of the screen (free play),
+/// all cards decrease in size together and lift up, keeping equal distance.
+fn compute_carousel_transform(server: &PenumbraServerState) -> (f64, i32) {
+    if server.shell_state.mode == PhoneMode::Overview {
+        if server.nav_gesture_active && server.nav_gesture_dy < 0.0 {
+            // Dragging higher up in Overview: elastic zoom-out
+            let drag_up = (-server.nav_gesture_dy).max(0.0);
+            let p_up = (drag_up / (PHONE_H as f64 * 0.7)).clamp(0.0, 1.0);
+            let scale = OVERVIEW_SCALE - p_up * 0.12; // 0.70 down to 0.58
+            let y_lift = (p_up * 70.0).round() as i32;
+            (scale, CARD_Y - y_lift)
+        } else {
+            (OVERVIEW_SCALE, CARD_Y)
+        }
+    } else if (server.is_nav_animating() || server.nav_gesture_active)
+        && server.nav_target != Some(penumbra_gestures::NavigationTarget::Home)
+    {
+        // Swiping up from an app towards Overview
+        let p = server.nav_gesture_progress;
+        if p <= 1.0 {
+            let scale = 1.0 - p * (1.0 - OVERVIEW_SCALE); // 1.0 down to 0.70
+            let y = (APP_Y as f64 * (1.0 - p) + CARD_Y as f64 * p).round() as i32;
+            (scale, y)
+        } else {
+            // Pulled all the way up: zoom out from 0.70 down to ~0.58 and lift
+            let over = (p - 1.0).clamp(0.0, 1.0);
+            let scale = OVERVIEW_SCALE - over * 0.12;
+            let y = CARD_Y - (over * 70.0).round() as i32;
+            (scale, y)
+        }
+    } else {
+        (OVERVIEW_SCALE, CARD_Y)
+    }
+}
+
 /// Overview carousel cards, clipped to the phone canvas.
 fn overview_elements(
     renderer: &mut GlesRenderer,
@@ -315,24 +353,23 @@ fn overview_elements(
 ) -> Vec<CropRenderElement<SurfaceElement>> {
     let mut cards = Vec::new();
     let is_spring_to_overview = server.nav_target == Some(penumbra_gestures::NavigationTarget::Overview);
-    let is_dragging_to_overview = server.nav_gesture_active && server.nav_gesture_progress > 0.10;
+    let is_dragging_to_overview = server.nav_gesture_active
+        && server.nav_gesture_progress > 0.01
+        && server.nav_target != Some(penumbra_gestures::NavigationTarget::Home);
+
     if (server.shell_state.mode != PhoneMode::Overview && !is_spring_to_overview && !is_dragging_to_overview)
         || server.shell_state.drawer_open
     {
         return cards;
     }
     let phone_clip = canvas.rect(0, 0, PHONE_W, PHONE_H);
-    let card_scale = OVERVIEW_SCALE * canvas.scale;
+    let (scale, base_y) = compute_carousel_transform(server);
+    let card_scale = scale * canvas.scale;
+    let w = (PHONE_W as f64 * scale).round() as i32;
+    let h = (APP_H as f64 * scale).round() as i32;
+    let step = ((CARD_STEP as f64) * (scale / OVERVIEW_SCALE)).round() as i32;
+    let center_x = ((PHONE_W - w) / 2) as f64;
 
-    // Google spring entrance offset: carousel glides smoothly from left into center on last app card
-    let entrance_offset_x = if is_spring_to_overview || is_dragging_to_overview {
-        let p = server.nav_gesture_progress.clamp(0.0, 1.0);
-        ((1.0 - p) * -160.0).round() as i32
-    } else {
-        0
-    };
-
-    let start_index = if is_dragging_to_overview { 1 } else { 0 };
     let is_expanding_to_fullscreen = server.shell_state.mode == PhoneMode::Overview
         && ((server.nav_gesture_active && server.nav_gesture_dy > 0.0)
             || server.nav_target == Some(penumbra_gestures::NavigationTarget::Fullscreen));
@@ -349,17 +386,19 @@ fn overview_elements(
         return cards;
     }
 
-    for (index, task) in server.phone_tasks.iter().enumerate().skip(start_index) {
+    for (index, task) in server.phone_tasks.iter().enumerate() {
         if is_expanding_to_fullscreen && index == server.shell_state.overview_index {
             continue;
         }
-        let (raw_x, y, w, h, _scale) = card_transform(
-            index,
-            server.overview_scroll,
-            server.shell_state.overview_index,
-            server.shell_state.active_card_dy,
-        );
-        let mut x = raw_x + entrance_offset_x;
+
+        let dist = (index as f64) - server.overview_scroll;
+        let mut x = (center_x - dist * (step as f64)).round() as i32;
+
+        let y = if index == server.shell_state.overview_index && server.shell_state.mode == PhoneMode::Overview {
+            base_y + server.shell_state.active_card_dy.round() as i32
+        } else {
+            base_y
+        };
 
         // Disperse adjacent cards horizontally away from expanding center card
         if is_expanding_to_fullscreen {
@@ -470,7 +509,8 @@ fn render_frame(state: &mut NativeState, buffer: &mut Dmabuf) -> Result<(), Box<
     if !scrim.is_empty() {
         draw_render_elements::<GlesRenderer, _, _>(&mut frame, scale, &scrim, &[damage])?;
     }
-    let overview_scale = OVERVIEW_SCALE * canvas.scale;
+    let (carousel_s, _) = compute_carousel_transform(server);
+    let overview_scale = carousel_s * canvas.scale;
     draw_render_elements(&mut frame, overview_scale, &overview, &[damage])?;
 
     let active_app_scale = if (server.is_nav_animating() || server.nav_gesture_active)
@@ -674,6 +714,7 @@ pub fn run(_compositor: &mut PenumbraCompositor) -> Result<(), Box<dyn Error>> {
         nav_target: None,
         nav_switch_spring: None,
         nav_switch_target: None,
+        overview_scroll_spring: None,
         last_nav_spring_tick: None,
         blurred_wallpaper: {
             let cache = crate::wallpaper_blur::BlurredWallpaperCache::load_and_blur(
